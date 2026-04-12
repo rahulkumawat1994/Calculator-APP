@@ -429,6 +429,26 @@
         }
         if (results.length > 0) return results;
 
+        // --- Equals format: [numbers]=[rate][suffix] ---
+        // e.g. "32.23.35.53.39.93=5"  "30.03.31.13=10wp"
+        const eqPattern = /([^=]*)=+(\d+)\s*([a-zA-Z]*)/gi;
+
+        while ((match = eqPattern.exec(trimmed)) !== null) {
+          const numbersPart = match[1];
+          const suffix = match[3] || '';
+          const isWP = /wp/i.test(suffix);
+          const isDouble = /[ab]/i.test(suffix);
+          const rate = parseInt(match[2], 10);
+          const allNumbers = extractPairedNumbers(numbersPart);
+          if (allNumbers.length === 0) continue;
+          const count = countSegment(allNumbers, isWP) * (isDouble ? 2 : 1);
+          if (count > 0) {
+            const displayText = numbersPart.replace(/^\D+/, '').replace(/\D+$/, '').trim();
+            results.push({ line: displayText || numbersPart.trim(), rate, isWP, isDouble, count, lineTotal: count * rate });
+          }
+        }
+        if (results.length > 0) return results;
+
         // --- Plain format: last number = rate, any text after last number = WP / double ---
         // Only applies when the line has a comma — e.g. "02,04,07,09,,,40 पलटके साथ"
         if (/,/.test(trimmed)) {
@@ -473,11 +493,19 @@
         return text.replace(/\[[^\]]*\]\s*[^:]+:\s*/g, "\n").trim();
       }
 
+      function extractFirstRate(line) {
+        let m;
+        if ((m = line.match(/\((\d+)\)\s*([a-zA-Z]*)/i))) return { rate: parseInt(m[1]), suffix: m[2] || '' };
+        if ((m = line.match(/[xX](\d+)\s*([a-zA-Z]*)/))) return { rate: parseInt(m[1]), suffix: m[2] || '' };
+        if ((m = line.match(/=+(\d+)\s*([a-zA-Z]*)/))) return { rate: parseInt(m[1]), suffix: m[2] || '' };
+        return null;
+      }
+
       function calculateTotal(text) {
         const cleaned = preprocessText(text);
 
-        // Merge rate-less lines (no paren rate, no x-rate, no comma) into the next rated line.
-        // e.g. "53...54...58\n03...08(25)wp" → "53...54...58 03...08(25)wp"
+        // Rate-less lines (no paren/x/=/comma rate) borrow the rate from the NEXT rated line
+        // and are kept as a SEPARATE breakdown row (not merged into the rated line's text).
         const rawLines = cleaned
           .split("\n")
           .map((l) => l.trim())
@@ -486,13 +514,21 @@
         let pending = "";
 
         for (const line of rawLines) {
-          const hasExplicitRate = /\(\d+\)/.test(line) || /x\d+/i.test(line);
+          const hasExplicitRate = /\(\d+\)/.test(line) || /x\d+/i.test(line) || /=\d+/.test(line);
           const hasCommaRate = /,/.test(line);
           if (!hasExplicitRate && !hasCommaRate) {
             pending = pending ? pending + " " + line : line;
           } else {
-            mergedLines.push(pending ? pending + " " + line : line);
-            pending = "";
+            if (pending) {
+              const rateInfo = extractFirstRate(line);
+              if (rateInfo) {
+                mergedLines.push(`${pending}(${rateInfo.rate})${rateInfo.suffix}`);
+              } else {
+                mergedLines.push(pending + " " + line);
+              }
+              pending = "";
+            }
+            mergedLines.push(line);
           }
         }
         if (pending) mergedLines.push(pending);
