@@ -39,7 +39,22 @@ function extractPairedNumbers(text: string): number[] {
 // ─── Line parser ───────────────────────────────────────────────────────────────
 
 export function processLine(line: string): Segment[] {
-  const trimmed = line.trim();
+  // ── Normalize paren typos before parsing ──────────────────────────────────
+  // Handles the common variations a human might type:
+  //   (rate/suffix   (rate\suffix   (rate|suffix   (rate.suffix
+  //   (rate suffix)  (ratesuffix)   ( rate )       (rate        ← missing close
+  const trimmed = line
+    .trim()
+    // (rate / \ | . suffix)  or  (rate / \ | . suffix  (any non-alpha separator)
+    .replace(/\(\s*(\d+)\s*[\/\\|.]\s*([a-zA-Z]*)\s*\)?/g, '($1)$2')
+    // (rate suffix)  or  (rate suffix  (space between rate and suffix)
+    .replace(/\(\s*(\d+)\s+([a-zA-Z]+)\s*\)?/g, '($1)$2')
+    // (ratesuffix)  or  (ratesuffix  (no separator at all)
+    .replace(/\(\s*(\d+)([a-zA-Z]+)\s*\)?/g, '($1)$2')
+    // ( rate )  (spaces inside parens, no suffix)
+    .replace(/\(\s*(\d+)\s*\)/g, '($1)')
+    // (rate  (only opening paren, nothing after digits — add closing)
+    .replace(/\(\s*(\d+)\s*$/g, '($1)');
   if (!trimmed) return [];
   const results: Segment[] = [];
   let match: RegExpExecArray | null;
