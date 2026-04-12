@@ -1,46 +1,10 @@
 import { useState } from "react";
 import type { SavedSession, CalculationResult } from "./types";
+import EditableBreakdown from "./EditableBreakdown";
 
 interface Props {
   sessions: SavedSession[];
   onUpdate: (sessions: SavedSession[]) => void;
-}
-
-function Breakdown({ result }: { result: CalculationResult }) {
-  return (
-    <div className="space-y-1.5 mt-2 mb-1">
-      {result.results.map((r, i) => (
-        <div
-          key={i}
-          className="flex items-center justify-between bg-white rounded-xl px-3 py-2 border border-[#e8eef8]"
-        >
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="w-5 h-5 rounded-full bg-[#1d6fb8] text-white text-[11px] font-bold flex items-center justify-center shrink-0">
-              {i + 1}
-            </span>
-            <span className="font-mono text-sm text-gray-700 truncate">{r.line}</span>
-            {r.isWP && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 shrink-0">
-                WP
-              </span>
-            )}
-            {r.isDouble && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-800 shrink-0">
-                AB
-              </span>
-            )}
-          </div>
-          <span className="text-[#1d6fb8] font-bold text-sm ml-2 shrink-0">
-            {r.count}×{r.rate}={r.lineTotal}
-          </span>
-        </div>
-      ))}
-      <div className="flex justify-between items-center px-3 py-2 bg-[#1d6fb8] rounded-xl mt-1">
-        <span className="text-sm font-bold text-white">Total</span>
-        <span className="text-base font-extrabold text-white">{result.total}</span>
-      </div>
-    </div>
-  );
 }
 
 function toggle(key: string, set: Set<string>): Set<string> {
@@ -51,6 +15,7 @@ function toggle(key: string, set: Set<string>): Set<string> {
 }
 
 function mergeResults(session: SavedSession): CalculationResult {
+  if (session.overrideResult) return session.overrideResult;
   return {
     results: session.messages.flatMap(m => m.result.results),
     total: session.messages.reduce((s, m) => s + m.result.total, 0),
@@ -63,17 +28,18 @@ export default function History({ sessions, onUpdate }: Props) {
 
   if (!sessions.length) return null;
 
-  const grandTotal = sessions.reduce(
-    (sum, s) => sum + s.messages.reduce((s2, m) => s2 + m.result.total, 0),
-    0
-  );
+  const grandTotal = sessions.reduce((sum, s) => sum + mergeResults(s).total, 0);
 
   const contacts = [...new Set(sessions.map(s => s.contact))];
 
   const contactTotal = (contact: string) =>
     sessions
       .filter(s => s.contact === contact)
-      .reduce((sum, s) => sum + s.messages.reduce((s2, m) => s2 + m.result.total, 0), 0);
+      .reduce((sum, s) => sum + mergeResults(s).total, 0);
+
+  const handleResultChange = (sessionId: string, updated: CalculationResult) => {
+    onUpdate(sessions.map(s => s.id === sessionId ? { ...s, overrideResult: updated } : s));
+  };
 
   const deleteSession = (sessionId: string) =>
     onUpdate(sessions.filter(s => s.id !== sessionId));
@@ -190,7 +156,11 @@ export default function History({ sessions, onUpdate }: Props) {
                         {/* Breakdown */}
                         {isSessionOpen && (
                           <div className="px-4 py-3 bg-[#f8faff]">
-                            <Breakdown result={combined} />
+                            <EditableBreakdown
+                              compact
+                              result={combined}
+                              onChange={r => handleResultChange(session.id, r)}
+                            />
                           </div>
                         )}
                       </div>

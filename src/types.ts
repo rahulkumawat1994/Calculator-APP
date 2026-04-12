@@ -25,4 +25,5 @@ export interface SavedSession {
   date: string;
   messages: SavedMessage[];
   createdAt: number;
+  overrideResult?: CalculationResult; // stores user-edited breakdown
 }

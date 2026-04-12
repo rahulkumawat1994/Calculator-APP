@@ -4,6 +4,7 @@ import {
   parseWhatsAppMessages,
   mergeIntoSessions,
 } from "./calcUtils";
+import EditableBreakdown from "./EditableBreakdown";
 import type { CalculationResult, SavedSession } from "./types";
 
 interface Props {
@@ -16,25 +17,31 @@ export default function Calculator({ sessions, onSave }: Props) {
   const [result, setResult] = useState<CalculationResult | null>(null);
   const [copied, setCopied] = useState(false);
   const [savedToHistory, setSavedToHistory] = useState(false);
+  // IDs of the sessions that were last auto-saved on Calculate
+  const [lastSessionIds, setLastSessionIds] = useState<string[]>([]);
+  const [hasUnsavedEdits, setHasUnsavedEdits] = useState(false);
 
   const handleCalculate = () => {
     const waMessages = parseWhatsAppMessages(input);
 
     if (waMessages && waMessages.length > 0) {
-      // WhatsApp mode — combine all messages for the current result display
       const combined: CalculationResult = {
         results: waMessages.flatMap(m => m.result.results),
         total: waMessages.reduce((s, m) => s + m.result.total, 0),
       };
       setResult(combined);
 
-      // Merge into history sessions
       const updated = mergeIntoSessions(sessions, waMessages);
       onSave(updated);
-      setSavedToHistory(true);
-      setTimeout(() => setSavedToHistory(false), 2500);
+
+      // Track which sessions were affected so "Save to History" knows what to update
+      const affectedIds = updated
+        .filter(s => waMessages.some(m => m.contact === s.contact && m.date === s.date))
+        .map(s => s.id);
+      setLastSessionIds(affectedIds);
+      setHasUnsavedEdits(false);
+      flashSaved();
     } else {
-      // Plain mode — calculate normally
       const calcResult = calculateTotal(input);
       setResult(calcResult);
 
@@ -44,28 +51,41 @@ export default function Calculator({ sessions, onSave }: Props) {
           now.getMonth() + 1
         ).padStart(2, "0")}/${now.getFullYear()}`;
         const timeStr = now
-          .toLocaleTimeString("en-US", {
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: true,
-          })
+          .toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })
           .toLowerCase();
-        // Use Date.now() in the id so each manual calculation is a separate entry
         const uniqueId = `manual|${date}|${Date.now()}`;
-        const updated = mergeIntoSessions(sessions, [
-          {
-            id: uniqueId,
-            contact: "Manual Entry",
-            date,
-            timestamp: timeStr,
-            text: input.trim(),
-            result: calcResult,
-          },
-        ]);
+        const updated = mergeIntoSessions(sessions, [{
+          id: uniqueId,
+          contact: "Manual Entry",
+          date,
+          timestamp: timeStr,
+          text: input.trim(),
+          result: calcResult,
+        }]);
         onSave(updated);
+        // The new session's id is "Manual Entry|<date>"
+        const sid = `Manual Entry|${date}`;
+        setLastSessionIds(updated.filter(s => s.id === sid).map(s => s.id));
+        setHasUnsavedEdits(false);
       }
     }
     setCopied(false);
+  };
+
+  // Push the current (possibly edited) result back into the matching history sessions
+  const handleSaveToHistory = () => {
+    if (!result || !lastSessionIds.length) return;
+    const updated = sessions.map(s =>
+      lastSessionIds.includes(s.id) ? { ...s, overrideResult: result } : s
+    );
+    onSave(updated);
+    setHasUnsavedEdits(false);
+    flashSaved();
+  };
+
+  const flashSaved = () => {
+    setSavedToHistory(true);
+    setTimeout(() => setSavedToHistory(false), 2500);
   };
 
   const handleClear = () => {
@@ -73,6 +93,8 @@ export default function Calculator({ sessions, onSave }: Props) {
     setResult(null);
     setCopied(false);
     setSavedToHistory(false);
+    setLastSessionIds([]);
+    setHasUnsavedEdits(false);
   };
 
   const handleCopy = () => {
@@ -159,55 +181,28 @@ export default function Calculator({ sessions, onSave }: Props) {
           {/* Line breakdown */}
           {result.results.length > 0 && (
             <div className="bg-white rounded-[20px] p-6 mt-4 shadow-[0_4px_20px_rgba(0,0,0,0.07)]">
-              <div className="text-[19px] font-bold text-[#222] mb-4 border-b-2 border-[#f0f0f0] pb-2.5">
-                Line by Line
+              {/* Heading + Save button */}
+              <div className="flex items-center justify-between mb-4 border-b-2 border-[#f0f0f0] pb-2.5">
+                <span className="text-[19px] font-bold text-[#222]">Line by Line</span>
+                {lastSessionIds.length > 0 && (
+                  <button
+                    onClick={handleSaveToHistory}
+                    disabled={!hasUnsavedEdits}
+                    className={`flex items-center gap-1.5 text-sm font-semibold rounded-xl px-3.5 py-1.5 transition-colors shadow-sm ${
+                      hasUnsavedEdits
+                        ? "bg-green-600 hover:bg-green-700 text-white cursor-pointer"
+                        : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                    }`}
+                  >
+                    💾 {hasUnsavedEdits ? "Save to History" : "Saved"}
+                  </button>
+                )}
               </div>
 
-              {result.results.map((r, i) => (
-                <div
-                  key={i}
-                  className={`rounded-xl border border-[#e8eef8] p-[14px_16px] mb-2.5 ${
-                    i % 2 === 0 ? "bg-[#f4f8ff]" : "bg-white"
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <span className="min-w-[28px] h-7 rounded-full bg-[#1d6fb8] text-white text-sm font-bold flex items-center justify-center shrink-0 mt-0.5">
-                      {i + 1}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[17px] font-mono text-[#333] mb-2 break-all leading-relaxed">
-                        {r.line}
-                        {r.isWP && (
-                          <span className="inline-block text-[13px] font-bold px-2.5 py-0.5 rounded-full ml-2 bg-blue-100 text-blue-700 align-middle">
-                            WP
-                          </span>
-                        )}
-                        {r.isDouble && (
-                          <span className="inline-block text-[13px] font-bold px-2.5 py-0.5 rounded-full ml-2 bg-yellow-100 text-yellow-800 align-middle">
-                            AB
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[17px] text-[#666] font-serif">
-                          {r.count} × {r.rate}
-                        </span>
-                        <span className="text-[22px] font-extrabold text-[#1d6fb8]">
-                          = {r.lineTotal}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-
-              {/* Grand total row */}
-              <div className="flex justify-between items-center mt-1.5 px-4 py-3.5 bg-[#1d6fb8] rounded-xl">
-                <span className="text-xl font-bold text-white">Grand Total</span>
-                <span className="text-[28px] font-extrabold text-white">
-                  {result.total}
-                </span>
-              </div>
+              <EditableBreakdown
+                result={result}
+                onChange={r => { setResult(r); setHasUnsavedEdits(true); }}
+              />
             </div>
           )}
         </div>
