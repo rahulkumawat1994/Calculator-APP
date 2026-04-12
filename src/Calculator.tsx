@@ -1,254 +1,70 @@
 import { useState } from "react";
+import {
+  calculateTotal,
+  parseWhatsAppMessages,
+  mergeIntoSessions,
+} from "./calcUtils";
+import type { CalculationResult, SavedSession } from "./types";
 
-interface Segment {
-  line: string;
-  rate: number;
-  isWP: boolean;
-  isDouble: boolean;
-  count: number;
-  lineTotal: number;
+interface Props {
+  sessions: SavedSession[];
+  onSave: (sessions: SavedSession[]) => void;
 }
 
-interface CalculationResult {
-  results: Segment[];
-  total: number;
-}
-
-function reverseNumber(num: number): number {
-  return parseInt(
-    String(num).padStart(2, "0").split("").reverse().join(""),
-    10
-  );
-}
-
-function normalizePair(num: number): string {
-  const reversed = reverseNumber(num);
-  return [num, reversed].sort().join("-");
-}
-
-function countSegment(allNumbers: number[], isWP: boolean): number {
-  if (!isWP) return new Set(allNumbers).size;
-  const seenPairs = new Set<string>();
-  let count = 0;
-  for (const num of allNumbers) {
-    const key = normalizePair(num);
-    if (!seenPairs.has(key)) {
-      seenPairs.add(key);
-      count += num === reverseNumber(num) ? 1 : 2;
-    }
-  }
-  return count;
-}
-
-// For x-format: split every digit block into 2-digit pairs.
-// e.g. "8307" → [83, 07], "735909" → [73, 59, 09]
-function extractPairedNumbers(text: string): number[] {
-  const allNumbers: number[] = [];
-  for (const block of text.match(/\d+/g) ?? []) {
-    if (block.length === 1) continue;
-    if (block.length === 2) {
-      allNumbers.push(Number(block));
-    } else {
-      for (let i = 0; i + 1 < block.length; i += 2) {
-        allNumbers.push(Number(block.slice(i, i + 2)));
-      }
-    }
-  }
-  return allNumbers;
-}
-
-// Each line can have multiple groups, supporting three formats:
-//   Paren format:  "23*28 70(150)wp 78--73 56-(50)wp"
-//   X format:      "FB.74.83.56x15"  "62.38.8307.70x10"
-//   Plain format:  "02,04,07,09,,,40 पलटके साथ"  (last number = rate, any text after = WP)
-// Suffix "ab/AB/a/b" after the rate in any format → count × 2
-function processLine(line: string): Segment[] {
-  const trimmed = line.trim();
-  if (!trimmed) return [];
-
-  const results: Segment[] = [];
-
-  // --- Paren format: numbers(rate)[suffix] ---
-  // Suffix letters: "wp" → WP mode, "a"/"b"/"ab" → double the count
-  const parenPattern = /([^()]*)\((\d+)\)\s*([a-zA-Z]*)/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = parenPattern.exec(trimmed)) !== null) {
-    const numbersPart = match[1];
-    const suffix = match[3] ?? '';
-    const isWP = /wp/i.test(suffix);
-    const isDouble = /[ab]/i.test(suffix);
-    const rate = parseInt(match[2], 10);
-    const allNumbers = (numbersPart.match(/(?<!\d)\d{2}(?!\d)/g) ?? []).map(
-      Number
-    );
-    if (allNumbers.length === 0) continue;
-    const count = countSegment(allNumbers, isWP) * (isDouble ? 2 : 1);
-    if (count > 0) {
-      const displayText = numbersPart
-        .replace(/^[\s*\-_.,:|]+|[\s*\-_.,:|]+$/g, '')
-        .trim();
-      results.push({
-        line: displayText || numbersPart.trim(),
-        rate,
-        isWP,
-        isDouble,
-        count,
-        lineTotal: count * rate,
-      });
-    }
-  }
-  if (results.length > 0) return results;
-
-  // --- X format: [prefix?][numbers]x[rate][suffix] ---
-  // Handles concatenated digit blocks like 8307 → 83,07 and labels like "FB."
-  const xPattern = /([^x]*)x(\d+)\s*([a-zA-Z]*)/gi;
-
-  while ((match = xPattern.exec(trimmed)) !== null) {
-    const numbersPart = match[1];
-    const suffix = match[3] ?? '';
-    const isWP = /wp/i.test(suffix);
-    const isDouble = /[ab]/i.test(suffix);
-    const rate = parseInt(match[2], 10);
-    const allNumbers = extractPairedNumbers(numbersPart);
-    if (allNumbers.length === 0) continue;
-    const count = countSegment(allNumbers, isWP) * (isDouble ? 2 : 1);
-    if (count > 0) {
-      const displayText = numbersPart
-        .replace(/^\D+/, '')
-        .replace(/\D+$/, '')
-        .trim();
-      results.push({
-        line: displayText || numbersPart.trim(),
-        rate,
-        isWP,
-        isDouble,
-        count,
-        lineTotal: count * rate,
-      });
-    }
-  }
-  if (results.length > 0) return results;
-
-  // --- Equals format: [numbers]=[rate][suffix] ---
-  // e.g. "32.23.35.53.39.93=5"  "30.03.31.13=10wp"
-  const eqPattern = /([^=]*)=+(\d+)\s*([a-zA-Z]*)/gi;
-
-  while ((match = eqPattern.exec(trimmed)) !== null) {
-    const numbersPart = match[1];
-    const suffix = match[3] ?? '';
-    const isWP = /wp/i.test(suffix);
-    const isDouble = /[ab]/i.test(suffix);
-    const rate = parseInt(match[2], 10);
-    const allNumbers = extractPairedNumbers(numbersPart);
-    if (allNumbers.length === 0) continue;
-    const count = countSegment(allNumbers, isWP) * (isDouble ? 2 : 1);
-    if (count > 0) {
-      const displayText = numbersPart.replace(/^\D+/, '').replace(/\D+$/, '').trim();
-      results.push({
-        line: displayText || numbersPart.trim(),
-        rate,
-        isWP,
-        isDouble,
-        count,
-        lineTotal: count * rate,
-      });
-    }
-  }
-  if (results.length > 0) return results;
-
-  // --- Plain format: last number = rate, any text after last number = WP / double ---
-  // Only applies when the line has a comma — e.g. "02,04,07,09,,,40 पलटके साथ"
-  // Lines without commas and no rate marker are rate-less and get merged upstream.
-  if (/,/.test(trimmed)) {
-    const allMatches = [...trimmed.matchAll(/\d+/g)];
-    if (allMatches.length >= 2) {
-      const lastMatch = allMatches[allMatches.length - 1];
-      const baseRate = Number(lastMatch[0]);
-      const lastMatchEnd = (lastMatch.index ?? 0) + lastMatch[0].length;
-      const afterText = trimmed.slice(lastMatchEnd);
-      const isDouble = /[ab]/i.test(afterText);
-      // WP if there's non-whitespace text that isn't just a/b letters
-      const isWP = /\S/.test(afterText) && !/^[ab\s]+$/i.test(afterText.trim());
-      const rate = baseRate;
-      const textBeforeRate = trimmed.slice(0, lastMatch.index);
-      const allNumbers = extractPairedNumbers(textBeforeRate);
-      if (allNumbers.length > 0) {
-        const count = countSegment(allNumbers, isWP) * (isDouble ? 2 : 1);
-        if (count > 0) {
-          const displayText = textBeforeRate.replace(/[,\s.]+$/, '').trim();
-          results.push({
-            line: displayText || textBeforeRate.trim(),
-            rate,
-            isWP,
-            isDouble,
-            count,
-            lineTotal: count * rate,
-          });
-        }
-      }
-    }
-  }
-
-  return results;
-}
-
-function preprocessText(text: string): string {
-  // Handles timestamps like [14:26, 12/04/2026] and [6:16 pm, 12/04/2026]
-  // Sender can be a phone number (+91 93513 40631) or a contact name (John, राहुल)
-  return text.replace(/\[[^\]]*\]\s*[^:]+:\s*/g, "\n").trim();
-}
-
-function extractFirstRate(line: string): { rate: number; suffix: string } | null {
-  let m: RegExpMatchArray | null;
-  if ((m = line.match(/\((\d+)\)\s*([a-zA-Z]*)/i))) return { rate: parseInt(m[1]), suffix: m[2] ?? '' };
-  if ((m = line.match(/[xX](\d+)\s*([a-zA-Z]*)/))) return { rate: parseInt(m[1]), suffix: m[2] ?? '' };
-  if ((m = line.match(/=+(\d+)\s*([a-zA-Z]*)/))) return { rate: parseInt(m[1]), suffix: m[2] ?? '' };
-  return null;
-}
-
-function calculateTotal(text: string): CalculationResult {
-  const cleaned = preprocessText(text);
-
-  // Rate-less lines (no paren/x/=/comma rate) borrow the rate from the NEXT rated line
-  // and are kept as a SEPARATE breakdown row (not merged into the rated line's text).
-  const rawLines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
-  const mergedLines: string[] = [];
-  let pending = "";
-
-  for (const line of rawLines) {
-    const hasExplicitRate = /\(\d+\)/.test(line) || /x\d+/i.test(line) || /=\d+/.test(line);
-    const hasCommaRate = /,/.test(line);
-    if (!hasExplicitRate && !hasCommaRate) {
-      pending = pending ? pending + " " + line : line;
-    } else {
-      if (pending) {
-        const rateInfo = extractFirstRate(line);
-        if (rateInfo) {
-          // Push pending as its own segment with the borrowed rate
-          mergedLines.push(`${pending}(${rateInfo.rate})${rateInfo.suffix}`);
-        } else {
-          // Fallback: merge as before if rate can't be extracted
-          mergedLines.push(pending + " " + line);
-        }
-        pending = "";
-      }
-      mergedLines.push(line);
-    }
-  }
-  if (pending) mergedLines.push(pending);
-
-  const results = mergedLines.flatMap(processLine);
-  return { results, total: results.reduce((s, r) => s + r.lineTotal, 0) };
-}
-
-export default function Calculator() {
+export default function Calculator({ sessions, onSave }: Props) {
   const [input, setInput] = useState("");
   const [result, setResult] = useState<CalculationResult | null>(null);
   const [copied, setCopied] = useState(false);
+  const [savedToHistory, setSavedToHistory] = useState(false);
 
   const handleCalculate = () => {
-    setResult(calculateTotal(input));
+    const waMessages = parseWhatsAppMessages(input);
+
+    if (waMessages && waMessages.length > 0) {
+      // WhatsApp mode — combine all messages for the current result display
+      const combined: CalculationResult = {
+        results: waMessages.flatMap(m => m.result.results),
+        total: waMessages.reduce((s, m) => s + m.result.total, 0),
+      };
+      setResult(combined);
+
+      // Merge into history sessions
+      const updated = mergeIntoSessions(sessions, waMessages);
+      onSave(updated);
+      setSavedToHistory(true);
+      setTimeout(() => setSavedToHistory(false), 2500);
+    } else {
+      // Plain mode — calculate normally
+      const calcResult = calculateTotal(input);
+      setResult(calcResult);
+
+      if (input.trim() && calcResult.total > 0) {
+        const now = new Date();
+        const date = `${String(now.getDate()).padStart(2, "0")}/${String(
+          now.getMonth() + 1
+        ).padStart(2, "0")}/${now.getFullYear()}`;
+        const timeStr = now
+          .toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+          })
+          .toLowerCase();
+        // Use Date.now() in the id so each manual calculation is a separate entry
+        const uniqueId = `manual|${date}|${Date.now()}`;
+        const updated = mergeIntoSessions(sessions, [
+          {
+            id: uniqueId,
+            contact: "Manual Entry",
+            date,
+            timestamp: timeStr,
+            text: input.trim(),
+            result: calcResult,
+          },
+        ]);
+        onSave(updated);
+      }
+    }
     setCopied(false);
   };
 
@@ -256,6 +72,7 @@ export default function Calculator() {
     setInput("");
     setResult(null);
     setCopied(false);
+    setSavedToHistory(false);
   };
 
   const handleCopy = () => {
@@ -267,7 +84,7 @@ export default function Calculator() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f0f4f8] flex flex-col items-center px-4 pt-6 pb-12 font-serif">
+    <>
       {/* Header */}
       <div className="w-full max-w-[520px] text-center mb-7">
         <div className="text-4xl mb-2 leading-none">🧮</div>
@@ -287,7 +104,7 @@ export default function Calculator() {
 
         <textarea
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={e => setInput(e.target.value)}
           placeholder={"43*93*(75)wp\n48--98-(50)wp\n47--42*(35)wp"}
           spellCheck={false}
           autoCapitalize="none"
@@ -301,6 +118,12 @@ export default function Calculator() {
         >
           ✅ Calculate
         </button>
+
+        {savedToHistory && (
+          <div className="mt-3 text-center text-sm font-semibold text-green-700 bg-green-50 border border-green-200 rounded-xl py-2">
+            ✓ Saved to History
+          </div>
+        )}
 
         <button
           onClick={handleClear}
@@ -378,11 +201,9 @@ export default function Calculator() {
                 </div>
               ))}
 
-              {/* Grand total */}
+              {/* Grand total row */}
               <div className="flex justify-between items-center mt-1.5 px-4 py-3.5 bg-[#1d6fb8] rounded-xl">
-                <span className="text-xl font-bold text-white">
-                  Grand Total
-                </span>
+                <span className="text-xl font-bold text-white">Grand Total</span>
                 <span className="text-[28px] font-extrabold text-white">
                   {result.total}
                 </span>
@@ -391,6 +212,6 @@ export default function Calculator() {
           )}
         </div>
       )}
-    </div>
+    </>
   );
 }
