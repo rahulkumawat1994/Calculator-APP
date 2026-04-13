@@ -1,179 +1,515 @@
 import { useState } from "react";
-import type { SavedSession, CalculationResult } from "./types";
+import type { SavedSession, CalculationResult, GameSlot, PaymentRecord } from "./types";
 import EditableBreakdown from "./EditableBreakdown";
 
 interface Props {
-  sessions: SavedSession[];
-  onUpdate: (sessions: SavedSession[]) => void;
+  sessions:       SavedSession[];
+  slots:          GameSlot[];
+  payments:       PaymentRecord[];
+  onUpdate:       (sessions: SavedSession[]) => void;
+  onSavePayments: (payments: PaymentRecord[]) => void;
 }
 
-function toggle(key: string, set: Set<string>): Set<string> {
-  const next = new Set(set);
-  if (next.has(key)) next.delete(key);
-  else next.add(key);
-  return next;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function todayStr(): string {
+  const n = new Date();
+  return `${String(n.getDate()).padStart(2,"0")}/${String(n.getMonth()+1).padStart(2,"0")}/${n.getFullYear()}`;
+}
+
+function makeDateStr(year: number, month: number, day: number): string {
+  return `${String(day).padStart(2,"0")}/${String(month).padStart(2,"0")}/${year}`;
+}
+
+function parseDate(str: string): Date {
+  const [d, m, y] = str.split("/").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** Returns an array of day numbers (or null for empty cells) for a month calendar.
+ *  Week starts on Monday. */
+function buildCalendarCells(year: number, month: number): (number | null)[] {
+  const firstDow   = new Date(year, month - 1, 1).getDay(); // 0=Sun
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const startOffset = firstDow === 0 ? 6 : firstDow - 1; // Mon-first offset
+  const cells: (number | null)[] = Array(startOffset).fill(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  return cells;
 }
 
 function mergeResults(session: SavedSession): CalculationResult {
   if (session.overrideResult) return session.overrideResult;
   return {
-    results: session.messages.flatMap(m => m.result.results),
-    total: session.messages.reduce((s, m) => s + m.result.total, 0),
+    results: session.messages.flatMap(m => (m.overrideResult ?? m.result).results),
+    total:   session.messages.reduce((s, m) => s + (m.overrideResult ?? m.result).total, 0),
   };
 }
 
-export default function History({ sessions, onUpdate }: Props) {
-  const [openContacts, setOpenContacts] = useState<Set<string>>(new Set());
-  const [openSessions, setOpenSessions] = useState<Set<string>>(new Set());
+const MONTH_NAMES = [
+  "January","February","March","April","May","June",
+  "July","August","September","October","November","December",
+];
+const DAY_LABELS = ["Mo","Tu","We","Th","Fr","Sa","Su"];
 
-  if (!sessions.length) return null;
+// ─── Component ────────────────────────────────────────────────────────────────
 
-  const grandTotal = sessions.reduce((sum, s) => sum + mergeResults(s).total, 0);
-  const contacts = [...new Set(sessions.map(s => s.contact))];
+/** People who have messages for a specific slot on a given date. */
+function slotPersons(
+  sessions: SavedSession[],
+  slotId: string,
+  date: string,
+): { sessionId: string; contact: string; total: number; result: CalculationResult }[] {
+  const out = [];
+  for (const s of sessions) {
+    if (s.date !== date) continue;
+    const msgs = s.messages.filter(m => m.slotId === slotId);
+    if (!msgs.length) continue;
+    out.push({
+      sessionId: s.id,
+      contact:   s.contact,
+      total:     msgs.reduce((sum, m) => sum + (m.overrideResult ?? m.result).total, 0),
+      result: {
+        results: msgs.flatMap(m => (m.overrideResult ?? m.result).results),
+        total:   msgs.reduce((sum, m) => sum + (m.overrideResult ?? m.result).total, 0),
+      },
+    });
+  }
+  return out.sort((a, b) => a.contact.localeCompare(b.contact));
+}
 
-  const contactTotal = (contact: string) =>
-    sessions
-      .filter(s => s.contact === contact)
-      .reduce((sum, s) => sum + mergeResults(s).total, 0);
+/** Sessions that have at least one message with NO slot assigned (old/manual entries). */
+function unslottedPersons(
+  sessions: SavedSession[],
+  date: string,
+): { sessionId: string; contact: string; total: number; result: CalculationResult }[] {
+  const out = [];
+  for (const s of sessions) {
+    if (s.date !== date) continue;
+    const msgs = s.messages.filter(m => !m.slotId);
+    if (!msgs.length) continue;
+    out.push({
+      sessionId: s.id,
+      contact:   s.contact,
+      total:     msgs.reduce((sum, m) => sum + (m.overrideResult ?? m.result).total, 0),
+      result: {
+        results: msgs.flatMap(m => (m.overrideResult ?? m.result).results),
+        total:   msgs.reduce((sum, m) => sum + (m.overrideResult ?? m.result).total, 0),
+      },
+    });
+  }
+  return out;
+}
 
-  const handleResultChange = (sessionId: string, updated: CalculationResult) => {
-    onUpdate(sessions.map(s => s.id === sessionId ? { ...s, overrideResult: updated } : s));
+export default function History({ sessions, slots, payments, onUpdate, onSavePayments }: Props) {
+  const today = todayStr();
+  const now   = new Date();
+
+  const [cal,           setCal]           = useState({ year: now.getFullYear(), month: now.getMonth() + 1 });
+  const [selectedDate,  setSelectedDate]  = useState(today);
+  const [openSlotIds,   setOpenSlotIds]   = useState<Set<string>>(new Set());
+  const [openPersonIds, setOpenPersonIds] = useState<Set<string>>(new Set());
+  const [confirmClear,  setConfirmClear]  = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // ── Calendar navigation ───────────────────────────────────────────────────
+
+  const shiftMonth = (delta: number) => {
+    setCal(prev => {
+      let m = prev.month + delta;
+      let y = prev.year;
+      if (m > 12) { m = 1;  y++; }
+      if (m < 1)  { m = 12; y--; }
+      return { year: y, month: m };
+    });
   };
 
-  const deleteSession = (sessionId: string) =>
-    onUpdate(sessions.filter(s => s.id !== sessionId));
+  // ── Data ──────────────────────────────────────────────────────────────────
 
-  const deleteContact = (contact: string) =>
-    onUpdate(sessions.filter(s => s.contact !== contact));
+  // Which dates have at least one session (for calendar dots)
+  const activeDates = new Set(sessions.map(s => s.date));
+
+  // Sessions for the selected day, newest entry first
+  const daySessions = sessions
+    .filter(s => s.date === selectedDate)
+    .sort((a, b) => b.createdAt - a.createdAt);
+
+  const dayTotal = daySessions.reduce((s, sess) => s + mergeResults(sess).total, 0);
+
+  // Format selected date nicely
+  const selDateDisplay = parseDate(selectedDate).toLocaleDateString("en-IN", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
+  });
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
+  const toggleSlot   = (id: string) =>
+    setOpenSlotIds(p   => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const togglePerson = (id: string) =>
+    setOpenPersonIds(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const deleteSession = (id: string) => {
+    const session = sessions.find(s => s.id === id);
+    onUpdate(sessions.filter(s => s.id !== id));
+    if (session) {
+      // Remove all payment records for this contact + date
+      onSavePayments(payments.filter(
+        p => !(p.contact === session.contact && p.date === session.date)
+      ));
+    }
+  };
+
+  const handleResultChange = (id: string, result: CalculationResult) =>
+    onUpdate(sessions.map(s => s.id === id ? { ...s, overrideResult: result } : s));
+
+  const cells = buildCalendarCells(cal.year, cal.month);
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="w-full mb-8">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3 px-1">
-        <h2 className="text-xl font-bold text-[#1a1a1a]">📁 History</h2>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-gray-500">
-            Grand Total:{" "}
-            <span className="font-extrabold text-[#1d6fb8]">{grandTotal}</span>
-          </span>
+
+      {/* ── Calendar card ── */}
+      <div className="bg-white rounded-[20px] border-2 border-[#e4edf8] shadow-sm overflow-hidden mb-4">
+
+        {/* Month navigation */}
+        <div className="flex items-center justify-between px-4 py-3 border-b-2 border-[#f0f4f8] bg-[#f8faff]">
           <button
-            onClick={() => onUpdate([])}
-            className="text-xs text-red-500 hover:text-red-700 font-semibold border border-red-200 rounded-lg px-2.5 py-1 transition-colors"
-          >
-            Clear All
-          </button>
+            onClick={() => shiftMonth(-1)}
+            className="w-10 h-10 flex items-center justify-center rounded-xl text-[#1d6fb8] font-bold text-2xl active:bg-[#e8f0fc] transition-colors"
+          >‹</button>
+          <div className="text-[16px] font-extrabold text-[#1a1a1a]">
+            {MONTH_NAMES[cal.month - 1]} {cal.year}
+          </div>
+          <button
+            onClick={() => shiftMonth(1)}
+            className="w-10 h-10 flex items-center justify-center rounded-xl text-[#1d6fb8] font-bold text-2xl active:bg-[#e8f0fc] transition-colors"
+          >›</button>
+        </div>
+
+        {/* Day-of-week headers */}
+        <div className="grid grid-cols-7 px-3 pt-2.5">
+          {DAY_LABELS.map(d => (
+            <div key={d} className="text-center text-[11px] font-bold text-gray-400 pb-1">{d}</div>
+          ))}
+        </div>
+
+        {/* Day cells */}
+        <div className="grid grid-cols-7 gap-y-0.5 px-3 pb-3">
+          {cells.map((day, i) => {
+            if (!day) return <div key={i} />;
+
+            const dateStr    = makeDateStr(cal.year, cal.month, day);
+            const isToday    = dateStr === today;
+            const isSelected = dateStr === selectedDate;
+            const hasData    = activeDates.has(dateStr);
+
+            return (
+              <button
+                key={i}
+                onClick={() => setSelectedDate(dateStr)}
+                className={`relative flex flex-col items-center justify-center mx-auto w-9 h-9 rounded-[10px] text-[14px] font-bold transition-colors ${
+                  isSelected
+                    ? "bg-[#1d6fb8] text-white shadow-sm"
+                    : isToday
+                    ? "bg-[#dceeff] text-[#1d6fb8] ring-2 ring-[#1d6fb8]"
+                    : "hover:bg-[#f0f6ff] text-[#1a1a1a] active:bg-[#e4eeff]"
+                }`}
+              >
+                {day}
+                {/* Activity dot */}
+                {hasData && (
+                  <span className={`absolute bottom-0.5 w-1.5 h-1.5 rounded-full ${
+                    isSelected ? "bg-white/70" : "bg-[#1d6fb8]"
+                  }`} />
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Legend */}
+        <div className="flex items-center gap-4 px-4 pb-3 text-[11px] text-gray-400">
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-[#1d6fb8] inline-block" /> Has entries
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-4 h-4 rounded-[6px] bg-[#dceeff] ring-2 ring-[#1d6fb8]" /> Today
+          </span>
         </div>
       </div>
 
-      {/* Contact accordion */}
-      <div className="space-y-2">
-        {contacts.map(contact => {
-          const cSessions = sessions
-            .filter(s => s.contact === contact)
-            .sort((a, b) => b.createdAt - a.createdAt);
-          const cTotal = contactTotal(contact);
-          const isOpen = openContacts.has(contact);
+      {/* ── Selected date header ── */}
+      <div className="flex items-start justify-between mb-3 px-1">
+        <div>
+          <div className="text-[16px] font-extrabold text-[#1a1a1a]">{selDateDisplay}</div>
+          {daySessions.length > 0 ? (
+            <div className="text-[13px] text-gray-500 mt-0.5">
+              {daySessions.length} {daySessions.length === 1 ? "person" : "people"} · Day total:{" "}
+              <span className="font-extrabold text-[#1d6fb8]">₹{dayTotal}</span>
+            </div>
+          ) : (
+            <div className="text-[13px] text-gray-400 mt-0.5">No entries</div>
+          )}
+        </div>
+        {sessions.length > 0 && (
+          <button
+            onClick={() => setConfirmClear(true)}
+            className="text-[12px] text-red-400 hover:text-red-600 font-semibold border border-red-200 rounded-lg px-2.5 py-1 transition-colors shrink-0 ml-2"
+          >
+            Clear All
+          </button>
+        )}
+      </div>
 
-          return (
-            <div
-              key={contact}
-              className="bg-white rounded-[16px] shadow-sm border border-[#e8eef8] overflow-hidden"
-            >
-              {/* Contact row */}
-              <div
-                onClick={() => setOpenContacts(prev => toggle(contact, prev))}
-                className="flex items-center justify-between px-4 py-3.5 cursor-pointer hover:bg-[#f4f8ff] transition-colors select-none"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="text-[#1d6fb8] text-xs font-bold shrink-0">
-                    {isOpen ? "▼" : "▶"}
-                  </span>
-                  <span className="font-bold text-[#1a1a1a] truncate">{contact}</span>
-                  <span className="text-xs text-gray-400 shrink-0">
-                    {cSessions.length} day{cSessions.length !== 1 ? "s" : ""}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 shrink-0 ml-2">
-                  <span className="font-extrabold text-[#1d6fb8]">{cTotal}</span>
+      {/* Confirm clear dialog */}
+      {confirmClear && (
+        <div className="bg-red-50 border-2 border-red-200 rounded-[16px] px-4 py-4 mb-3">
+          <div className="text-[15px] font-bold text-red-700 mb-3">Delete ALL history?</div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => { onUpdate([]); onSavePayments([]); setConfirmClear(false); }}
+              className="flex-1 py-2.5 bg-red-600 text-white font-bold rounded-[12px] text-[14px]"
+            >Yes, Delete All</button>
+            <button
+              onClick={() => setConfirmClear(false)}
+              className="flex-1 py-2.5 bg-gray-100 text-gray-600 font-semibold rounded-[12px] text-[14px]"
+            >Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirm delete single contact ── */}
+      {confirmDeleteId && (
+        <div className="bg-red-50 border-2 border-red-200 rounded-[16px] px-4 py-4 mb-3">
+          <div className="text-[15px] font-bold text-red-700 mb-1">Delete this entry?</div>
+          <div className="text-[13px] text-red-500 mb-3">This will also remove their payment record for this day.</div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => { deleteSession(confirmDeleteId); setConfirmDeleteId(null); }}
+              className="flex-1 py-2.5 bg-red-600 text-white font-bold rounded-[12px] text-[14px]"
+            >Yes, Delete</button>
+            <button
+              onClick={() => setConfirmDeleteId(null)}
+              className="flex-1 py-2.5 bg-gray-100 text-gray-600 font-semibold rounded-[12px] text-[14px]"
+            >Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Day view: Game → Person ── */}
+      {daySessions.length === 0 ? (
+        <div className="bg-white rounded-[18px] border-2 border-[#e4edf8] px-5 py-10 text-center shadow-sm">
+          <div className="text-[36px] mb-2">📭</div>
+          <div className="text-[16px] font-semibold text-gray-400">No entries for this day</div>
+          <div className="text-[13px] text-gray-300 mt-1">Tap a highlighted date on the calendar</div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+
+          {/* ── One section per game slot ── */}
+          {slots
+            .filter(slot => slot.enabled)
+            .sort((a, b) => {
+              // Sort chronologically within a day
+              const [ah, am] = a.time.split(":").map(Number);
+              const [bh, bm] = b.time.split(":").map(Number);
+              return ah * 60 + am - (bh * 60 + bm);
+            })
+            .map(slot => {
+              const persons   = slotPersons(daySessions, slot.id, selectedDate);
+              if (!persons.length) return null;
+
+              const slotTotal    = persons.reduce((s, p) => s + p.total, 0);
+              const isOpen       = openSlotIds.has(slot.id);
+              const slotPayments = payments.filter(p => p.slotId === slot.id && p.date === selectedDate);
+              const slotReceived = slotPayments.reduce((s, p) => s + (p.amountPaid ?? 0), 0);
+              const slotPending  = Math.max(0, slotTotal - slotReceived);
+
+              return (
+                <div key={slot.id} className="bg-white rounded-[20px] border-2 border-[#e4edf8] overflow-hidden shadow-sm">
+                  {/* Game header */}
                   <button
-                    onClick={e => {
-                      e.stopPropagation();
-                      deleteContact(contact);
-                    }}
-                    className="text-gray-300 hover:text-red-400 transition-colors p-1 text-base"
-                    title="Delete all entries for this contact"
+                    onClick={() => toggleSlot(slot.id)}
+                    className="w-full flex items-center gap-3 px-4 py-4 hover:bg-[#f5f9ff] active:bg-[#eef4ff] transition-colors text-left"
                   >
-                    🗑
-                  </button>
-                </div>
-              </div>
-
-              {/* Date rows */}
-              {isOpen && (
-                <div className="border-t border-[#f0f4f8]">
-                  {cSessions.map(session => {
-                    const combined = mergeResults(session);
-                    const isSessionOpen = openSessions.has(session.id);
-
-                    return (
-                      <div
-                        key={session.id}
-                        className="border-b border-[#f0f4f8] last:border-0"
-                      >
-                        {/* Date row */}
-                        <div
-                          onClick={() =>
-                            setOpenSessions(prev => toggle(session.id, prev))
-                          }
-                          className="flex items-center justify-between px-5 py-3 bg-[#f8faff] cursor-pointer hover:bg-[#eef4ff] transition-colors select-none"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="text-[#1d6fb8] text-[10px] font-bold shrink-0">
-                              {isSessionOpen ? "▼" : "▶"}
-                            </span>
-                            <span className="text-sm font-semibold text-gray-700">
-                              📅 {session.date}
-                            </span>
-                            <span className="text-xs text-gray-400">
-                              {session.messages.length} msg{session.messages.length !== 1 ? "s" : ""}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className="text-sm font-bold text-[#1d6fb8]">
-                              {combined.total}
-                            </span>
-                            <button
-                              onClick={e => {
-                                e.stopPropagation();
-                                deleteSession(session.id);
-                              }}
-                              className="text-gray-300 hover:text-red-400 transition-colors p-1 text-sm"
-                              title="Delete this date"
-                            >
-                              🗑
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Combined breakdown */}
-                        {isSessionOpen && (
-                          <div className="px-4 py-3 bg-[#f8faff]">
-                            <EditableBreakdown
-                              compact
-                              result={combined}
-                              onChange={r => handleResultChange(session.id, r)}
-                            />
-                          </div>
+                    <span className="text-[28px] leading-none shrink-0">{slot.emoji}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[17px] font-extrabold text-[#1a1a1a]">
+                        {slot.name} Game
+                      </div>
+                      <div className="text-[13px] text-gray-400 mt-0.5">
+                        {persons.length} {persons.length === 1 ? "person" : "people"} ·{" "}
+                        Total <span className="font-bold text-[#1d6fb8]">₹{slotTotal}</span>
+                      </div>
+                      <div className="flex gap-3 mt-1">
+                        <span className="text-[12px] font-semibold text-green-600">
+                          ✅ Received ₹{slotReceived}
+                        </span>
+                        {slotPending > 0 && (
+                          <span className="text-[12px] font-semibold text-orange-500">
+                            ⏳ Pending ₹{slotPending}
+                          </span>
+                        )}
+                        {slotPending === 0 && slotReceived > 0 && (
+                          <span className="text-[12px] font-semibold text-green-500">
+                            🎉 Fully Paid
+                          </span>
                         )}
                       </div>
-                    );
-                  })}
+                    </div>
+                    <span className="text-[#1d6fb8] font-bold text-[16px] shrink-0">
+                      {isOpen ? "▲" : "▼"}
+                    </span>
+                  </button>
+
+                  {/* People inside this game */}
+                  {isOpen && (
+                    <div className="border-t-2 border-[#eef2f8] divide-y-2 divide-[#f5f7fb]">
+                      {persons.map(person => {
+                        const personKey = `${slot.id}:${person.sessionId}`;
+                        const isPersonOpen = openPersonIds.has(personKey);
+
+                        return (
+                          <div key={person.sessionId}>
+                            <button
+                              onClick={() => togglePerson(personKey)}
+                              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#f8faff] active:bg-[#eef4ff] transition-colors text-left bg-[#f8faff]"
+                            >
+                              <span className="text-[18px] shrink-0">👤</span>
+                              <span className="flex-1 text-[15px] font-bold text-[#1a1a1a] truncate min-w-0">
+                                {person.contact}
+                              </span>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-[17px] font-extrabold text-[#1d6fb8]">
+                                  ₹{person.total}
+                                </span>
+                                <button
+                                  onClick={e => { e.stopPropagation(); setConfirmDeleteId(person.sessionId); }}
+                                  className="text-gray-300 hover:text-red-400 transition-colors p-1"
+                                  title="Delete"
+                                >🗑</button>
+                                <span className="text-[#1d6fb8] font-bold text-[12px]">
+                                  {isPersonOpen ? "▲" : "▼"}
+                                </span>
+                              </div>
+                            </button>
+
+                            {isPersonOpen && (
+                              <div className="px-4 py-3 bg-white border-t border-[#f0f4f8]">
+                                <EditableBreakdown
+                                  compact
+                                  result={person.result}
+                                  onChange={r => handleResultChange(person.sessionId, r)}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {/* Game subtotal */}
+                      <div className="flex items-center justify-between px-4 py-2.5 bg-[#eef4ff]">
+                        <span className="text-[13px] font-bold text-[#1d6fb8]">
+                          {slot.emoji} {slot.name} Total
+                        </span>
+                        <span className="text-[16px] font-extrabold text-[#1d6fb8]">₹{slotTotal}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+
+          {/* Unassigned entries (old data / manual without slot) */}
+          {(() => {
+            const unslotted        = unslottedPersons(daySessions, selectedDate);
+            if (!unslotted.length) return null;
+            const isOpen           = openSlotIds.has("__unslotted__");
+            const total            = unslotted.reduce((s, p) => s + p.total, 0);
+            const unslottedPayments = payments.filter(p => !p.slotId && p.date === selectedDate);
+            const unslottedReceived = unslottedPayments.reduce((s, p) => s + (p.amountPaid ?? 0), 0);
+            const unslottedPending  = Math.max(0, total - unslottedReceived);
+            return (
+              <div className="bg-white rounded-[20px] border-2 border-[#e4edf8] overflow-hidden shadow-sm">
+                <button
+                  onClick={() => toggleSlot("__unslotted__")}
+                  className="w-full flex items-center gap-3 px-4 py-4 hover:bg-[#f5f9ff] text-left"
+                >
+                  <span className="text-[28px]">📋</span>
+                  <div className="flex-1">
+                    <div className="text-[17px] font-extrabold text-[#1a1a1a]">Other Entries</div>
+                    <div className="text-[13px] text-gray-400 mt-0.5">
+                      {unslotted.length} {unslotted.length === 1 ? "person" : "people"} ·{" "}
+                      Total <span className="font-bold text-[#1d6fb8]">₹{total}</span>
+                    </div>
+                    <div className="flex gap-3 mt-1">
+                      <span className="text-[12px] font-semibold text-green-600">
+                        ✅ Received ₹{unslottedReceived}
+                      </span>
+                      {unslottedPending > 0 && (
+                        <span className="text-[12px] font-semibold text-orange-500">
+                          ⏳ Pending ₹{unslottedPending}
+                        </span>
+                      )}
+                      {unslottedPending === 0 && unslottedReceived > 0 && (
+                        <span className="text-[12px] font-semibold text-green-500">
+                          🎉 Fully Paid
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-[#1d6fb8] font-bold text-[16px]">{isOpen ? "▲" : "▼"}</span>
+                </button>
+                {isOpen && (
+                  <div className="border-t-2 border-[#eef2f8] divide-y-2 divide-[#f5f7fb]">
+                    {unslotted.map(person => {
+                      const personKey    = `__unslotted__:${person.sessionId}`;
+                      const isPersonOpen = openPersonIds.has(personKey);
+                      return (
+                        <div key={person.sessionId}>
+                          <button
+                            onClick={() => togglePerson(personKey)}
+                            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#f8faff] bg-[#f8faff] text-left"
+                          >
+                            <span className="text-[18px]">👤</span>
+                            <span className="flex-1 text-[15px] font-bold text-[#1a1a1a] truncate">
+                              {person.contact}
+                            </span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-[17px] font-extrabold text-[#1d6fb8]">₹{person.total}</span>
+                              <button
+                                onClick={e => { e.stopPropagation(); setConfirmDeleteId(person.sessionId); }}
+                                className="text-gray-300 hover:text-red-400 p-1"
+                              >🗑</button>
+                              <span className="text-[#1d6fb8] font-bold text-[12px]">{isPersonOpen ? "▲" : "▼"}</span>
+                            </div>
+                          </button>
+                          {isPersonOpen && (
+                            <div className="px-4 py-3 bg-white border-t border-[#f0f4f8]">
+                              <EditableBreakdown
+                                compact
+                                result={person.result}
+                                onChange={r => handleResultChange(person.sessionId, r)}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Day total bar */}
+          <div className="bg-[#1a3a5c] rounded-[16px] px-5 py-3.5 flex items-center justify-between shadow-sm">
+            <span className="text-[15px] font-bold text-white/70">Day Total</span>
+            <span className="text-[24px] font-extrabold text-white">₹{dayTotal}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

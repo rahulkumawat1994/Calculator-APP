@@ -10,7 +10,7 @@ export interface Segment {
 export interface CalculationResult {
   results: Segment[];
   total: number;
-  failedLines?: string[]; // lines that produced 0 output (no rate found / no valid numbers)
+  failedLines?: string[];
 }
 
 export interface SavedMessage {
@@ -18,7 +18,8 @@ export interface SavedMessage {
   timestamp: string;
   text: string;
   result: CalculationResult;
-  overrideResult?: CalculationResult; // stores user-edited breakdown for this individual entry
+  overrideResult?: CalculationResult;
+  slotId?: string;
 }
 
 export interface SavedSession {
@@ -27,5 +28,29 @@ export interface SavedSession {
   date: string;
   messages: SavedMessage[];
   createdAt: number;
-  overrideResult?: CalculationResult; // stores user-edited breakdown
+  overrideResult?: CalculationResult;
+}
+
+export interface GameSlot {
+  id: string;
+  name: string;
+  time: string; // "10:00" 24-hour format
+  emoji: string;
+  enabled: boolean;
+}
+
+export interface AppSettings {
+  commissionPct: number;
+}
+
+export interface PaymentRecord {
+  id: string; // `${contact}|${slotId}|${date}`
+  slotId: string;
+  slotName: string;
+  date: string;
+  contact: string;
+  amountPaid: number | null;
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
 }

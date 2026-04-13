@@ -1,4 +1,4 @@
-import type { Segment, CalculationResult, SavedMessage, SavedSession } from './types';
+import type { Segment, CalculationResult, SavedMessage, SavedSession, GameSlot, AppSettings, PaymentRecord } from './types';
 
 // ─── Number helpers ────────────────────────────────────────────────────────────
 
@@ -244,6 +244,7 @@ export interface ParsedMessage {
   timestamp: string;
   text: string;
   result: CalculationResult;
+  slotId?: string;
 }
 
 export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
@@ -256,10 +257,16 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
   while ((match = headerRegex.exec(input)) !== null) {
     const content = match[1];
     const contact = match[2].trim();
-    // Support both [14:26, 12/04/2026] and [12/04, 2:34 pm] formats
-    const fullDateM = content.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
+    // Support both [6:16 pm, 12/4/2026], [14:26, 12/04/2026] and [12/04, 2:34 pm] formats
+    const fullDateM  = content.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
     const shortDateM = content.match(/^(\d{1,2}\/\d{1,2})\s*,/);
-    const dateM = fullDateM ?? shortDateM;
+    const year = new Date().getFullYear();
+    const rawDate = fullDateM?.[1] ?? (shortDateM ? `${shortDateM[1]}/${year}` : '');
+    // Normalize day and month to 2 digits so "12/4/2026" → "12/04/2026"
+    const normalizedDate = rawDate
+      ? rawDate.split('/').map((p, i) => (i < 2 ? p.padStart(2, '0') : p)).join('/')
+      : '';
+    const dateM = normalizedDate ? [null, normalizedDate] : null;
     const timeM = content.match(/(\d{1,2}:\d{2}(?:\s*[ap]m)?)/i);
     headers.push({
       index: match.index,
@@ -308,6 +315,7 @@ export function mergeIntoSessions(
       timestamp: msg.timestamp,
       text: msg.text,
       result: msg.result,
+      ...(msg.slotId ? { slotId: msg.slotId } : {}),
     };
     const session = updated.find(s => s.contact === msg.contact && s.date === msg.date);
     if (session) {
@@ -334,4 +342,125 @@ export function loadSessions(): SavedSession[] {
 
 export function saveSessions(sessions: SavedSession[]): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+}
+
+// ─── Game slots ────────────────────────────────────────────────────────────────
+
+export const DEFAULT_GAME_SLOTS: GameSlot[] = [
+  { id: 'usa',     name: 'USA',     emoji: '🇺🇸', time: '10:00', enabled: true },
+  { id: 'india',   name: 'India',   emoji: '🇮🇳', time: '14:00', enabled: true },
+  { id: 'japan',   name: 'Japan',   emoji: '🇯🇵', time: '18:00', enabled: true },
+  { id: 'italy',   name: 'Italy',   emoji: '🇮🇹', time: '22:00', enabled: true },
+  { id: 'vietnam', name: 'Vietnam', emoji: '🇻🇳', time: '02:00', enabled: true },
+];
+
+/** Returns minutes since midnight for a "HH:MM" string. */
+export function slotMinutes(time: string): number {
+  const [h, m] = time.split(':').map(Number);
+  return h * 60 + m;
+}
+
+/** Formats "14:00" → "2:00 PM". */
+export function formatSlotTime(time: string): string {
+  const [h, m] = time.split(':').map(Number);
+  const ampm = h < 12 ? 'AM' : 'PM';
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+/**
+ * Returns the currently active game slot — the next slot whose result hasn't
+ * been announced yet (i.e. whose time hasn't passed).
+ */
+export function getCurrentSlot(slots: GameSlot[]): GameSlot {
+  const enabled = slots.filter(s => s.enabled);
+  if (!enabled.length) return DEFAULT_GAME_SLOTS[1]; // fallback USA
+  const now = new Date();
+  const cur = now.getHours() * 60 + now.getMinutes();
+  const sorted = [...enabled].sort((a, b) => slotMinutes(a.time) - slotMinutes(b.time));
+  const next = sorted.find(s => slotMinutes(s.time) > cur);
+  return (next ?? sorted[0]);
+}
+
+const SLOTS_KEY    = 'calc_slots_v1';
+const SETTINGS_KEY = 'calc_settings_v1';
+const PAYMENTS_KEY = 'calc_payments_v1';
+
+export function loadGameSlots(): GameSlot[] {
+  try { return JSON.parse(localStorage.getItem(SLOTS_KEY) ?? 'null') ?? DEFAULT_GAME_SLOTS; }
+  catch { return DEFAULT_GAME_SLOTS; }
+}
+export function saveGameSlots(slots: GameSlot[]): void {
+  localStorage.setItem(SLOTS_KEY, JSON.stringify(slots));
+}
+
+export const DEFAULT_SETTINGS: AppSettings = { commissionPct: 5 };
+
+export function loadSettings(): AppSettings {
+  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null') ?? DEFAULT_SETTINGS; }
+  catch { return DEFAULT_SETTINGS; }
+}
+export function saveSettings(s: AppSettings): void {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+}
+
+export function loadPaymentRecords(): PaymentRecord[] {
+  try { return JSON.parse(localStorage.getItem(PAYMENTS_KEY) ?? '[]') as PaymentRecord[]; }
+  catch { return []; }
+}
+export function savePaymentRecords(records: PaymentRecord[]): void {
+  localStorage.setItem(PAYMENTS_KEY, JSON.stringify(records));
+}
+
+/**
+ * Creates a PaymentRecord stub for each contact that doesn't already have one
+ * for this slot + date combination.
+ */
+export function upsertPaymentStubs(
+  existing: PaymentRecord[],
+  contacts: string[],
+  slot: GameSlot,
+  date: string,
+): PaymentRecord[] {
+  const updated = [...existing];
+  for (const contact of contacts) {
+    const id = `${contact}|${slot.id}|${date}`;
+    if (!updated.find(r => r.id === id)) {
+      updated.push({
+        id, slotId: slot.id, slotName: slot.name,
+        date, contact,
+        amountPaid: null, notes: '',
+        createdAt: Date.now(), updatedAt: Date.now(),
+      });
+    }
+  }
+  return updated;
+}
+
+/** Creates or updates a payment record's amountPaid. */
+export function upsertPayment(
+  records: PaymentRecord[],
+  patch: Pick<PaymentRecord, 'id' | 'contact' | 'slotId' | 'slotName' | 'date'> & {
+    amountPaid: number | null;
+    notes?: string;
+  }
+): PaymentRecord[] {
+  const now = Date.now();
+  const idx = records.findIndex(r => r.id === patch.id);
+  if (idx >= 0) {
+    const updated = [...records];
+    updated[idx] = {
+      ...updated[idx],
+      amountPaid: patch.amountPaid,
+      notes: patch.notes ?? updated[idx].notes,
+      updatedAt: now,
+    };
+    return updated;
+  }
+  return [...records, {
+    id: patch.id, slotId: patch.slotId, slotName: patch.slotName,
+    date: patch.date, contact: patch.contact,
+    amountPaid: patch.amountPaid, notes: patch.notes ?? '',
+    createdAt: now, updatedAt: now,
+  }];
 }
