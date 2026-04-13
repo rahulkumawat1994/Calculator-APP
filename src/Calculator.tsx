@@ -17,7 +17,6 @@ export default function Calculator({ sessions, onSave }: Props) {
   const [result, setResult] = useState<CalculationResult | null>(null);
   const [copied, setCopied] = useState(false);
   const [savedToHistory, setSavedToHistory] = useState(false);
-  // IDs of the sessions that were last auto-saved on Calculate
   const [lastSessionIds, setLastSessionIds] = useState<string[]>([]);
   const [hasUnsavedEdits, setHasUnsavedEdits] = useState(false);
 
@@ -63,7 +62,6 @@ export default function Calculator({ sessions, onSave }: Props) {
           result: calcResult,
         }]);
         onSave(updated);
-        // The new session's id is "Manual Entry|<date>"
         const sid = `Manual Entry|${date}`;
         setLastSessionIds(updated.filter(s => s.id === sid).map(s => s.id));
         setHasUnsavedEdits(false);
@@ -72,7 +70,6 @@ export default function Calculator({ sessions, onSave }: Props) {
     setCopied(false);
   };
 
-  // Push the current (possibly edited) result back into the matching history sessions
   const handleSaveToHistory = () => {
     if (!result || !lastSessionIds.length) return;
     const updated = sessions.map(s =>

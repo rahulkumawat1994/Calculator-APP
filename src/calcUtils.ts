@@ -45,6 +45,8 @@ export function processLine(line: string): Segment[] {
   //   (rate suffix)  (ratesuffix)   ( rate )       (rate        ← missing close
   const trimmed = line
     .trim()
+    // "into" (with any spacing or split like "in to") is a rate separator alias for x
+    .replace(/\s*in\s*to\s*/gi, 'x')
     // (rate / \ | . suffix)  or  (rate / \ | . suffix  (any non-alpha separator)
     .replace(/\(\s*(\d+)\s*[\/\\|.]\s*([a-zA-Z]*)\s*\)?/g, '($1)$2')
     // (rate suffix)  or  (rate suffix  (space between rate and suffix)
@@ -75,37 +77,31 @@ export function processLine(line: string): Segment[] {
   }
   if (results.length) return results;
 
-  // X format: [prefix][numbers]x[rate][suffix]
-  const xPattern = /([^x]*)x(\d+)\s*([a-zA-Z]*)/gi;
-  while ((match = xPattern.exec(trimmed)) !== null) {
-    const nums = extractPairedNumbers(match[1]);
-    if (!nums.length) continue;
-    const suffix = match[3] ?? '';
-    const isWP = /wp/i.test(suffix), isDouble = /[ab]/i.test(suffix);
-    const rate = parseInt(match[2], 10);
-    const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
-    if (count > 0) {
-      const display = match[1].replace(/^\D+/, '').replace(/\D+$/, '').trim();
-      results.push({ line: display || match[1].trim(), rate, isWP, isDouble, count, lineTotal: count * rate });
+  // ── Unified separator format ──────────────────────────────────────────────────
+  // Handles x / = / * as rate separators, with optional spaces anywhere.
+  // A single pass finds every rate marker; the text before each is the numbers portion.
+  // Covers: 32-23*5, 32-23 * 5, 32-23x5, 32-23 x 5, 32-23=5, 32-23===5, etc.
+  const sepRe = /(?:x|=+|\*)\s*(\d+)\s*([a-zA-Z]*)/gi;
+  const sepMatches = [...trimmed.matchAll(sepRe)];
+  if (sepMatches.length > 0) {
+    let prevEnd = 0;
+    for (const m of sepMatches) {
+      const numbersText = trimmed.slice(prevEnd, m.index);
+      const rate = parseInt(m[1], 10);
+      const suffix = m[2] ?? '';
+      const nums = extractPairedNumbers(numbersText);
+      if (nums.length > 0) {
+        const isWP = /wp/i.test(suffix), isDouble = /[ab]/i.test(suffix);
+        const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
+        if (count > 0) {
+          const display = numbersText.replace(/^\D+/, '').replace(/\D+$/, '').trim();
+          results.push({ line: display || numbersText.trim(), rate, isWP, isDouble, count, lineTotal: count * rate });
+        }
+      }
+      prevEnd = (m.index ?? 0) + m[0].length;
     }
+    if (results.length) return results;
   }
-  if (results.length) return results;
-
-  // Equals format: numbers=+[rate][suffix]
-  const eqPattern = /([^=]*)=+(\d+)\s*([a-zA-Z]*)/gi;
-  while ((match = eqPattern.exec(trimmed)) !== null) {
-    const nums = extractPairedNumbers(match[1]);
-    if (!nums.length) continue;
-    const suffix = match[3] ?? '';
-    const isWP = /wp/i.test(suffix), isDouble = /[ab]/i.test(suffix);
-    const rate = parseInt(match[2], 10);
-    const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
-    if (count > 0) {
-      const display = match[1].replace(/^\D+/, '').replace(/\D+$/, '').trim();
-      results.push({ line: display || match[1].trim(), rate, isWP, isDouble, count, lineTotal: count * rate });
-    }
-  }
-  if (results.length) return results;
 
   // Plain comma format: last number = rate, any trailing text = WP indicator
   if (/,/.test(trimmed)) {
@@ -138,8 +134,8 @@ export function preprocessText(text: string): string {
 function extractFirstRate(line: string): { rate: number; suffix: string } | null {
   let m: RegExpMatchArray | null;
   if ((m = line.match(/\((\d+)\)\s*([a-zA-Z]*)/i))) return { rate: parseInt(m[1]), suffix: m[2] ?? '' };
-  if ((m = line.match(/[xX](\d+)\s*([a-zA-Z]*)/))) return { rate: parseInt(m[1]), suffix: m[2] ?? '' };
-  if ((m = line.match(/=+(\d+)\s*([a-zA-Z]*)/))) return { rate: parseInt(m[1]), suffix: m[2] ?? '' };
+  // Unified: x / = / * with optional spaces around the rate number
+  if ((m = line.match(/(?:x|=+|\*)\s*(\d+)\s*([a-zA-Z]*)/i))) return { rate: parseInt(m[1]), suffix: m[2] ?? '' };
   return null;
 }
 
@@ -149,11 +145,22 @@ export function calculateTotal(text: string): CalculationResult {
   const mergedLines: string[] = [];
   let pending = '';
 
-  for (const line of rawLines) {
-    const hasExplicitRate = /\(\d+\)/.test(line) || /x\d+/i.test(line) || /=\d+/.test(line);
+  for (const rawLine of rawLines) {
+    // Normalize "into" (any spacing variant) → "x" for rate-detection and merging
+    const line = rawLine.replace(/\s*in\s*to\s*/gi, 'x');
+    const hasExplicitRate = /\(\d+\)/.test(line) || /x\s*\d+/i.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
     if (!hasExplicitRate && !hasCommaRate) {
-      pending = pending ? pending + ' ' + line : line;
+      // Only merge as a rate-less number line if it contains ONLY digits + separators.
+      // Lines with letters or unknown chars (but no valid rate) are likely typos → error.
+      const isPureNumbers = /^[\d\s\-_.,:|\/\\]+$/.test(line);
+      if (isPureNumbers) {
+        pending = pending ? pending + ' ' + line : line;
+      } else {
+        // Flush any accumulated pending, then mark this line as its own failed entry
+        if (pending) { mergedLines.push(pending); pending = ''; }
+        mergedLines.push(line);
+      }
     } else {
       if (pending) {
         const ri = extractFirstRate(line);
@@ -165,8 +172,23 @@ export function calculateTotal(text: string): CalculationResult {
   }
   if (pending) mergedLines.push(pending);
 
-  const results = mergedLines.flatMap(processLine);
-  return { results, total: results.reduce((s, r) => s + r.lineTotal, 0) };
+  const results: import('./types').Segment[] = [];
+  const failedLines: string[] = [];
+
+  for (const line of mergedLines) {
+    const segs = processLine(line);
+    if (segs.length > 0) {
+      results.push(...segs);
+    } else if (line.trim()) {
+      failedLines.push(line.trim());
+    }
+  }
+
+  return {
+    results,
+    total: results.reduce((s, r) => s + r.lineTotal, 0),
+    ...(failedLines.length > 0 ? { failedLines } : {}),
+  };
 }
 
 // ─── WhatsApp message parser ───────────────────────────────────────────────────
@@ -190,7 +212,10 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
   while ((match = headerRegex.exec(input)) !== null) {
     const content = match[1];
     const contact = match[2].trim();
-    const dateM = content.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
+    // Support both [14:26, 12/04/2026] and [12/04, 2:34 pm] formats
+    const fullDateM = content.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
+    const shortDateM = content.match(/^(\d{1,2}\/\d{1,2})\s*,/);
+    const dateM = fullDateM ?? shortDateM;
     const timeM = content.match(/(\d{1,2}:\d{2}(?:\s*[ap]m)?)/i);
     headers.push({
       index: match.index,

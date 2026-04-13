@@ -29,7 +29,6 @@ export default function History({ sessions, onUpdate }: Props) {
   if (!sessions.length) return null;
 
   const grandTotal = sessions.reduce((sum, s) => sum + mergeResults(s).total, 0);
-
   const contacts = [...new Set(sessions.map(s => s.contact))];
 
   const contactTotal = (contact: string) =>
@@ -135,6 +134,9 @@ export default function History({ sessions, onUpdate }: Props) {
                             <span className="text-sm font-semibold text-gray-700">
                               📅 {session.date}
                             </span>
+                            <span className="text-xs text-gray-400">
+                              {session.messages.length} msg{session.messages.length !== 1 ? "s" : ""}
+                            </span>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             <span className="text-sm font-bold text-[#1d6fb8]">
@@ -153,7 +155,7 @@ export default function History({ sessions, onUpdate }: Props) {
                           </div>
                         </div>
 
-                        {/* Breakdown */}
+                        {/* Combined breakdown */}
                         {isSessionOpen && (
                           <div className="px-4 py-3 bg-[#f8faff]">
                             <EditableBreakdown

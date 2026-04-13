@@ -10,6 +10,7 @@ export interface Segment {
 export interface CalculationResult {
   results: Segment[];
   total: number;
+  failedLines?: string[]; // lines that produced 0 output (no rate found / no valid numbers)
 }
 
 export interface SavedMessage {
@@ -17,6 +18,7 @@ export interface SavedMessage {
   timestamp: string;
   text: string;
   result: CalculationResult;
+  overrideResult?: CalculationResult; // stores user-edited breakdown for this individual entry
 }
 
 export interface SavedSession {
