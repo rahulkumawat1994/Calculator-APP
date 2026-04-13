@@ -103,17 +103,23 @@ export default function SlotsSettings({ slots, settings, onSaveSlots, onSaveSett
                   </div>
                 </div>
 
-                {/* ON/OFF toggle */}
+                {/* ON/OFF toggle — saves immediately */}
                 <button
-                  onClick={() => updateSlot(slot.id, { enabled: !slot.enabled })}
-                  className={`w-14 h-8 rounded-full relative transition-colors shrink-0 ${
+                  onClick={() => {
+                    const updated = localSlots.map(s =>
+                      s.id === slot.id ? { ...s, enabled: !s.enabled } : s
+                    );
+                    setLocalSlots(updated);
+                    onSaveSlots(updated);
+                  }}
+                  className={`w-14 h-8 rounded-full relative overflow-hidden transition-colors shrink-0 ${
                     slot.enabled ? "bg-[#1d6fb8]" : "bg-gray-300"
                   }`}
                   title={slot.enabled ? "Tap to hide this game" : "Tap to show this game"}
                 >
                   <span
-                    className={`absolute top-1 w-6 h-6 bg-white rounded-full shadow transition-transform ${
-                      slot.enabled ? "translate-x-7" : "translate-x-1"
+                    className={`absolute top-1 left-1 w-6 h-6 bg-white rounded-full shadow-md transition-transform duration-200 ${
+                      slot.enabled ? "translate-x-6" : "translate-x-0"
                     }`}
                   />
                 </button>
