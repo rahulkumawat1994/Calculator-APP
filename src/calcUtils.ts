@@ -36,6 +36,17 @@ function extractPairedNumbers(text: string): number[] {
   return out;
 }
 
+// ─── Flag detector ─────────────────────────────────────────────────────────────
+// WP keywords: "wp", "palat" (Hindi पलट = reverse/pair).
+// AB: suffix contains 'a' or 'b' AFTER removing WP keywords so that words like
+// "palat" (which contain 'a') never accidentally trigger AB mode.
+function parseFlags(text: string): { isWP: boolean; isDouble: boolean } {
+  const isWP = /wp/i.test(text) || /palat/i.test(text);
+  const cleaned = text.replace(/wp/gi, '').replace(/palat/gi, '').trim();
+  const isDouble = /[ab]/i.test(cleaned);
+  return { isWP, isDouble };
+}
+
 // ─── Line parser ───────────────────────────────────────────────────────────────
 
 export function processLine(line: string): Segment[] {
@@ -67,7 +78,7 @@ export function processLine(line: string): Segment[] {
     const nums = (match[1].match(/(?<!\d)\d{2}(?!\d)/g) ?? []).map(Number);
     if (!nums.length) continue;
     const suffix = match[3] ?? '';
-    const isWP = /wp/i.test(suffix), isDouble = /[ab]/i.test(suffix);
+    const { isWP, isDouble } = parseFlags(suffix);
     const rate = parseInt(match[2], 10);
     const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
     if (count > 0) {
@@ -91,7 +102,7 @@ export function processLine(line: string): Segment[] {
       const suffix = m[2] ?? '';
       const nums = extractPairedNumbers(numbersText);
       if (nums.length > 0) {
-        const isWP = /wp/i.test(suffix), isDouble = /[ab]/i.test(suffix);
+        const { isWP, isDouble } = parseFlags(suffix);
         const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
         if (count > 0) {
           const display = numbersText.replace(/^\D+/, '').replace(/\D+$/, '').trim();
@@ -103,14 +114,43 @@ export function processLine(line: string): Segment[] {
     if (results.length) return results;
   }
 
+  // ── Space-separated flag format ──────────────────────────────────────────────
+  // Handles: "444 10 Ab", "56 74 50 wp", "13 31 15 palat"
+  // Last number before a flag keyword = rate; everything before = numbers.
+  {
+    const flagMatch = trimmed.match(/\b(wp|ab|palat)\b/i);
+    if (flagMatch && flagMatch.index !== undefined) {
+      const beforeFlag = trimmed.slice(0, flagMatch.index).trim();
+      const flagText = trimmed.slice(flagMatch.index);
+      const allNumMatches = [...beforeFlag.matchAll(/\d+/g)];
+      if (allNumMatches.length >= 2) {
+        const lastNum = allNumMatches[allNumMatches.length - 1];
+        const rate = Number(lastNum[0]);
+        const numbersText = beforeFlag.slice(0, lastNum.index!);
+        const nums = extractPairedNumbers(numbersText);
+        if (nums.length > 0) {
+          const { isWP, isDouble } = parseFlags(flagText);
+          const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
+          if (count > 0) {
+            const display = numbersText.replace(/^\D+/, '').replace(/\D+$/, '').trim();
+            results.push({ line: display || numbersText.trim(), rate, isWP, isDouble, count, lineTotal: count * rate });
+          }
+        }
+      }
+    }
+  }
+  if (results.length) return results;
+
   // Plain comma format: last number = rate, any trailing text = WP indicator
   if (/,/.test(trimmed)) {
     const all = [...trimmed.matchAll(/\d+/g)];
     if (all.length >= 2) {
       const last = all[all.length - 1];
       const after = trimmed.slice((last.index ?? 0) + last[0].length);
-      const isDouble = /[ab]/i.test(after);
-      const isWP = /\S/.test(after) && !/^[ab\s]+$/i.test(after.trim());
+      const { isDouble } = parseFlags(after);
+      // Comma format: any trailing non-empty, non-ab text = WP (covers Hindi words like पलटके साथ)
+      const { isWP: isWPFlag } = parseFlags(after);
+      const isWP = isWPFlag || (/\S/.test(after) && !/^[ab\s]+$/i.test(after.trim()));
       const rate = Number(last[0]);
       const nums = extractPairedNumbers(trimmed.slice(0, last.index));
       if (nums.length > 0) {
@@ -150,14 +190,18 @@ export function calculateTotal(text: string): CalculationResult {
     const line = rawLine.replace(/\s*in\s*to\s*/gi, 'x');
     const hasExplicitRate = /\(\d+\)/.test(line) || /x\s*\d+/i.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
+    // Lines with a known flag word (wp/ab/palat) are self-contained — send directly to processLine
+    const hasKnownFlag = /\b(?:wp|ab|palat)\b/i.test(line);
     if (!hasExplicitRate && !hasCommaRate) {
-      // Only merge as a rate-less number line if it contains ONLY digits + separators.
-      // Lines with letters or unknown chars (but no valid rate) are likely typos → error.
       const isPureNumbers = /^[\d\s\-_.,:|\/\\]+$/.test(line);
-      if (isPureNumbers) {
+      if (hasKnownFlag) {
+        // Self-contained flag line — flush pending and process independently
+        if (pending) { mergedLines.push(pending); pending = ''; }
+        mergedLines.push(line);
+      } else if (isPureNumbers) {
         pending = pending ? pending + ' ' + line : line;
       } else {
-        // Flush any accumulated pending, then mark this line as its own failed entry
+        // Unknown chars without rate or flag → likely a typo → error
         if (pending) { mergedLines.push(pending); pending = ''; }
         mergedLines.push(line);
       }
