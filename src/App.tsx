@@ -3,13 +3,7 @@ import Calculator from "./Calculator";
 import History from "./History";
 import GamesView from "./GamesView";
 import SlotsSettings from "./SlotsSettings";
-import {
-  loadSessions, saveSessions,
-  loadGameSlots, saveGameSlots,
-  loadSettings, saveSettings,
-  loadPaymentRecords, savePaymentRecords,
-} from "./calcUtils";
-import type { SavedSession, GameSlot, AppSettings, PaymentRecord } from "./types";
+import { useAppData } from "./useAppData";
 
 type Tab = "calculator" | "history" | "games" | "settings";
 
@@ -22,15 +16,22 @@ const TABS: { id: Tab; icon: string; label: string }[] = [
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("calculator");
-  const [sessions,  setSessions]  = useState<SavedSession[]>(loadSessions);
-  const [slots,     setSlots]     = useState<GameSlot[]>(loadGameSlots);
-  const [settings,  setSettings]  = useState<AppSettings>(loadSettings);
-  const [payments,  setPayments]  = useState<PaymentRecord[]>(loadPaymentRecords);
 
-  const handleSaveSessions  = (u: SavedSession[])  => { setSessions(u);  saveSessions(u); };
-  const handleSaveSlots     = (u: GameSlot[])       => { setSlots(u);     saveGameSlots(u); };
-  const handleSaveSettings  = (u: AppSettings)      => { setSettings(u);  saveSettings(u); };
-  const handleSavePayments  = (u: PaymentRecord[])  => { setPayments(u);  savePaymentRecords(u); };
+  const {
+    loading, dbError,
+    sessions, slots, settings, payments,
+    handleSaveSessions, handleSaveSlots, handleSaveSettings, handleSavePayments,
+  } = useAppData();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#eef2f7] flex flex-col items-center justify-center gap-4">
+        <div className="text-[48px]">🧮</div>
+        <div className="text-[18px] font-bold text-[#1d6fb8]">Loading your data…</div>
+        <div className="text-[13px] text-gray-400">Connecting to database</div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#eef2f7] font-serif">
@@ -54,6 +55,12 @@ export default function App() {
           ))}
         </div>
       </div>
+
+      {dbError && (
+        <div className="bg-orange-50 border-b-2 border-orange-200 px-4 py-2 text-center text-[13px] text-orange-700 font-semibold">
+          ⚠️ Could not reach database — using local data. Check your internet connection.
+        </div>
+      )}
 
       <div className="max-w-[680px] mx-auto px-3 pt-5 pb-16">
 
