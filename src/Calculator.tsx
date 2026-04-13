@@ -5,6 +5,7 @@ import {
   mergeIntoSessions,
 } from "./calcUtils";
 import EditableBreakdown from "./EditableBreakdown";
+import ReportIssue from "./ReportIssue";
 import type { CalculationResult, SavedSession } from "./types";
 
 interface Props {
@@ -19,6 +20,7 @@ export default function Calculator({ sessions, onSave }: Props) {
   const [savedToHistory, setSavedToHistory] = useState(false);
   const [lastSessionIds, setLastSessionIds] = useState<string[]>([]);
   const [hasUnsavedEdits, setHasUnsavedEdits] = useState(false);
+  const [showReport, setShowReport] = useState(false);
 
   const handleCalculate = () => {
     const waMessages = parseWhatsAppMessages(input);
@@ -150,7 +152,21 @@ export default function Calculator({ sessions, onSave }: Props) {
         >
           🗑 Clear
         </button>
+
+        <button
+          onClick={() => setShowReport(true)}
+          className="block w-full mt-2 py-3 text-sm font-semibold text-gray-400 hover:text-[#1d6fb8] transition-colors text-center"
+        >
+          🐛 Report a pattern issue
+        </button>
       </div>
+
+      {showReport && (
+        <ReportIssue
+          prefillInput={input}
+          onClose={() => setShowReport(false)}
+        />
+      )}
 
       {/* Result section */}
       {result && (
