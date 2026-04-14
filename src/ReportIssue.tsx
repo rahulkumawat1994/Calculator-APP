@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-const SCRIPT_URL = import.meta.env.VITE_GOOGLE_SCRIPT_URL as string;
+const SCRIPT_URL = (import.meta.env.VITE_GOOGLE_SCRIPT_URL as string | undefined) ?? "";
 
 interface Props {
   prefillInput?: string;
@@ -17,6 +17,10 @@ export default function ReportIssue({ prefillInput = "", onClose }: Props) {
 
   const handleSubmit = async () => {
     if (!input.trim()) return;
+    if (!SCRIPT_URL) {
+      setStatus("error");
+      return;
+    }
     setStatus("sending");
     try {
       await fetch(SCRIPT_URL, {
@@ -28,7 +32,6 @@ export default function ReportIssue({ prefillInput = "", onClose }: Props) {
           expected: expected.trim(),
           note: note.trim(),
           timestamp: new Date().toISOString(),
-          userAgent: navigator.userAgent,
         }),
       });
       // no-cors means response is opaque — assume success if no throw

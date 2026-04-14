@@ -77,9 +77,9 @@ export default function Calculator({
     if (!enabledSlots.find(s => s.id === selectedSlotId)) {
       setSelectedSlotId(autoSlot.id);
     }
-  }, [slots]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [slots, enabledSlots, selectedSlotId, autoSlot.id]);
 
-  // Auto-detect slot when input changes and looks like WhatsApp
+  // Auto-detect slot when input or slots change
   useEffect(() => {
     const messages = parseWhatsAppMessages(input);
     if (messages && messages.length > 0) {
@@ -98,7 +98,10 @@ export default function Calculator({
     setPendingTagged(null);
     setIsSaved(false);
     setSavedInfo(null);
-  }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Only re-run when input changes; slots/slotOverridden are intentionally not
+  // deps to avoid clearing pendingTagged when user changes settings mid-flow.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input]);
 
   const selectedSlot = enabledSlots.find(s => s.id === selectedSlotId) ?? autoSlot;
 
@@ -145,27 +148,34 @@ export default function Calculator({
         const updated = mergeIntoSessions(existing, tagged);
         await Promise.all(updated.map(s => saveSessionDoc(s)));
 
-        const date = tagged[0]?.date ?? todayDate();
-        const existingPayments = await loadPaymentsByDate(date);
-        const existingIds = new Set(existingPayments.map(p => p.id));
-
-        const slotContactMap = new Map<string, Set<string>>();
+        // Build per-date, per-slot contact map so payment stubs get the correct date
+        const dateSlotContactMap = new Map<string, Map<string, Set<string>>>();
         for (const m of tagged) {
-          if (!slotContactMap.has(m.slotId)) slotContactMap.set(m.slotId, new Set());
-          slotContactMap.get(m.slotId)!.add(m.contact);
+          if (!dateSlotContactMap.has(m.date))
+            dateSlotContactMap.set(m.date, new Map());
+          const slotMap = dateSlotContactMap.get(m.date)!;
+          if (!slotMap.has(m.slotId)) slotMap.set(m.slotId, new Set());
+          slotMap.get(m.slotId)!.add(m.contact);
         }
 
-        let allPayments = [...existingPayments];
-        for (const [slotId, contacts] of slotContactMap) {
-          const slotObj = slots.find(s => s.id === slotId) ?? selectedSlot;
-          allPayments = upsertPaymentStubs(allPayments, [...contacts], slotObj, date, settings.commissionPct);
+        for (const [date, slotMap] of dateSlotContactMap) {
+          const existingPayments = await loadPaymentsByDate(date);
+          const existingIds = new Set(existingPayments.map(p => p.id));
+          let allPayments = [...existingPayments];
+          for (const [slotId, contacts] of slotMap) {
+            const slotObj = slots.find(s => s.id === slotId) ?? selectedSlot;
+            allPayments = upsertPaymentStubs(allPayments, [...contacts], slotObj, date, settings.commissionPct);
+          }
+          await Promise.all(
+            allPayments.filter(p => !existingIds.has(p.id)).map(p => savePaymentDoc(p))
+          );
         }
-        await Promise.all(allPayments.filter(p => !existingIds.has(p.id)).map(p => savePaymentDoc(p)));
 
+        const savedDates = [...dateSlotContactMap.keys()].sort().join(", ");
         const assignedSlotNames = [...new Set(
           tagged.map(m => slots.find(s => s.id === m.slotId)?.name ?? m.slotId)
         )];
-        setSavedInfo({ date, slots: assignedSlotNames });
+        setSavedInfo({ date: savedDates, slots: assignedSlotNames });
 
       } else {
         // ── Manual entry save ────────────────────────────────────────────────
@@ -185,13 +195,16 @@ export default function Calculator({
         const newPayments = upsertPaymentStubs(
           existingPayments, ["Manual Entry"], selectedSlot, date, settings.commissionPct
         );
-        const newIds = new Set(existingPayments.map(p => p.id));
-        await Promise.all(newPayments.filter(p => !newIds.has(p.id)).map(p => savePaymentDoc(p)));
+        const existingIds = new Set(existingPayments.map(p => p.id));
+        await Promise.all(newPayments.filter(p => !existingIds.has(p.id)).map(p => savePaymentDoc(p)));
 
         setSavedInfo({ date, slots: [selectedSlot.name] });
       }
 
       setIsSaved(true);
+    } catch (err) {
+      console.error("handleSave failed:", err);
+      alert("Save failed. Please check your internet connection and try again.");
     } finally {
       setSaving(false);
     }
@@ -209,6 +222,8 @@ export default function Calculator({
     navigator.clipboard.writeText(String(result.total)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
+    }).catch(() => {
+      // Clipboard API blocked (e.g. non-HTTPS / permissions denied) — fail silently
     });
   };
 

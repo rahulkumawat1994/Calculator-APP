@@ -25,10 +25,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 export function useAppData() {
-  const [loading,  setLoading]  = useState(true);
-  const [dbError,  setDbError]  = useState(false);
-  const [slots,    setSlots]    = useState<GameSlot[]>(DEFAULT_GAME_SLOTS);
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [loading,    setLoading]    = useState(true);
+  const [dbError,    setDbError]    = useState(false);
+  const [writeError, setWriteError] = useState(false);
+  const [slots,      setSlots]      = useState<GameSlot[]>(DEFAULT_GAME_SLOTS);
+  const [settings,   setSettings]   = useState<AppSettings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
     const LS_MIGRATED     = "fb_migrated_v1";
@@ -72,20 +73,30 @@ export function useAppData() {
   }, []);
 
   // ── Slots & Settings save (dual-write: Firestore + localStorage backup) ──────
-  const handleSaveSlots = (u: GameSlot[]) => {
+  const handleSaveSlots = async (u: GameSlot[]) => {
     setSlots(u);
     saveGameSlots(u);
-    saveSlotsDB(u);
+    try {
+      await saveSlotsDB(u);
+      setWriteError(false);
+    } catch {
+      setWriteError(true);
+    }
   };
 
-  const handleSaveSettings = (u: AppSettings) => {
+  const handleSaveSettings = async (u: AppSettings) => {
     setSettings(u);
     saveSettings(u);
-    saveSettingsDB(u);
+    try {
+      await saveSettingsDB(u);
+      setWriteError(false);
+    } catch {
+      setWriteError(true);
+    }
   };
 
   return {
-    loading, dbError,
+    loading, dbError, writeError,
     slots, settings,
     handleSaveSlots, handleSaveSettings,
 

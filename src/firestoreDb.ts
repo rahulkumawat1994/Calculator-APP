@@ -19,15 +19,9 @@ import {
 } from "firebase/firestore";
 import { db } from "./firebase";
 import type { SavedSession, GameSlot, AppSettings, PaymentRecord } from "./types";
-import { DEFAULT_GAME_SLOTS, DEFAULT_SETTINGS } from "./calcUtils";
+import { DEFAULT_GAME_SLOTS, DEFAULT_SETTINGS, toDateISO } from "./calcUtils";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/** "DD/MM/YYYY" → "YYYY-MM-DD" */
-export function toDateISO(date: string): string {
-  const [d, m, y] = date.split("/");
-  return `${y}-${(m ?? "01").padStart(2, "0")}-${(d ?? "01").padStart(2, "0")}`;
-}
 
 /**
  * Firestore document IDs cannot contain "/".
@@ -52,7 +46,9 @@ export async function loadSlotsDB(): Promise<GameSlot[]> {
 }
 
 export async function saveSlotsDB(slots: GameSlot[]): Promise<void> {
-  await setDoc(configRef("slots"), { slots });
+  try {
+    await setDoc(configRef("slots"), { slots });
+  } catch (e) { console.error("saveSlotsDB failed:", e); throw e; }
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
@@ -68,7 +64,9 @@ export async function loadSettingsDB(): Promise<AppSettings> {
 }
 
 export async function saveSettingsDB(settings: AppSettings): Promise<void> {
-  await setDoc(configRef("settings"), settings);
+  try {
+    await setDoc(configRef("settings"), settings);
+  } catch (e) { console.error("saveSettingsDB failed:", e); throw e; }
 }
 
 // ─── Sessions ─────────────────────────────────────────────────────────────────
@@ -76,8 +74,9 @@ export async function saveSettingsDB(settings: AppSettings): Promise<void> {
 export async function saveSessionDoc(session: SavedSession): Promise<void> {
   const dateISO = toDateISO(session.date);
   const docId   = toDocId(session.id);
-  console.log("[DB] saveSessionDoc →", docId, "date:", session.date);
-  await setDoc(doc(db, "sessions", docId), { ...session, dateISO });
+  try {
+    await setDoc(doc(db, "sessions", docId), { ...session, dateISO });
+  } catch (e) { console.error("saveSessionDoc failed:", docId, e); throw e; }
 }
 
 export async function deleteSessionDoc(id: string): Promise<void> {
@@ -108,8 +107,9 @@ export async function loadSessionsByMonth(year: number, month: number): Promise<
 export async function savePaymentDoc(payment: PaymentRecord): Promise<void> {
   const dateISO = toDateISO(payment.date);
   const docId   = toDocId(payment.id);
-  console.log("[DB] savePaymentDoc →", docId, "date:", payment.date);
-  await setDoc(doc(db, "payments", docId), { ...payment, dateISO });
+  try {
+    await setDoc(doc(db, "payments", docId), { ...payment, dateISO });
+  } catch (e) { console.error("savePaymentDoc failed:", docId, e); throw e; }
 }
 
 export async function deletePaymentDoc(id: string): Promise<void> {

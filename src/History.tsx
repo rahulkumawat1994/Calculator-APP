@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { SavedSession, CalculationResult, GameSlot, PaymentRecord } from "./types";
 import EditableBreakdown from "./EditableBreakdown";
 
@@ -48,8 +48,15 @@ const MONTH_NAMES = [
 ];
 const DAY_LABELS = ["Mo","Tu","We","Th","Fr","Sa","Su"];
 
-function slotPersons(sessions: SavedSession[], slotId: string) {
-  const out = [];
+interface PersonEntry {
+  sessionId: string;
+  contact:   string;
+  total:     number;
+  result:    CalculationResult;
+}
+
+function slotPersons(sessions: SavedSession[], slotId: string): PersonEntry[] {
+  const out: PersonEntry[] = [];
   for (const s of sessions) {
     const msgs = s.messages.filter(m => m.slotId === slotId);
     if (!msgs.length) continue;
@@ -65,8 +72,8 @@ function slotPersons(sessions: SavedSession[], slotId: string) {
   return out.sort((a, b) => a.contact.localeCompare(b.contact));
 }
 
-function unslottedPersons(sessions: SavedSession[]) {
-  const out = [];
+function unslottedPersons(sessions: SavedSession[]): PersonEntry[] {
+  const out: PersonEntry[] = [];
   for (const s of sessions) {
     const msgs = s.messages.filter(m => !m.slotId);
     if (!msgs.length) continue;
@@ -107,6 +114,9 @@ export default function History({
   // Dates that have entries in the current calendar month (for calendar dots)
   const [activeDates,  setActiveDates]  = useState<Set<string>>(new Set());
 
+  // Monotonic counter to discard stale async results when selectedDate changes quickly
+  const loadSeqRef = useRef(0);
+
   // Load all active dates for the calendar month whenever the month changes.
   // On the very first load, also auto-jump to the most recent date with data.
   const [initialJumpDone, setInitialJumpDone] = useState(false);
@@ -118,7 +128,6 @@ export default function History({
         return next;
       });
       if (!initialJumpDone && dates.length > 0) {
-        // Jump to the most recent date that has data
         const sorted = [...dates].sort((a, b) => {
           const [ad, am, ay] = a.split("/").map(Number);
           const [bd, bm, by] = b.split("/").map(Number);
@@ -127,24 +136,26 @@ export default function History({
         setSelectedDate(sorted[0]);
         setInitialJumpDone(true);
       }
-    });
+    }).catch(() => { /* non-fatal – calendar dots just won't show */ });
   }, [cal.year, cal.month]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load sessions+payments whenever selectedDate changes
+  // Load sessions+payments whenever selectedDate changes; abort if date changes again
   useEffect(() => {
+    const seq = ++loadSeqRef.current;
     setDayLoading(true);
     Promise.all([loadSessionsByDate(selectedDate), loadPaymentsByDate(selectedDate)])
       .then(([sessions, payments]) => {
+        if (seq !== loadSeqRef.current) return; // stale – a newer request is in flight
         setDaySessions(sessions.sort((a, b) => b.createdAt - a.createdAt));
         setDayPayments(payments);
-        // Keep activeDates in sync after loading
         setActiveDates(prev => {
           const next = new Set(prev);
           if (sessions.length > 0) next.add(selectedDate);
           return next;
         });
       })
-      .finally(() => setDayLoading(false));
+      .catch(() => { if (seq === loadSeqRef.current) setDaySessions([]); })
+      .finally(() => { if (seq === loadSeqRef.current) setDayLoading(false); });
   }, [selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shiftMonth = (delta: number) => {
@@ -169,8 +180,14 @@ export default function History({
 
   const deleteSession = async (id: string) => {
     const session = daySessions.find(s => s.id === id);
-    await deleteSessionDoc(id);
-    if (session) await deletePaymentsByContactDate(session.contact, session.date);
+    try {
+      await deleteSessionDoc(id);
+      if (session) await deletePaymentsByContactDate(session.contact, session.date);
+    } catch (err) {
+      console.error("deleteSession failed:", err);
+      alert("Delete failed. Please check your internet connection and try again.");
+      return;
+    }
     const remaining = daySessions.filter(s => s.id !== id);
     setDaySessions(remaining);
     setDayPayments(prev => prev.filter(p => !(session && p.contact === session.contact)));
@@ -183,16 +200,29 @@ export default function History({
     const updated = daySessions.map(s => s.id === id ? { ...s, overrideResult: result } : s);
     setDaySessions(updated);
     const target = updated.find(s => s.id === id);
-    if (target) await saveSessionDoc(target);
+    if (target) {
+      try {
+        await saveSessionDoc(target);
+      } catch (err) {
+        console.error("handleResultChange save failed:", err);
+      }
+    }
   };
 
   const handleClearAll = async () => {
-    await Promise.all(daySessions.map(s =>
-      Promise.all([
-        deleteSessionDoc(s.id),
-        deletePaymentsByContactDate(s.contact, s.date),
-      ])
-    ));
+    try {
+      await Promise.all(daySessions.map(s =>
+        Promise.all([
+          deleteSessionDoc(s.id),
+          deletePaymentsByContactDate(s.contact, s.date),
+        ])
+      ));
+    } catch (err) {
+      console.error("handleClearAll failed:", err);
+      alert("Clear all failed. Please check your internet connection and try again.");
+      setConfirmClear(false);
+      return;
+    }
     setDaySessions([]);
     setDayPayments([]);
     setActiveDates(prev => { const n = new Set(prev); n.delete(selectedDate); return n; });

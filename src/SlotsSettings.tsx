@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { DEFAULT_GAME_SLOTS, formatSlotTime } from "./calcUtils";
 import type { GameSlot, AppSettings } from "./types";
 
@@ -23,6 +23,15 @@ export default function SlotsSettings({ slots, settings, onSaveSlots, onSaveSett
   const [dirty,         setDirty]         = useState(false);
   const [saved,         setSaved]         = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  // Keep local state in sync when parent re-loads from Firebase (only if no unsaved changes)
+  useEffect(() => {
+    if (!dirty) {
+      setLocalSlots(slots);
+      setLocalSettings(settings);
+      setPctRaw(String(settings.commissionPct));
+    }
+  }, [slots, settings]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Slot helpers ──────────────────────────────────────────────────────────
 

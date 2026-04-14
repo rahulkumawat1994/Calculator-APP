@@ -123,10 +123,10 @@ export default function EditableBreakdown({ result, onChange, compact }: Props) 
     const suffix = `${editWP ? "wp" : ""}${editAB ? "ab" : ""}`;
     const parsed = processLine(`${editLine}(${editRate})${suffix}`);
     if (!parsed.length) return;
-    onChange(rebuild(
-      result.results.map((r, i) => (i === editingIdx ? parsed[0] : r)),
-      failedLines
-    ));
+    // Replace the edited row with all segments returned (processLine may return multiple)
+    const before = result.results.slice(0, editingIdx);
+    const after  = result.results.slice(editingIdx + 1);
+    onChange(rebuild([...before, ...parsed, ...after], failedLines));
     setEditingIdx(null);
   };
 
@@ -225,7 +225,7 @@ export default function EditableBreakdown({ result, onChange, compact }: Props) 
       {/* ── Parsed rows ── */}
       {result.results.map((r, i) => (
         <div
-          key={i}
+          key={`${i}-${r.line}-${r.rate}`}
           className={`rounded-xl border border-[#e8eef8] overflow-hidden ${
             i % 2 === 0 ? "bg-[#f4f8ff]" : "bg-white"
           }`}

@@ -187,14 +187,6 @@ export function preprocessText(text: string): string {
   return text.replace(/\[[^\]]*\]\s*[^:]+:\s*/g, '\n').trim();
 }
 
-function extractFirstRate(line: string): { rate: number; suffix: string } | null {
-  let m: RegExpMatchArray | null;
-  if ((m = line.match(/\((\d+)\)\s*([a-zA-Z]*)/i))) return { rate: parseInt(m[1]), suffix: m[2] ?? '' };
-  // Unified: x / = / * with optional spaces around the rate number
-  if ((m = line.match(/(?:x|=+|\*)\s*(\d+)\s*([a-zA-Z]*)/i))) return { rate: parseInt(m[1]), suffix: m[2] ?? '' };
-  return null;
-}
-
 export function calculateTotal(text: string): CalculationResult {
   const cleaned = preprocessText(text);
   const rawLines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
@@ -228,12 +220,13 @@ export function calculateTotal(text: string): CalculationResult {
       }
     } else {
       if (pending) {
-        // Smart join: dot-heavy format (e.g. "10.5" split across lines) joins without
-        // separator so "10.5" + "2.25..." → "10.52.25..." (reconstructs the number).
-        // Space-heavy format joins with a space as usual.
-        const dots   = (pending.match(/\./g) ?? []).length;
-        const spaces = (pending.match(/ /g) ?? []).length;
-        const sep    = dots > spaces ? '' : ' ';
+        // Smart join: if `pending` ends with a lone single digit (e.g. "10.5"),
+        // the pair was split mid-number across lines → join without separator so
+        // "10.5" + "2.25...x5" → "10.52.25...x5" (reconstructs the number).
+        // If `pending` ends with a complete 2-digit number (e.g. "...58"), the
+        // first line is a full number group → join with a space.
+        const endsWithPartialPair = /(?<!\d)\d$/.test(pending);
+        const sep = endsWithPartialPair ? '' : ' ';
         mergedLines.push(pending + sep + line);
         pending = '';
       } else {
@@ -330,7 +323,7 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
 // ─── Session management ────────────────────────────────────────────────────────
 
 /** "DD/MM/YYYY" → "YYYY-MM-DD" */
-function toDateISO(date: string): string {
+export function toDateISO(date: string): string {
   const [d, m, y] = date.split("/");
   return `${y}-${(m ?? "01").padStart(2, "0")}-${(d ?? "01").padStart(2, "0")}`;
 }
@@ -375,7 +368,7 @@ export function loadSessions(): SavedSession[] {
 }
 
 export function saveSessions(sessions: SavedSession[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions)); } catch { /* quota exceeded – ignore */ }
 }
 
 // ─── Game slots ────────────────────────────────────────────────────────────────
@@ -408,7 +401,7 @@ export function formatSlotTime(time: string): string {
  */
 export function getCurrentSlot(slots: GameSlot[]): GameSlot {
   const enabled = slots.filter(s => s.enabled);
-  if (!enabled.length) return DEFAULT_GAME_SLOTS[1]; // fallback USA
+  if (!enabled.length) return DEFAULT_GAME_SLOTS[1]; // fallback India (index 1)
   const now = new Date();
   const cur = now.getHours() * 60 + now.getMinutes();
   const sorted = [...enabled].sort((a, b) => slotMinutes(a.time) - slotMinutes(b.time));
@@ -425,7 +418,7 @@ export function loadGameSlots(): GameSlot[] {
   catch { return DEFAULT_GAME_SLOTS; }
 }
 export function saveGameSlots(slots: GameSlot[]): void {
-  localStorage.setItem(SLOTS_KEY, JSON.stringify(slots));
+  try { localStorage.setItem(SLOTS_KEY, JSON.stringify(slots)); } catch { /* quota exceeded – ignore */ }
 }
 
 export const DEFAULT_SETTINGS: AppSettings = { commissionPct: 5 };
@@ -435,7 +428,7 @@ export function loadSettings(): AppSettings {
   catch { return DEFAULT_SETTINGS; }
 }
 export function saveSettings(s: AppSettings): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch { /* quota exceeded – ignore */ }
 }
 
 export function loadPaymentRecords(): PaymentRecord[] {
@@ -443,7 +436,7 @@ export function loadPaymentRecords(): PaymentRecord[] {
   catch { return []; }
 }
 export function savePaymentRecords(records: PaymentRecord[]): void {
-  localStorage.setItem(PAYMENTS_KEY, JSON.stringify(records));
+  try { localStorage.setItem(PAYMENTS_KEY, JSON.stringify(records)); } catch { /* quota exceeded – ignore */ }
 }
 
 /**

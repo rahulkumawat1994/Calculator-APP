@@ -229,7 +229,7 @@ export default function GamesView({
     if (!editState || editState.id !== paymentId) return;
     const raw    = editState.value.trim();
     const amount = raw === "" ? null : parseFloat(raw);
-    if (raw !== "" && isNaN(amount!)) return;
+    if (raw !== "" && isNaN(amount as number)) return;
     const pct = parseFloat(editState.pct);
     const commissionPct = isNaN(pct) ? settings.commissionPct : pct;
 
@@ -239,8 +239,14 @@ export default function GamesView({
     });
     const saved = updatedPayments.find(p => p.id === paymentId);
     if (saved) {
-      await savePaymentDoc(saved);
-      setDayPayments(updatedPayments);
+      try {
+        await savePaymentDoc(saved);
+        setDayPayments(updatedPayments);
+      } catch (err) {
+        console.error("saveEdit failed:", err);
+        alert("Save failed. Please check your internet connection and try again.");
+        return;
+      }
     }
     setEditState(null);
   };
@@ -308,7 +314,7 @@ export default function GamesView({
                   <div>
                     <div className="text-[13px] font-bold text-white/60 uppercase tracking-widest mb-1">💰 My Earnings — {displayDate(selectedDate)}</div>
                     <div className="text-[48px] font-extrabold text-white leading-none">₹{dayEarning}</div>
-                    <div className="text-[14px] text-white/60 mt-1">{settings.commissionPct}% of ₹{dayReceived} received</div>
+                    <div className="text-[14px] text-white/60 mt-1">Commission of ₹{dayReceived} received</div>
                   </div>
                   <div className="text-[52px] leading-none opacity-20">💵</div>
                 </div>
@@ -497,7 +503,7 @@ export default function GamesView({
                                 <div className="bg-green-50 border-t-2 border-green-100 px-5 py-3.5 flex items-center justify-between">
                                   <div>
                                     <div className="text-[14px] font-extrabold text-green-700">💰 My Earnings</div>
-                                    <div className="text-[12px] text-green-600">{settings.commissionPct}% (default) of ₹{summary.received}</div>
+                                    <div className="text-[12px] text-green-600">Commission of ₹{summary.received} received</div>
                                   </div>
                                   <span className="text-[22px] font-extrabold text-green-700">₹{summary.myEarning}</span>
                                 </div>
@@ -547,7 +553,7 @@ export default function GamesView({
                 </div>
                 <div className={`text-[56px] font-extrabold leading-none mb-1 ${monthEarned > 0 ? "text-white" : "text-gray-500"}`}>₹{monthEarned}</div>
                 {monthReceived > 0 && (
-                  <div className="text-[15px] text-white/60">{settings.commissionPct}% of ₹{monthReceived} total received</div>
+                  <div className="text-[15px] text-white/60">Commission of ₹{monthReceived} total received</div>
                 )}
                 {monthBets > 0 && (
                   <div className="grid grid-cols-3 gap-2 mt-4">

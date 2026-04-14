@@ -20,6 +20,7 @@ export default function App() {
   const {
     loading,
     dbError,
+    writeError,
     slots,
     settings,
     handleSaveSlots,
@@ -30,7 +31,6 @@ export default function App() {
     loadSessionsByMonth,
     loadSessionDatesForMonth,
     savePaymentDoc,
-    deletePaymentDoc,
     deletePaymentsByContactDate,
     loadPaymentsByDate,
     loadPaymentsByMonth,
@@ -79,19 +79,25 @@ export default function App() {
         </div>
       )}
 
+      {writeError && (
+        <div className="bg-red-50 border-b-2 border-red-200 px-4 py-2 text-center text-[13px] text-red-700 font-semibold">
+          ⚠️ Settings could not be saved to the database. Changes are saved
+          locally only.
+        </div>
+      )}
+
       <div className="max-w-[680px] mx-auto px-3 pt-5 pb-16">
-        {tab === "calculator" && (
-          <div className="flex flex-col items-center">
-            <Calculator
-              slots={slots}
-              settings={settings}
-              loadSessionsByDate={loadSessionsByDate}
-              loadPaymentsByDate={loadPaymentsByDate}
-              saveSessionDoc={saveSessionDoc}
-              savePaymentDoc={savePaymentDoc}
-            />
-          </div>
-        )}
+        {/* Calculator is always mounted to preserve input state between tab switches */}
+        <div className={tab === "calculator" ? "flex flex-col items-center" : "hidden"}>
+          <Calculator
+            slots={slots}
+            settings={settings}
+            loadSessionsByDate={loadSessionsByDate}
+            loadPaymentsByDate={loadPaymentsByDate}
+            saveSessionDoc={saveSessionDoc}
+            savePaymentDoc={savePaymentDoc}
+          />
+        </div>
 
         {tab === "history" && (
           <History
