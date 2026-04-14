@@ -302,6 +302,12 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
 
 // ─── Session management ────────────────────────────────────────────────────────
 
+/** "DD/MM/YYYY" → "YYYY-MM-DD" */
+function toDateISO(date: string): string {
+  const [d, m, y] = date.split("/");
+  return `${y}-${(m ?? "01").padStart(2, "0")}-${(d ?? "01").padStart(2, "0")}`;
+}
+
 export function mergeIntoSessions(
   existing: SavedSession[],
   messages: ParsedMessage[]
@@ -325,6 +331,7 @@ export function mergeIntoSessions(
         id: `${msg.contact}|${msg.date}`,
         contact: msg.contact,
         date: msg.date,
+        dateISO: toDateISO(msg.date),
         messages: [savedMsg],
         createdAt: Date.now(),
       });
@@ -421,15 +428,19 @@ export function upsertPaymentStubs(
   contacts: string[],
   slot: GameSlot,
   date: string,
+  commissionPct?: number,
 ): PaymentRecord[] {
-  const updated = [...existing];
+  const dateISO = toDateISO(date);
+  const updated  = [...existing];
   for (const contact of contacts) {
     const id = `${contact}|${slot.id}|${date}`;
     if (!updated.find(r => r.id === id)) {
       updated.push({
         id, slotId: slot.id, slotName: slot.name,
-        date, contact,
-        amountPaid: null, notes: '',
+        date, dateISO, contact,
+        amountPaid: null,
+        ...(commissionPct !== undefined ? { commissionPct } : {}),
+        notes: '',
         createdAt: Date.now(), updatedAt: Date.now(),
       });
     }
@@ -437,30 +448,35 @@ export function upsertPaymentStubs(
   return updated;
 }
 
-/** Creates or updates a payment record's amountPaid. */
+/** Creates or updates a payment record's amountPaid / commissionPct. */
 export function upsertPayment(
   records: PaymentRecord[],
   patch: Pick<PaymentRecord, 'id' | 'contact' | 'slotId' | 'slotName' | 'date'> & {
     amountPaid: number | null;
+    commissionPct?: number;
     notes?: string;
   }
 ): PaymentRecord[] {
-  const now = Date.now();
-  const idx = records.findIndex(r => r.id === patch.id);
+  const now     = Date.now();
+  const dateISO = toDateISO(patch.date);
+  const idx     = records.findIndex(r => r.id === patch.id);
   if (idx >= 0) {
     const updated = [...records];
     updated[idx] = {
       ...updated[idx],
-      amountPaid: patch.amountPaid,
-      notes: patch.notes ?? updated[idx].notes,
+      amountPaid:    patch.amountPaid,
+      notes:         patch.notes ?? updated[idx].notes,
+      ...(patch.commissionPct !== undefined ? { commissionPct: patch.commissionPct } : {}),
       updatedAt: now,
     };
     return updated;
   }
   return [...records, {
     id: patch.id, slotId: patch.slotId, slotName: patch.slotName,
-    date: patch.date, contact: patch.contact,
-    amountPaid: patch.amountPaid, notes: patch.notes ?? '',
+    date: patch.date, dateISO, contact: patch.contact,
+    amountPaid: patch.amountPaid,
+    ...(patch.commissionPct !== undefined ? { commissionPct: patch.commissionPct } : {}),
+    notes: patch.notes ?? '',
     createdAt: now, updatedAt: now,
   }];
 }

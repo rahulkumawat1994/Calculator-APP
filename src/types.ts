@@ -25,7 +25,8 @@ export interface SavedMessage {
 export interface SavedSession {
   id: string;
   contact: string;
-  date: string;
+  date: string;      // "DD/MM/YYYY" — used for display & equality
+  dateISO: string;   // "YYYY-MM-DD" — used for Firestore range queries
   messages: SavedMessage[];
   createdAt: number;
   overrideResult?: CalculationResult;
@@ -47,9 +48,11 @@ export interface PaymentRecord {
   id: string; // `${contact}|${slotId}|${date}`
   slotId: string;
   slotName: string;
-  date: string;
+  date: string;      // "DD/MM/YYYY"
+  dateISO: string;   // "YYYY-MM-DD"
   contact: string;
   amountPaid: number | null;
+  commissionPct?: number; // snapshot at creation; falls back to global setting
   notes: string;
   createdAt: number;
   updatedAt: number;
