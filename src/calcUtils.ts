@@ -37,14 +37,23 @@ function extractPairedNumbers(text: string): number[] {
 }
 
 // ─── Flag detector ─────────────────────────────────────────────────────────────
-// WP keywords: "wp", "palat" (Hindi पलट = reverse/pair).
-// AB: suffix contains 'a' or 'b' AFTER removing WP keywords so that words like
-// "palat" (which contain 'a') never accidentally trigger AB mode.
+// WP keywords: "wp", "palat", Hindi "पलट" (reverse/pair).
+// AB keywords: letter 'a'/'b', OR Hindi "अब" (literally "ab").
+// Strip WP keywords first so "palat" (contains 'a') never accidentally triggers AB.
 function parseFlags(text: string): { isWP: boolean; isDouble: boolean } {
-  const isWP = /wp/i.test(text) || /palat/i.test(text);
-  const cleaned = text.replace(/wp/gi, '').replace(/palat/gi, '').trim();
-  const isDouble = /[ab]/i.test(cleaned);
+  const isWP = /wp/i.test(text) || /palat/i.test(text) || /पलट/.test(text);
+  const cleaned = text.replace(/wp/gi, '').replace(/palat/gi, '').replace(/पलट/g, '').trim();
+  const isDouble = /[ab]/i.test(cleaned) || /अब/.test(cleaned);
   return { isWP, isDouble };
+}
+
+/**
+ * Returns true if the numbers text (before the rate) contains any standalone
+ * 3-digit number (000–999). Per the game rules, a 3-digit number always implies
+ * an AB (double) bet.
+ */
+function has3DigitBet(numbersText: string): boolean {
+  return /(?<!\d)\d{3}(?!\d)/.test(numbersText);
 }
 
 // ─── Line parser ───────────────────────────────────────────────────────────────
@@ -78,7 +87,8 @@ export function processLine(line: string): Segment[] {
     const nums = (match[1].match(/(?<!\d)\d{2}(?!\d)/g) ?? []).map(Number);
     if (!nums.length) continue;
     const suffix = match[3] ?? '';
-    const { isWP, isDouble } = parseFlags(suffix);
+    const { isWP, isDouble: isDoubleFlagged } = parseFlags(suffix);
+    const isDouble = isDoubleFlagged || has3DigitBet(match[1]);
     const rate = parseInt(match[2], 10);
     const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
     if (count > 0) {
@@ -102,7 +112,8 @@ export function processLine(line: string): Segment[] {
       const suffix = m[2] ?? '';
       const nums = extractPairedNumbers(numbersText);
       if (nums.length > 0) {
-        const { isWP, isDouble } = parseFlags(suffix);
+        const { isWP, isDouble: isDoubleFlagged } = parseFlags(suffix);
+        const isDouble = isDoubleFlagged || has3DigitBet(numbersText);
         const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
         if (count > 0) {
           const display = numbersText.replace(/^\D+/, '').replace(/\D+$/, '').trim();
@@ -129,7 +140,8 @@ export function processLine(line: string): Segment[] {
         const numbersText = beforeFlag.slice(0, lastNum.index!);
         const nums = extractPairedNumbers(numbersText);
         if (nums.length > 0) {
-          const { isWP, isDouble } = parseFlags(flagText);
+          const { isWP, isDouble: isDoubleFlagged } = parseFlags(flagText);
+          const isDouble = isDoubleFlagged || has3DigitBet(numbersText);
           const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
           if (count > 0) {
             const display = numbersText.replace(/^\D+/, '').replace(/\D+$/, '').trim();
@@ -147,16 +159,20 @@ export function processLine(line: string): Segment[] {
     if (all.length >= 2) {
       const last = all[all.length - 1];
       const after = trimmed.slice((last.index ?? 0) + last[0].length);
-      const { isDouble } = parseFlags(after);
-      // Comma format: any trailing non-empty, non-ab text = WP (covers Hindi words like पलटके साथ)
-      const { isWP: isWPFlag } = parseFlags(after);
-      const isWP = isWPFlag || (/\S/.test(after) && !/^[ab\s]+$/i.test(after.trim()));
+      const { isWP: isWPFlag, isDouble: isDoubleFlagged } = parseFlags(after);
+      // Strip known AB indicator before the WP fallback check so "अब" doesn't
+      // accidentally trigger WP (which fires on any unrecognised trailing text).
+      const afterForWP = after.replace(/अब/g, '').replace(/[ab]/gi, '').trim();
+      const isWP = isWPFlag || (/\S/.test(afterForWP) && afterForWP.length > 0);
       const rate = Number(last[0]);
-      const nums = extractPairedNumbers(trimmed.slice(0, last.index));
+      const numbersText = trimmed.slice(0, last.index);
+      // 3-digit numbers (000–999) in the bet text automatically imply AB
+      const isDouble = isDoubleFlagged || has3DigitBet(numbersText);
+      const nums = extractPairedNumbers(numbersText);
       if (nums.length > 0) {
         const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
         if (count > 0) {
-          const display = trimmed.slice(0, last.index).replace(/[,\s.]+$/, '').trim();
+          const display = numbersText.replace(/[,\s.]+$/, '').trim();
           results.push({ line: display, rate, isWP, isDouble, count, lineTotal: count * rate });
         }
       }
@@ -186,12 +202,17 @@ export function calculateTotal(text: string): CalculationResult {
   let pending = '';
 
   for (const rawLine of rawLines) {
-    // Normalize "into" (any spacing variant) → "x" for rate-detection and merging
-    const line = rawLine.replace(/\s*in\s*to\s*/gi, 'x');
+    // Strip leading game-code labels like "GB. ", "USA. ", "IND. " etc.
+    // (1-6 uppercase letters followed by a dot and optional space)
+    const labelStripped = rawLine.replace(/^[A-Z]{1,6}\.\s*/, '');
+    // Normalize "into" → "x" for rate-detection
+    const line = labelStripped.replace(/\s*in\s*to\s*/gi, 'x');
+
     const hasExplicitRate = /\(\d+\)/.test(line) || /x\s*\d+/i.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
     // Lines with a known flag word (wp/ab/palat) are self-contained — send directly to processLine
     const hasKnownFlag = /\b(?:wp|ab|palat)\b/i.test(line);
+
     if (!hasExplicitRate && !hasCommaRate) {
       const isPureNumbers = /^[\d\s\-_.,:|\/\\]+$/.test(line);
       if (hasKnownFlag) {
@@ -207,11 +228,17 @@ export function calculateTotal(text: string): CalculationResult {
       }
     } else {
       if (pending) {
-        const ri = extractFirstRate(line);
-        mergedLines.push(ri ? `${pending}(${ri.rate})${ri.suffix}` : pending + ' ' + line);
+        // Smart join: dot-heavy format (e.g. "10.5" split across lines) joins without
+        // separator so "10.5" + "2.25..." → "10.52.25..." (reconstructs the number).
+        // Space-heavy format joins with a space as usual.
+        const dots   = (pending.match(/\./g) ?? []).length;
+        const spaces = (pending.match(/ /g) ?? []).length;
+        const sep    = dots > spaces ? '' : ' ';
+        mergedLines.push(pending + sep + line);
         pending = '';
+      } else {
+        mergedLines.push(line);
       }
-      mergedLines.push(line);
     }
   }
   if (pending) mergedLines.push(pending);
