@@ -244,7 +244,7 @@ export default function EditableBreakdown({ result, onChange, compact }: Props) 
               </span>
               <div className="flex-1 min-w-0">
                 <div className={`${numSize} font-mono text-[#333] mb-1 break-all leading-relaxed`}>
-                  {r.line}
+                  {(r.line.match(/(?<!\d)\d{2}(?!\d)/g) ?? [r.line]).join(", ")}
                   {r.isWP && <span className="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ml-1.5 bg-blue-100 text-blue-700 align-middle">WP</span>}
                   {r.isDouble && <span className="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ml-1.5 bg-yellow-100 text-yellow-800 align-middle">AB</span>}
                 </div>
