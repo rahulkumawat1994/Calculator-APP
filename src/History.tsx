@@ -171,8 +171,12 @@ export default function History({
     const session = daySessions.find(s => s.id === id);
     await deleteSessionDoc(id);
     if (session) await deletePaymentsByContactDate(session.contact, session.date);
-    setDaySessions(prev => prev.filter(s => s.id !== id));
+    const remaining = daySessions.filter(s => s.id !== id);
+    setDaySessions(remaining);
     setDayPayments(prev => prev.filter(p => !(session && p.contact === session.contact)));
+    if (remaining.length === 0) {
+      setActiveDates(prev => { const n = new Set(prev); n.delete(selectedDate); return n; });
+    }
   };
 
   const handleResultChange = async (id: string, result: CalculationResult) => {
@@ -191,6 +195,7 @@ export default function History({
     ));
     setDaySessions([]);
     setDayPayments([]);
+    setActiveDates(prev => { const n = new Set(prev); n.delete(selectedDate); return n; });
     setConfirmClear(false);
   };
 

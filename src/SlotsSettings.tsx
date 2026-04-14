@@ -18,6 +18,8 @@ function generateId(): string {
 export default function SlotsSettings({ slots, settings, onSaveSlots, onSaveSettings }: Props) {
   const [localSlots,    setLocalSlots]    = useState<GameSlot[]>(slots);
   const [localSettings, setLocalSettings] = useState<AppSettings>(settings);
+  // Raw string for the % input so the user can backspace to empty before typing a new value
+  const [pctRaw,        setPctRaw]        = useState<string>(String(settings.commissionPct));
   const [dirty,         setDirty]         = useState(false);
   const [saved,         setSaved]         = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -71,6 +73,7 @@ export default function SlotsSettings({ slots, settings, onSaveSlots, onSaveSett
   const handleReset = () => {
     setLocalSlots(DEFAULT_GAME_SLOTS);
     setLocalSettings({ commissionPct: 5 });
+    setPctRaw("5");
     setDirty(true);
   };
 
@@ -108,10 +111,21 @@ export default function SlotsSettings({ slots, settings, onSaveSlots, onSaveSett
             min="0"
             max="100"
             step="0.5"
-            value={localSettings.commissionPct}
+            value={pctRaw}
             onChange={e => {
-              setLocalSettings({ commissionPct: parseFloat(e.target.value) || 0 });
+              const raw = e.target.value;
+              setPctRaw(raw);
+              const parsed = parseFloat(raw);
+              if (!isNaN(parsed)) {
+                setLocalSettings({ commissionPct: Math.min(100, Math.max(0, parsed)) });
+              }
               setDirty(true);
+            }}
+            onBlur={() => {
+              // If the field was left empty or invalid, snap back to the current valid value
+              if (pctRaw.trim() === "" || isNaN(parseFloat(pctRaw))) {
+                setPctRaw(String(localSettings.commissionPct));
+              }
             }}
             className="w-28 text-center text-[28px] font-extrabold border-[3px] border-[#c5cfe0] focus:border-[#1d6fb8] rounded-[14px] px-3 py-3 outline-none"
           />
@@ -119,7 +133,7 @@ export default function SlotsSettings({ slots, settings, onSaveSlots, onSaveSett
           <div className="text-[14px] text-gray-500 leading-snug">
             Example: ₹100 received<br />
             → You earn <span className="font-bold text-green-700">
-              ₹{(localSettings.commissionPct || 0).toFixed(0)}
+              ₹{localSettings.commissionPct.toFixed(0)}
             </span>
           </div>
         </div>
