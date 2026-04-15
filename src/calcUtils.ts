@@ -11,8 +11,9 @@ function normalizePair(num: number): string {
   return [num, r].sort().join('-');
 }
 
+/** Normal bets: every listed pair counts (58.58 → 2). WP/palat: unique pair families only. */
 function countSegment(allNumbers: number[], isWP: boolean): number {
-  if (!isWP) return new Set(allNumbers).size;
+  if (!isWP) return allNumbers.length;
   const seen = new Set<string>();
   let count = 0;
   for (const n of allNumbers) {

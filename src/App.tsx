@@ -4,6 +4,7 @@ import History from "./History";
 import GamesView from "./GamesView";
 import SlotsSettings from "./SlotsSettings";
 import { useAppData } from "./useAppData";
+import { LoadingProvider } from "./TopProgressBar";
 
 type Tab = "calculator" | "history" | "games" | "settings";
 
@@ -49,6 +50,7 @@ export default function App() {
   }
 
   return (
+    <LoadingProvider>
     <div className="min-h-screen bg-[#eef2f7] font-serif">
       {/* Tab bar */}
       <div className="sticky top-0 z-10 bg-white border-b-2 border-[#dde8f0] shadow-md">
@@ -134,5 +136,6 @@ export default function App() {
         )}
       </div>
     </div>
+    </LoadingProvider>
   );
 }

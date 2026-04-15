@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { slotMinutes, formatSlotTime, getCurrentSlot, upsertPayment } from "./calcUtils";
 import type { SavedSession, GameSlot, AppSettings, PaymentRecord } from "./types";
+import { useLoadingSignal } from "./TopProgressBar";
 
 interface Props {
   slots:                    GameSlot[];
@@ -137,12 +138,31 @@ interface EditState {
   showPct:  boolean;     // whether the % editor is expanded
 }
 
+function SkeletonSlotCards() {
+  return (
+    <div className="space-y-4 animate-pulse">
+      {[1, 2, 3].map(i => (
+        <div key={i} className="bg-white rounded-[20px] border-2 border-[#e4edf8] p-5 shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-full bg-gray-100 shrink-0" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 bg-gray-100 rounded-lg w-1/3" />
+              <div className="h-3 bg-gray-100 rounded-lg w-1/2" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function GamesView({
   slots, settings,
   loadSessionsByDate, loadSessionsByMonth, loadSessionDatesForMonth,
   loadPaymentsByDate, loadPaymentsByMonth,
   savePaymentDoc,
 }: Props) {
+  const { inc, dec } = useLoadingSignal();
   const today  = todayStr();
   const nowDate = new Date();
 
@@ -161,6 +181,25 @@ export default function GamesView({
   const [monthPayments, setMonthPayments] = useState<PaymentRecord[]>([]);
   const [monthLoading,  setMonthLoading]  = useState(false);
 
+  // Sequence refs to discard stale results when date/month changes quickly
+  const daySeqRef   = useRef(0);
+  const monthSeqRef = useRef(0);
+
+  // SWR: show last-loaded sessions+payments immediately, then always refetch in background
+  const dayDataCacheRef = useRef(
+    new Map<string, { sessions: SavedSession[]; payments: PaymentRecord[] }>(),
+  );
+  const putDayDataCache = (date: string, sessions: SavedSession[], payments: PaymentRecord[]) => {
+    dayDataCacheRef.current.set(date, { sessions, payments });
+  };
+  const monthDataCacheRef = useRef(
+    new Map<string, { sessions: SavedSession[]; payments: PaymentRecord[] }>(),
+  );
+  const monthCacheKey = (y: number, m: number) => `${y}-${m}`;
+  const putMonthDataCache = (y: number, mo: number, sessions: SavedSession[], payments: PaymentRecord[]) => {
+    monthDataCacheRef.current.set(monthCacheKey(y, mo), { sessions, payments });
+  };
+
   // On mount, auto-jump to the most recent date with data
   useEffect(() => {
     loadSessionDatesForMonth(nowDate.getFullYear(), nowDate.getMonth() + 1).then(dates => {
@@ -174,22 +213,72 @@ export default function GamesView({
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load daily data
+  // Load daily data — paint from cache if any, always refetch; top bar during fetch
   useEffect(() => {
     if (viewMode !== "daily") return;
+    const cached = dayDataCacheRef.current.get(selectedDate);
+    if (cached) {
+      setDaySessions([...cached.sessions]);
+      setDayPayments([...cached.payments]);
+    }
+
+    const seq = ++daySeqRef.current;
+    inc();
     setDayLoading(true);
     Promise.all([loadSessionsByDate(selectedDate), loadPaymentsByDate(selectedDate)])
-      .then(([s, p]) => { setDaySessions(s); setDayPayments(p); })
-      .finally(() => setDayLoading(false));
+      .then(([s, p]) => {
+        if (seq !== daySeqRef.current) return;
+        setDaySessions(s);
+        setDayPayments(p);
+        putDayDataCache(selectedDate, [...s], [...p]);
+      })
+      .catch(() => {
+        if (seq !== daySeqRef.current) return;
+        if (cached) {
+          setDaySessions([...cached.sessions]);
+          setDayPayments([...cached.payments]);
+        }
+      })
+      .finally(() => {
+        dec();
+        if (seq === daySeqRef.current) setDayLoading(false);
+      });
   }, [selectedDate, viewMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load monthly data
+  // Load monthly data — paint from cache if any, always refetch
   useEffect(() => {
     if (viewMode !== "monthly") return;
+    const mKey = monthCacheKey(monthYear.year, monthYear.month);
+    const cached = monthDataCacheRef.current.get(mKey);
+    if (cached) {
+      setMonthSessions([...cached.sessions]);
+      setMonthPayments([...cached.payments]);
+    }
+
+    const seq = ++monthSeqRef.current;
+    inc();
     setMonthLoading(true);
-    Promise.all([loadSessionsByMonth(monthYear.year, monthYear.month), loadPaymentsByMonth(monthYear.year, monthYear.month)])
-      .then(([s, p]) => { setMonthSessions(s); setMonthPayments(p); })
-      .finally(() => setMonthLoading(false));
+    Promise.all([
+      loadSessionsByMonth(monthYear.year, monthYear.month),
+      loadPaymentsByMonth(monthYear.year, monthYear.month),
+    ])
+      .then(([s, p]) => {
+        if (seq !== monthSeqRef.current) return;
+        setMonthSessions(s);
+        setMonthPayments(p);
+        putMonthDataCache(monthYear.year, monthYear.month, [...s], [...p]);
+      })
+      .catch(() => {
+        if (seq !== monthSeqRef.current) return;
+        if (cached) {
+          setMonthSessions([...cached.sessions]);
+          setMonthPayments([...cached.payments]);
+        }
+      })
+      .finally(() => {
+        dec();
+        if (seq === monthSeqRef.current) setMonthLoading(false);
+      });
   }, [monthYear, viewMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const enabledSlots = slots.filter(s => s.enabled).sort((a, b) => slotMinutes(a.time) - slotMinutes(b.time));
@@ -242,6 +331,7 @@ export default function GamesView({
       try {
         await savePaymentDoc(saved);
         setDayPayments(updatedPayments);
+        putDayDataCache(selectedDate, daySessions, updatedPayments);
       } catch (err) {
         console.error("saveEdit failed:", err);
         alert("Save failed. Please check your internet connection and try again.");
@@ -304,8 +394,9 @@ export default function GamesView({
             >›</button>
           </div>
 
-          {dayLoading ? (
-            <div className="text-center text-gray-400 py-12 text-[15px]">Loading…</div>
+          {daySessions.length === 0 && dayLoading ? (
+            /* Skeleton on first load only — no stale data to show yet */
+            <SkeletonSlotCards />
           ) : (
             <>
               {/* Earnings card */}
@@ -543,8 +634,8 @@ export default function GamesView({
             >›</button>
           </div>
 
-          {monthLoading ? (
-            <div className="text-center text-gray-400 py-12 text-[15px]">Loading…</div>
+          {monthSessions.length === 0 && monthLoading ? (
+            <SkeletonSlotCards />
           ) : (
             <>
               <div className={`rounded-[22px] px-6 py-6 mb-5 ${monthEarned > 0 ? "bg-[#1a3a5c] shadow-[0_6px_28px_rgba(26,58,92,0.35)]" : "bg-gray-200 shadow"}`}>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import type { SavedSession, CalculationResult, GameSlot, PaymentRecord } from "./types";
 import EditableBreakdown from "./EditableBreakdown";
+import { useLoadingSignal } from "./TopProgressBar";
 
 interface Props {
   slots:                        GameSlot[];
@@ -89,6 +90,30 @@ function unslottedPersons(sessions: SavedSession[]): PersonEntry[] {
   return out;
 }
 
+// ─── Skeleton placeholder (first-load, no stale data available) ───────────────
+
+function SkeletonDayView() {
+  return (
+    <div className="space-y-3 animate-pulse">
+      {[1, 2].map(i => (
+        <div key={i} className="bg-white rounded-[20px] border-2 border-[#e4edf8] p-4 shadow-sm">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-8 h-8 rounded-full bg-gray-100" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 bg-gray-100 rounded-lg w-1/3" />
+              <div className="h-3 bg-gray-100 rounded-lg w-1/2" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <div className="h-3 bg-gray-100 rounded-lg w-2/3" />
+            <div className="h-3 bg-gray-100 rounded-lg w-1/2" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function History({
@@ -96,6 +121,7 @@ export default function History({
   loadSessionsByDate, loadPaymentsByDate, loadSessionDatesForMonth,
   saveSessionDoc, deleteSessionDoc, deletePaymentsByContactDate,
 }: Props) {
+  const { inc, dec } = useLoadingSignal();
   const today = todayStr();
   const now   = new Date();
 
@@ -116,6 +142,14 @@ export default function History({
 
   // Monotonic counter to discard stale async results when selectedDate changes quickly
   const loadSeqRef = useRef(0);
+
+  // Last-known data per date: instant paint when revisiting a day, then always refetched (SWR)
+  const dayCacheRef = useRef(
+    new Map<string, { sessions: SavedSession[]; payments: PaymentRecord[] }>(),
+  );
+  const putDayCache = (date: string, sessions: SavedSession[], payments: PaymentRecord[]) => {
+    dayCacheRef.current.set(date, { sessions, payments });
+  };
 
   // Load all active dates for the calendar month whenever the month changes.
   // On the very first load, also auto-jump to the most recent date with data.
@@ -139,23 +173,43 @@ export default function History({
     }).catch(() => { /* non-fatal – calendar dots just won't show */ });
   }, [cal.year, cal.month]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load sessions+payments whenever selectedDate changes; abort if date changes again
+  // Load sessions+payments when selectedDate changes: paint from cache if any, always refetch
   useEffect(() => {
+    const cached = dayCacheRef.current.get(selectedDate);
+    if (cached) {
+      setDaySessions([...cached.sessions].sort((a, b) => b.createdAt - a.createdAt));
+      setDayPayments([...cached.payments]);
+    }
+
     const seq = ++loadSeqRef.current;
+    inc();
     setDayLoading(true);
     Promise.all([loadSessionsByDate(selectedDate), loadPaymentsByDate(selectedDate)])
       .then(([sessions, payments]) => {
         if (seq !== loadSeqRef.current) return; // stale – a newer request is in flight
-        setDaySessions(sessions.sort((a, b) => b.createdAt - a.createdAt));
+        const sorted = [...sessions].sort((a, b) => b.createdAt - a.createdAt);
+        setDaySessions(sorted);
         setDayPayments(payments);
+        putDayCache(selectedDate, sorted, payments);
         setActiveDates(prev => {
           const next = new Set(prev);
           if (sessions.length > 0) next.add(selectedDate);
           return next;
         });
       })
-      .catch(() => { if (seq === loadSeqRef.current) setDaySessions([]); })
-      .finally(() => { if (seq === loadSeqRef.current) setDayLoading(false); });
+      .catch(() => {
+        if (seq !== loadSeqRef.current) return;
+        if (cached) {
+          setDaySessions([...cached.sessions].sort((a, b) => b.createdAt - a.createdAt));
+          setDayPayments([...cached.payments]);
+        } else {
+          setDaySessions([]);
+        }
+      })
+      .finally(() => {
+        dec(); // always pair this request's inc — stale requests must not skip dec
+        if (seq === loadSeqRef.current) setDayLoading(false);
+      });
   }, [selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shiftMonth = (delta: number) => {
@@ -189,8 +243,10 @@ export default function History({
       return;
     }
     const remaining = daySessions.filter(s => s.id !== id);
+    const nextPayments = dayPayments.filter(p => !(session && p.contact === session.contact));
     setDaySessions(remaining);
-    setDayPayments(prev => prev.filter(p => !(session && p.contact === session.contact)));
+    setDayPayments(nextPayments);
+    putDayCache(selectedDate, remaining, nextPayments);
     if (remaining.length === 0) {
       setActiveDates(prev => { const n = new Set(prev); n.delete(selectedDate); return n; });
     }
@@ -199,6 +255,11 @@ export default function History({
   const handleResultChange = async (id: string, result: CalculationResult) => {
     const updated = daySessions.map(s => s.id === id ? { ...s, overrideResult: result } : s);
     setDaySessions(updated);
+    putDayCache(
+      selectedDate,
+      updated,
+      dayCacheRef.current.get(selectedDate)?.payments ?? dayPayments,
+    );
     const target = updated.find(s => s.id === id);
     if (target) {
       try {
@@ -225,6 +286,7 @@ export default function History({
     }
     setDaySessions([]);
     setDayPayments([]);
+    putDayCache(selectedDate, [], []);
     setActiveDates(prev => { const n = new Set(prev); n.delete(selectedDate); return n; });
     setConfirmClear(false);
   };
@@ -287,16 +349,14 @@ export default function History({
       <div className="flex items-start justify-between mb-3 px-1">
         <div>
           <div className="text-[16px] font-extrabold text-[#1a1a1a]">{selDateDisplay}</div>
-          {dayLoading ? (
-            <div className="text-[13px] text-gray-400 mt-0.5">Loading…</div>
-          ) : daySessions.length > 0 ? (
+          {daySessions.length > 0 ? (
             <div className="text-[13px] text-gray-500 mt-0.5">
               {daySessions.length} {daySessions.length === 1 ? "person" : "people"} · Day total:{" "}
               <span className="font-extrabold text-[#1d6fb8]">₹{dayTotal}</span>
             </div>
-          ) : (
+          ) : !dayLoading ? (
             <div className="text-[13px] text-gray-400 mt-0.5">No entries</div>
-          )}
+          ) : null}
         </div>
         {daySessions.length > 0 && (
           <button
@@ -330,16 +390,17 @@ export default function History({
       )}
 
       {/* ── Day view ── */}
-      {dayLoading ? (
-        <div className="bg-white rounded-[18px] border-2 border-[#e4edf8] px-5 py-10 text-center shadow-sm">
-          <div className="text-[14px] text-gray-400 font-semibold">Loading entries…</div>
-        </div>
-      ) : daySessions.length === 0 ? (
-        <div className="bg-white rounded-[18px] border-2 border-[#e4edf8] px-5 py-10 text-center shadow-sm">
-          <div className="text-[36px] mb-2">📭</div>
-          <div className="text-[16px] font-semibold text-gray-400">No entries for this day</div>
-          <div className="text-[13px] text-gray-300 mt-1">Tap a date on the calendar</div>
-        </div>
+      {daySessions.length === 0 ? (
+        dayLoading ? (
+          /* First-load skeleton — no stale data to show yet */
+          <SkeletonDayView />
+        ) : (
+          <div className="bg-white rounded-[18px] border-2 border-[#e4edf8] px-5 py-10 text-center shadow-sm">
+            <div className="text-[36px] mb-2">📭</div>
+            <div className="text-[16px] font-semibold text-gray-400">No entries for this day</div>
+            <div className="text-[13px] text-gray-300 mt-1">Tap a date on the calendar</div>
+          </div>
+        )
       ) : (
         <div className="space-y-3">
 
