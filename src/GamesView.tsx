@@ -638,20 +638,20 @@ export default function GamesView({
             <SkeletonSlotCards />
           ) : (
             <>
-              <div className={`rounded-[22px] px-6 py-6 mb-5 ${monthEarned > 0 ? "bg-[#1a3a5c] shadow-[0_6px_28px_rgba(26,58,92,0.35)]" : "bg-gray-200 shadow"}`}>
-                <div className={`text-[13px] font-bold uppercase tracking-widest mb-1 ${monthEarned > 0 ? "text-white/60" : "text-gray-500"}`}>
+              <div className={`rounded-[22px] px-6 py-6 mb-5 font-sans border ${monthEarned > 0 ? "bg-linear-to-br from-[#1b4a77] via-[#1d6fb8] to-[#245487] border-[#2f6ea6] shadow-[0_8px_28px_rgba(29,111,184,0.35)]" : "bg-linear-to-br from-[#f7fbff] via-[#eef6ff] to-[#e8f2ff] border-[#d5e6fa] shadow-[0_6px_18px_rgba(128,162,200,0.22)]"}`}>
+                <div className={`text-[12px] font-semibold uppercase tracking-[0.18em] mb-1 ${monthEarned > 0 ? "text-white/80" : "text-[#4f6b88]"}`}>
                   💰 My Earnings — {MONTH_NAMES[monthYear.month - 1]} {monthYear.year}
                 </div>
-                <div className={`text-[56px] font-extrabold leading-none mb-1 ${monthEarned > 0 ? "text-white" : "text-gray-500"}`}>₹{monthEarned}</div>
+                <div className={`text-[52px] font-black leading-none mb-1 ${monthEarned > 0 ? "text-white" : "text-[#1e3c5f]"}`}>₹{monthEarned}</div>
                 {monthReceived > 0 && (
-                  <div className="text-[15px] text-white/60">Commission of ₹{monthReceived} total received</div>
+                  <div className={`text-[14px] ${monthEarned > 0 ? "text-white/80" : "text-[#4f6b88]"}`}>Commission of ₹{monthReceived} total received</div>
                 )}
                 {monthBets > 0 && (
                   <div className="grid grid-cols-3 gap-2 mt-4">
                     {[{ label: "Days", value: String(monthDays.length) }, { label: "Received", value: `₹${monthReceived}` }, { label: "Pending", value: `₹${monthPending}` }].map(({ label, value }) => (
-                      <div key={label} className="bg-white/15 rounded-[14px] px-2 py-3 text-center">
-                        <div className="text-[10px] text-white/70 font-semibold mb-1">{label}</div>
-                        <div className="text-[18px] font-extrabold text-white leading-none">{value}</div>
+                      <div key={label} className={`rounded-[14px] px-2 py-3 text-center ${monthEarned > 0 ? "bg-white/15" : "bg-white/80 border border-[#d9e7f8]"}`}>
+                        <div className={`text-[10px] font-semibold mb-1 uppercase tracking-wide ${monthEarned > 0 ? "text-white/75" : "text-[#4f6b88]"}`}>{label}</div>
+                        <div className={`text-[18px] font-black leading-none ${monthEarned > 0 ? "text-white" : "text-[#1e3c5f]"}`}>{value}</div>
                       </div>
                     ))}
                   </div>
