@@ -100,17 +100,83 @@ function trySolidRunSegment(
   return { line: display, rate, isWP: false, isDouble, count, lineTotal: count * rate };
 }
 
+/** Same-digit run (length ≥ 3) for multi-x chain values. */
+const SAME_DIGIT_RUN = /^(\d)\1{2,}$/;
+const X_RATE_RE = /(?<![A-Za-z])x\s*\d+/i;
+const SEP_RATE_RE = /(?<![A-Za-z])(?:x|=+|\*)\s*(\d+)\s*([a-zA-Z]*)/gi;
+
+/**
+ * If `trimmed` is `B.1111x9999x50` / `1111x2222x3333x10` shape, return prefix,
+ * number chunks, and rate; otherwise null. Used by merge logic and parser.
+ */
+function parseMultiXChainStructure(trimmed: string): { pre: string; nums: string[]; rate: number } | null {
+  const lead = trimmed.match(/^(AB|A|B)\.?\s*/i);
+  const pre = lead ? `${lead[1].toUpperCase()}.` : "";
+  const rest = lead ? trimmed.slice(lead[0].length).trim() : trimmed;
+  const compact = rest.replace(/\s+/g, "");
+  // Chain mode is strict: only digits + x separators (prevents words from splitting on x).
+  if (!/^[0-9xX]+$/.test(compact)) return null;
+  const parts = compact.split(/x+/i).filter(Boolean);
+  if (parts.length < 3) return null;
+  if (!parts.every(p => /^\d+$/.test(p))) return null;
+  const rate = parseInt(parts[parts.length - 1], 10);
+  if (!(rate > 0)) return null;
+  const numParts = parts.slice(0, -1);
+  for (const n of numParts) {
+    if (!SAME_DIGIT_RUN.test(n)) return null;
+  }
+  return { pre, nums: numParts, rate };
+}
+
+/**
+ * Chains like `B.1111x9999x50` → same rate (50) applied to each same-digit run
+ * (1111, 9999, …); each is parsed like `B.1111x50` / `B.9999x50`. Runs must be
+ * length ≥ 3 and one repeated digit. Optional leading A./B./AB. applies to every value.
+ */
+function tryParseMultiXSameDigitChain(trimmed: string, parseOne: (s: string) => Segment[]): Segment[] | null {
+  const st = parseMultiXChainStructure(trimmed);
+  if (!st) return null;
+  const { pre, nums: numParts, rate } = st;
+  const out: Segment[] = [];
+  for (const n of numParts) {
+    const syn = `${pre}${n}x${rate}`;
+    const sub = parseOne(syn);
+    if (sub.length !== 1) return null;
+    out.push({ ...sub[0], line: pre ? `${pre}${n}` : n });
+  }
+  return out;
+}
+
+/**
+ * Strip chained market/game prefixes like `Harf.` `GB.` `usa.` (any case).
+ * Never removes betting modifiers `A.` `B.` `AB.` at the current start of the line.
+ */
+function stripLeadingGameLabels(s: string): string {
+  let t = s.trim();
+  let prev = "";
+  while (t !== prev) {
+    prev = t;
+    const m = t.match(/^([A-Za-z]+)\.\s*/);
+    if (!m) break;
+    const word = m[1];
+    if (/^AB$/i.test(word) || /^A$/i.test(word) || /^B$/i.test(word)) break;
+    t = t.slice(m[0].length);
+  }
+  return t;
+}
+
 // ─── Line parser ───────────────────────────────────────────────────────────────
 
-export function processLine(line: string): Segment[] {
+export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segment[] {
   // ── Normalize paren typos before parsing ──────────────────────────────────
   // Handles the common variations a human might type:
   //   (rate/suffix   (rate\suffix   (rate|suffix   (rate.suffix
   //   (rate suffix)  (ratesuffix)   ( rate )       (rate        ← missing close
-  const trimmed = line
-    .trim()
+  const trimmed = stripLeadingGameLabels(line)
     // "into" (with any spacing or split like "in to") is a rate separator alias for x
     .replace(/\s*in\s*to\s*/gi, 'x')
+    // After merges, stray leading ". " from skipped separator lines
+    .replace(/^[\s.]+/, '')
     // (rate / \ | . suffix)  or  (rate / \ | . suffix  (any non-alpha separator)
     .replace(/\(\s*(\d+)\s*[\/\\|.]\s*([a-zA-Z]*)\s*\)?/g, '($1)$2')
     // (rate suffix)  or  (rate suffix  (space between rate and suffix)
@@ -122,6 +188,10 @@ export function processLine(line: string): Segment[] {
     // (rate  (only opening paren, nothing after digits — add closing)
     .replace(/\(\s*(\d+)\s*$/g, '($1)');
   if (!trimmed) return [];
+  if (!opts?.skipMultiX) {
+    const multi = tryParseMultiXSameDigitChain(trimmed, s => processLine(s, { skipMultiX: true }));
+    if (multi) return multi;
+  }
   const results: Segment[] = [];
   let match: RegExpExecArray | null;
 
@@ -152,8 +222,7 @@ export function processLine(line: string): Segment[] {
   // Handles x / = / * as rate separators, with optional spaces anywhere.
   // A single pass finds every rate marker; the text before each is the numbers portion.
   // Covers: 32-23*5, 32-23 * 5, 32-23x5, 32-23 x 5, 32-23=5, 32-23===5, etc.
-  const sepRe = /(?:x|=+|\*)\s*(\d+)\s*([a-zA-Z]*)/gi;
-  const sepMatches = [...trimmed.matchAll(sepRe)];
+  const sepMatches = [...trimmed.matchAll(SEP_RATE_RE)];
   if (sepMatches.length > 0) {
     let prevEnd = 0;
     for (let si = 0; si < sepMatches.length; si++) {
@@ -256,54 +325,70 @@ export function preprocessText(text: string): string {
   return text.replace(/\[[^\]]*\]\s*[^:]+:\s*/g, '\n').trim();
 }
 
+/** Lines with no letters and no digits (e.g. ".", "---") — never stash or merge. */
+function isSeparatorOnlyLine(line: string): boolean {
+  return !/[0-9A-Za-z\u0900-\u0FFF]/.test(line);
+}
+
 export function calculateTotal(text: string): CalculationResult {
   const cleaned = preprocessText(text);
   const rawLines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
   const mergedLines: string[] = [];
   let pending = '';
 
+  const flushPending = () => {
+    if (!pending) return;
+    if (!(isSeparatorOnlyLine(pending) || (/^[\d\s\-_.,:|\/\\]*$/.test(pending) && !/\d/.test(pending)))) {
+      mergedLines.push(pending);
+    }
+    pending = '';
+  };
+
   for (const rawLine of rawLines) {
-    // Strip leading game-code labels like "GB. ", "USA. ", "IND. " etc.
-    // (1-6 uppercase letters followed by a dot and optional space)
-    const labelStripped = rawLine.replace(/^[A-Z]{1,6}\.\s*/, '');
-    // Normalize "into" → "x" for rate-detection
+    const labelStripped = stripLeadingGameLabels(rawLine);
     const line = labelStripped.replace(/\s*in\s*to\s*/gi, 'x');
 
-    const hasExplicitRate = /\(\d+\)/.test(line) || /x\s*\d+/i.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
+    if (isSeparatorOnlyLine(line)) continue;
+
+    const hasExplicitRate =
+      /\(\d+\)/.test(line) || X_RATE_RE.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
-    // Lines with a known flag word (wp/ab/palat) are self-contained — send directly to processLine
     const hasKnownFlag = /\b(?:wp|ab|palat)\b/i.test(line);
 
+    // `B.1111x9999x50` must never absorb `pending` — glue would break the first `x`.
+    const isSelfContainedMultiX = Boolean(parseMultiXChainStructure(line));
+
     if (!hasExplicitRate && !hasCommaRate) {
-      const isPureNumbers = /^[\d\s\-_.,:|\/\\]+$/.test(line);
+      const isPureNumbers = /^[\d\s\-_.,:|\/\\]+$/.test(line) && /\d/.test(line);
       if (hasKnownFlag) {
-        // Self-contained flag line — flush pending and process independently
-        if (pending) { mergedLines.push(pending); pending = ''; }
+        flushPending();
         mergedLines.push(line);
       } else if (isPureNumbers) {
-        pending = pending ? pending + ' ' + line : line;
+        pending = pending ? `${pending} ${line}` : line;
       } else {
-        // Unknown chars without rate or flag → likely a typo → error
-        if (pending) { mergedLines.push(pending); pending = ''; }
+        flushPending();
         mergedLines.push(line);
       }
     } else {
       if (pending) {
-        // Smart join: if `pending` ends with a lone single digit (e.g. "10.5"),
-        // the pair was split mid-number across lines → join without separator so
-        // "10.5" + "2.25...x5" → "10.52.25...x5" (reconstructs the number).
-        // If `pending` ends with a complete 2-digit number (e.g. "...58"), the
-        // first line is a full number group → join with a space.
-        const endsWithPartialPair = /(?<!\d)\d$/.test(pending);
-        const sep = endsWithPartialPair ? '' : ' ';
-        mergedLines.push(pending + sep + line);
-        pending = '';
+        if (isSelfContainedMultiX) {
+          flushPending();
+          mergedLines.push(line);
+        } else if (!/\d/.test(pending)) {
+          flushPending();
+          mergedLines.push(line);
+        } else {
+          const endsWithPartialPair = /(?<!\d)\d$/.test(pending);
+          const sep = endsWithPartialPair ? "" : " ";
+          mergedLines.push(pending + sep + line);
+          pending = "";
+        }
       } else {
         mergedLines.push(line);
       }
     }
   }
-  if (pending) mergedLines.push(pending);
+  flushPending();
 
   const results: import('./types').Segment[] = [];
   const failedLines: string[] = [];
