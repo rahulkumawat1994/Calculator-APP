@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { calculateTotal, processLine, splitWhatsAppInputByContact } from "./calcUtils";
+import {
+  calculateTotal,
+  processLine,
+  splitWhatsAppInputByContact,
+  computePatternAccuracy,
+} from "./calcUtils";
 
 describe("calculateTotal regression scenarios", () => {
   const rows = [
@@ -83,5 +88,29 @@ describe("splitWhatsAppInputByContact", () => {
     expect(out![1].contact).toBe("Bob");
     expect(out![1].text).toContain("Bob:");
     expect(out![1].text).toContain("30 x10");
+  });
+});
+
+describe("computePatternAccuracy", () => {
+  it("is 100 with no failed lines and no WA fallbacks", () => {
+    const r = calculateTotal("10 20 x5");
+    const a = computePatternAccuracy(r);
+    expect(a.scorePercent).toBe(100);
+    expect(a.reasons).toHaveLength(0);
+  });
+
+  it("drops below 100 when failed lines exist", () => {
+    const r = calculateTotal("10 20 x5\nthis is not a valid bet line at all");
+    expect(r.failedLines?.length).toBeGreaterThan(0);
+    const a = computePatternAccuracy(r);
+    expect(a.scorePercent).toBeLessThan(100);
+    expect(a.reasons.some(x => x.includes("not matched"))).toBe(true);
+  });
+
+  it("deducts for WA slot fallbacks", () => {
+    const r = calculateTotal("11 22 x10");
+    const a = computePatternAccuracy(r, { waSlotFallbackCount: 2 });
+    expect(a.scorePercent).toBe(99.7);
+    expect(a.reasons.some(x => x.includes("fallback"))).toBe(true);
   });
 });

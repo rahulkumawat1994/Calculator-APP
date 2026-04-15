@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useLayoutEffect } from "react";
 import { toast } from "react-toastify";
 import { toastApiError } from "./apiToast";
 import {
   calculateTotal,
   parseWhatsAppMessages,
   splitWhatsAppInputByContact,
+  computePatternAccuracy,
   mergeIntoSessions,
   getCurrentSlot,
   formatSlotTime,
@@ -105,6 +106,8 @@ type PerUserCalc = {
   result: CalculationResult;
   pendingTagged: TaggedMessages[] | null;
   isWAMode: boolean;
+  /** WhatsApp messages where timestamp did not map to a game (menu fallback used). */
+  waSlotFallbackCount?: number;
 };
 
 export default function Calculator({
@@ -118,6 +121,8 @@ export default function Calculator({
   const [userResults, setUserResults] = useState<PerUserCalc[] | null>(null);
   /** Which user row has line-by-line breakdown open (accordion, one at a time). */
   const [expandedResultBlockId, setExpandedResultBlockId] = useState<string | null>(null);
+  /** After opening a row, scroll its title into view (see useLayoutEffect below). */
+  const [accordionScrollToBlockId, setAccordionScrollToBlockId] = useState<string | null>(null);
   const [copied,         setCopied]         = useState(false);
   const [showReport,     setShowReport]     = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -149,6 +154,13 @@ export default function Calculator({
       setSelectedSlotId(autoSlot.id);
     }
   }, [slots, enabledSlots, selectedSlotId, autoSlot.id]);
+
+  useLayoutEffect(() => {
+    if (!accordionScrollToBlockId) return;
+    const el = document.getElementById(`result-user-${accordionScrollToBlockId}`);
+    el?.scrollIntoView({ block: "start", behavior: "auto", inline: "nearest" });
+    setAccordionScrollToBlockId(null);
+  }, [accordionScrollToBlockId]);
 
   // Auto-detect games from all WhatsApp lines (all blocks); sync dropdown only when a single game applies
   useEffect(() => {
@@ -255,13 +267,17 @@ export default function Calculator({
           : (b.label.trim() || `User ${idx + 1}`);
 
       if (waMessages && waMessages.length > 0) {
+        let waSlotFallbackCount = 0;
         const tagged = waMessages.map(m => {
           const auto = detectSlotFromTimestamp(m.timestamp, slots);
+          if (!auto) waSlotFallbackCount++;
           return { ...m, slotId: (auto ?? selectedSlot).id };
         }) as TaggedMessages[];
+        const allFailed = tagged.flatMap(m => m.result.failedLines ?? []);
         const nextResult: CalculationResult = {
           results: tagged.flatMap(m => m.result.results),
           total:   tagged.reduce((s, m) => s + m.result.total, 0),
+          ...(allFailed.length > 0 ? { failedLines: allFailed } : {}),
         };
         next.push({
           blockId: b.id,
@@ -270,13 +286,14 @@ export default function Calculator({
           result: nextResult,
           pendingTagged: tagged,
           isWAMode: true,
+          waSlotFallbackCount,
         });
         void logCalculationAudit({
           input: b.text,
           mode: "wa",
           total: nextResult.total,
           resultCount: nextResult.results.length,
-          failedCount: 0,
+          failedCount: allFailed.length,
           selectedSlotId: selectedSlot.id,
           selectedSlotName: selectedSlot.name,
           waSlotsSummary: summarizeWaSlots(tagged, slots),
@@ -291,6 +308,7 @@ export default function Calculator({
           result: nextResult,
           pendingTagged: null,
           isWAMode: false,
+          waSlotFallbackCount: 0,
         });
         void logCalculationAudit({
           input: b.text,
@@ -308,7 +326,10 @@ export default function Calculator({
       toast.error("Add text in at least one box before calculating.");
       return;
     }
-    setExpandedResultBlockId(null);
+    const singleWithLines =
+      next.length === 1 && next[0].result.results.length > 0 ? next[0].blockId : null;
+    setExpandedResultBlockId(singleWithLines);
+    setAccordionScrollToBlockId(null);
     setUserResults(next);
   };
 
@@ -415,6 +436,7 @@ export default function Calculator({
   const performClear = () => {
     setShowClearConfirm(false);
     setExpandedResultBlockId(null);
+    setAccordionScrollToBlockId(null);
     setBlocks([{ id: newBlockId(), label: "User 1", text: "", labelLocked: false }]);
     setUserResults(null);
     setCopied(false);
@@ -458,6 +480,20 @@ export default function Calculator({
     );
     setIsSaved(false);
   };
+
+  const patternAccuracyAggregate = useMemo(() => {
+    if (!userResults?.length) return null;
+    let minScore = 100;
+    const reasons: string[] = [];
+    for (const u of userResults) {
+      const b = computePatternAccuracy(u.result, {
+        waSlotFallbackCount: u.isWAMode ? (u.waSlotFallbackCount ?? 0) : 0,
+      });
+      minScore = Math.min(minScore, b.scorePercent);
+      for (const r of b.reasons) reasons.push(`${u.label}: ${r}`);
+    }
+    return { scorePercent: minScore, reasons };
+  }, [userResults]);
 
   const grandTotal = userResults?.reduce((s, u) => s + u.result.total, 0) ?? 0;
   const anyWAMode  = userResults?.some(u => u.isWAMode) ?? false;
@@ -524,6 +560,57 @@ export default function Calculator({
       </div>
 
       <div className="w-full max-w-[520px] bg-white rounded-[20px] shadow-[0_6px_32px_rgba(0,0,0,0.10)] p-6 space-y-5">
+        <div
+          className={`rounded-[14px] border-2 px-3.5 py-3 ${
+            !patternAccuracyAggregate
+              ? "border-[#e4edf8] bg-[#f8fafc]"
+              : patternAccuracyAggregate.scorePercent >= 100
+                ? "border-green-200 bg-green-50/90"
+                : patternAccuracyAggregate.scorePercent >= 99
+                  ? "border-amber-200 bg-amber-50/90"
+                  : "border-red-200 bg-red-50/90"
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[12px] font-extrabold text-gray-600 uppercase tracking-wide">
+              Pattern accuracy
+            </span>
+            {patternAccuracyAggregate ? (
+              <span
+                className={`text-[22px] font-black tabular-nums leading-none ${
+                  patternAccuracyAggregate.scorePercent >= 100
+                    ? "text-green-800"
+                    : patternAccuracyAggregate.scorePercent >= 99
+                      ? "text-amber-800"
+                      : "text-red-800"
+                }`}
+              >
+                {patternAccuracyAggregate.scorePercent >= 100
+                  ? "100%"
+                  : `${patternAccuracyAggregate.scorePercent.toFixed(1)}%`}
+              </span>
+            ) : (
+              <span className="text-[13px] font-semibold text-gray-400">—</span>
+            )}
+          </div>
+          <p className="text-[11px] text-gray-600 mt-1.5 leading-snug">
+            {!patternAccuracyAggregate
+              ? "Tap Calculate all to score how cleanly your pasted lines match the rules (failed lines and time fallbacks lower this)."
+              : patternAccuracyAggregate.scorePercent >= 100
+                ? "Every checked line matched the pattern engine; no parser doubts for this run."
+                : "Below 100% means at least one line or WhatsApp time did not match rules perfectly — review the list under each user."}
+          </p>
+          {patternAccuracyAggregate && patternAccuracyAggregate.reasons.length > 0 && (
+            <ul className="mt-2 text-[11px] text-gray-700 list-disc pl-4 space-y-1 max-h-[120px] overflow-y-auto">
+              {patternAccuracyAggregate.reasons.slice(0, 12).map((line, i) => (
+                <li key={i} className="wrap-break-word">
+                  {line}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
         <div className="flex items-center justify-between gap-2">
           <label className="block text-[18px] font-bold text-[#222]">
             User inputs
@@ -680,6 +767,8 @@ export default function Calculator({
           {userResults.map(u => {
             const isOpen = expandedResultBlockId === u.blockId;
             const hasLines = u.result.results.length > 0;
+            const failedLineCount = u.result.failedLines?.length ?? 0;
+            const hasError = failedLineCount > 0;
             const lineCount = u.result.results.length;
             const lineCountLabel = hasLines
               ? `${lineCountFormatter.format(lineCount)} ${lineCount === 1 ? "line" : "lines"}`
@@ -687,7 +776,11 @@ export default function Calculator({
             return (
               <div
                 key={u.blockId}
-                className="bg-white rounded-[18px] border-2 border-[#dde8f0] shadow-sm overflow-hidden"
+                id={`result-user-${u.blockId}`}
+                data-has-parse-error={hasError ? "true" : undefined}
+                className={`bg-white rounded-[18px] border-2 shadow-sm overflow-hidden scroll-mt-[76px] ${
+                  hasError ? "border-red-500" : "border-[#dde8f0]"
+                }`}
               >
                 <button
                   type="button"
@@ -695,12 +788,21 @@ export default function Calculator({
                   aria-expanded={hasLines ? isOpen : undefined}
                   aria-label={
                     hasLines
-                      ? `${u.label}: ${lineCountLabel}, total ${lineCountFormatter.format(u.result.total)}`
-                      : `${u.label}: no line items`
+                      ? `${u.label}: ${hasError ? `${failedLineCount} failed line${failedLineCount === 1 ? "" : "s"}. ` : ""}${lineCountLabel}, total ${lineCountFormatter.format(u.result.total)}`
+                      : `${u.label}: no line items${hasError ? `, ${failedLineCount} failed line${failedLineCount === 1 ? "" : "s"}` : ""}`
                   }
+                  onMouseDown={e => {
+                    if (!hasLines) return;
+                    e.preventDefault();
+                  }}
                   onClick={() => {
                     if (!hasLines) return;
-                    setExpandedResultBlockId(prev => (prev === u.blockId ? null : u.blockId));
+                    if (expandedResultBlockId === u.blockId) {
+                      setExpandedResultBlockId(null);
+                      return;
+                    }
+                    setExpandedResultBlockId(u.blockId);
+                    setAccordionScrollToBlockId(u.blockId);
                   }}
                   className={`w-full flex items-center justify-between gap-3 px-4 py-3.5 bg-[#f6f9fd] text-left transition-colors ${
                     hasLines

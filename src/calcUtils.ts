@@ -449,6 +449,42 @@ export function calculateTotal(text: string): CalculationResult {
   };
 }
 
+/** How confident we are that every line followed known pattern rules (money-sensitive UI). */
+export interface PatternAccuracyBreakdown {
+  /** 0–100 with one decimal; never rounded up so tiny doubts stay visible (e.g. 99.9). */
+  scorePercent: number;
+  /** Human-readable causes of any deduction. */
+  reasons: string[];
+}
+
+/**
+ * Conservative score from parser output: any failed line or WA time fallback lowers the score
+ * by small steps so sub‑1% doubt can appear (e.g. 99.9%).
+ */
+export function computePatternAccuracy(
+  result: CalculationResult,
+  opts?: { waSlotFallbackCount?: number },
+): PatternAccuracyBreakdown {
+  const reasons: string[] = [];
+  let raw = 100;
+  const fails = result.failedLines ?? [];
+  for (const line of fails) {
+    raw -= 0.25;
+    const preview = line.length > 56 ? `${line.slice(0, 56)}…` : line;
+    reasons.push(`Line not matched by pattern rules: ${preview}`);
+  }
+  const fb = Math.max(0, opts?.waSlotFallbackCount ?? 0);
+  if (fb > 0) {
+    raw -= fb * 0.12;
+    reasons.push(
+      `${fb} WhatsApp message(s) had no clear time — the game from the menu was used as fallback.`,
+    );
+  }
+  raw = Math.max(0, Math.min(100, raw));
+  const scorePercent = Math.floor(raw * 10) / 10;
+  return { scorePercent, reasons };
+}
+
 // ─── WhatsApp message parser ───────────────────────────────────────────────────
 
 export interface ParsedMessage {
