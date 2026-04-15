@@ -38,12 +38,23 @@ function extractPairedNumbers(text: string): number[] {
 }
 
 // ─── Flag detector ─────────────────────────────────────────────────────────────
-// WP keywords: "wp", "palat", Hindi "पलट" (reverse/pair).
+// WP keywords: "wp", "w.p", "palat", Hindi "पलट" (reverse/pair).
 // AB keywords: letter 'a'/'b', OR Hindi "अब" (literally "ab").
 // Strip WP keywords first so "palat" (contains 'a') never accidentally triggers AB.
 function parseFlags(text: string): { isWP: boolean; isDouble: boolean } {
-  const isWP = /wp/i.test(text) || /palat/i.test(text) || /पलट/.test(text);
-  const cleaned = text.replace(/wp/gi, '').replace(/palat/gi, '').replace(/पलट/g, '').trim();
+  const isWP =
+    /\bwp\b/i.test(text) ||
+    /\bw\.?\s*p\b/i.test(text) ||
+    /\bw\s+p\b/i.test(text) ||
+    /\bpalat(?:e|el)?\b/i.test(text) ||
+    /पलट/.test(text);
+  const cleaned = text
+    .replace(/\bwp\b/gi, "")
+    .replace(/\bw\.?\s*p\b/gi, "")
+    .replace(/\bw\s+p\b/gi, "")
+    .replace(/\bpalat(?:e|el)?\b/gi, "")
+    .replace(/पलट/g, "")
+    .trim();
   const isDouble = /[ab]/i.test(cleaned) || /अब/.test(cleaned);
   return { isWP, isDouble };
 }
@@ -86,7 +97,7 @@ function trySolidRunSegment(
 ): Segment | null {
   const nt = numbersText.trim();
   if (!nt || !Number.isFinite(rate) || rate <= 0) return null;
-  if (/\b(?:wp|palat)\b/i.test(modifierSource) || /पलट/.test(modifierSource)) return null;
+  if (/\b(?:wp|palat(?:e|el)?)\b/i.test(modifierSource) || /पलट/.test(modifierSource)) return null;
 
   const rm = nt.match(/(\d)\1{2,}/);
   if (!rm || rm.index === undefined) return null;
@@ -172,11 +183,11 @@ export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segm
   // Handles the common variations a human might type:
   //   (rate/suffix   (rate\suffix   (rate|suffix   (rate.suffix
   //   (rate suffix)  (ratesuffix)   ( rate )       (rate        ← missing close
-  const trimmed = stripLeadingGameLabels(line)
-    // "into" (with any spacing or split like "in to") is a rate separator alias for x
-    .replace(/\s*in\s*to\s*/gi, 'x')
+  const trimmed = normalizeTrailingDashRate(
+    normalizeTypoTolerantInput(stripLeadingGameLabels(line)).replace(/\s*in\s*to\s*/gi, "x"),
+  )
     // After merges, stray leading ". " from skipped separator lines
-    .replace(/^[\s.]+/, '')
+    .replace(/^[\s.]+/, "")
     // (rate / \ | . suffix)  or  (rate / \ | . suffix  (any non-alpha separator)
     .replace(/\(\s*(\d+)\s*[\/\\|.]\s*([a-zA-Z]*)\s*\)?/g, '($1)$2')
     // (rate suffix)  or  (rate suffix  (space between rate and suffix)
@@ -257,7 +268,7 @@ export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segm
   // Handles: "444 10 Ab", "56 74 50 wp", "13 31 15 palat"
   // Last number before a flag keyword = rate; everything before = numbers.
   {
-    const flagMatch = trimmed.match(/\b(wp|ab|palat)\b/i);
+    const flagMatch = trimmed.match(/\b(?:wp|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i);
     if (flagMatch && flagMatch.index !== undefined) {
       const beforeFlag = trimmed.slice(0, flagMatch.index).trim();
       const flagText = trimmed.slice(flagMatch.index);
@@ -325,9 +336,35 @@ export function preprocessText(text: string): string {
   return text.replace(/\[[^\]]*\]\s*[^:]+:\s*/g, '\n').trim();
 }
 
+/**
+ * Best-effort cleanup for common typos / alternate keyboards before parsing.
+ * Does not guess missing numbers; only normalizes separators and invisible chars.
+ */
+export function normalizeTypoTolerantInput(s: string): string {
+  let t = s.normalize("NFKC");
+  // Fancy spaces → ASCII space
+  t = t.replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+  // Zero-width / BOM
+  t = t.replace(/[\u200B-\u200D\uFEFF]/g, "");
+  // Fullwidth ASCII digits → ASCII
+  t = t.replace(/[\uFF10-\uFF19]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30));
+  // Between digits: `;` `|` `/` `\` or tabs often used instead of space (keep `,` for comma-rate lines)
+  t = t.replace(/(?<=\d)[\t]*[;|/\\]+[\t]*(?=\d)/g, " ");
+  // Middle dot · between digits
+  t = t.replace(/(?<=\d)\s*\u00B7\s*(?=\d)/g, " ");
+  // Collapse runs of spaces
+  t = t.replace(/ +/g, " ").trim();
+  return t;
+}
+
 /** Lines with no letters and no digits (e.g. ".", "---") — never stash or merge. */
 function isSeparatorOnlyLine(line: string): boolean {
   return !/[0-9A-Za-z\u0900-\u0FFF]/.test(line);
+}
+
+/** `20 37 28 39 - 28` → `20 37 28 39 x28` (space + dash + space + rate at end only). */
+function normalizeTrailingDashRate(s: string): string {
+  return s.replace(/\s+[-–—]\s+(\d+)\s*$/g, " x$1");
 }
 
 export function calculateTotal(text: string): CalculationResult {
@@ -346,14 +383,17 @@ export function calculateTotal(text: string): CalculationResult {
 
   for (const rawLine of rawLines) {
     const labelStripped = stripLeadingGameLabels(rawLine);
-    const line = labelStripped.replace(/\s*in\s*to\s*/gi, 'x');
+    const line = normalizeTrailingDashRate(
+      normalizeTypoTolerantInput(labelStripped).replace(/\s*in\s*to\s*/gi, "x"),
+    );
 
     if (isSeparatorOnlyLine(line)) continue;
 
     const hasExplicitRate =
       /\(\d+\)/.test(line) || X_RATE_RE.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
-    const hasKnownFlag = /\b(?:wp|ab|palat)\b/i.test(line);
+    const hasKnownFlag =
+      /\b(?:wp|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(line) || /पलट/.test(line);
 
     // `B.1111x9999x50` must never absorb `pending` — glue would break the first `x`.
     const isSelfContainedMultiX = Boolean(parseMultiXChainStructure(line));
