@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { toast } from "react-toastify";
 import { toastApiError } from "./apiToast";
 import {
   calculateTotal,
@@ -8,6 +9,7 @@ import {
   formatSlotTime,
   slotMinutes,
   upsertPaymentStubs,
+  type ParsedMessage,
 } from "./calcUtils";
 import EditableBreakdown from "./EditableBreakdown";
 import ReportIssue from "./ReportIssue";
@@ -25,7 +27,6 @@ interface Props {
 }
 
 // ─── Auto-detect slot from a timestamp string ─────────────────────────────────
-// Mirrors getCurrentSlot logic but uses the message's own time.
 function detectSlotFromTimestamp(timeStr: string, slots: GameSlot[]): GameSlot | null {
   const match = timeStr.match(/(\d{1,2}):(\d{2})\s*([ap]m)?/i);
   if (!match) return null;
@@ -45,30 +46,86 @@ function todayDate(): string {
   return `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
 }
 
-// Holds the WhatsApp-parsed messages (tagged with slotId) waiting to be saved
+function newBlockId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+const lineCountFormatter = new Intl.NumberFormat("en-IN");
+
+/** WhatsApp header contact(s); empty / missing → `User ${fallbackIndex1}` (1-based). */
+function uniqueContactLabel(messages: ParsedMessage[], fallbackIndex1: number): string {
+  const uniq = [...new Set(
+    messages.map(m => m.contact.replace(/\s+/g, " ").trim()).filter(c => c.length > 0),
+  )];
+  if (uniq.length === 0) return `User ${fallbackIndex1}`;
+  if (uniq.length === 1) return uniq[0];
+  if (uniq.length <= 3) return uniq.join(", ");
+  return `${uniq.slice(0, 2).join(", ")} +${uniq.length - 2} more`;
+}
+
+type CalcBlock = { id: string; label: string; text: string; labelLocked?: boolean };
+
 type TaggedMessages = ReturnType<typeof parseWhatsAppMessages> extends (infer T)[] | null ? T & { slotId: string } : never;
+
+/** Unique slot display names in message order (WA per-message assignment). */
+function summarizeWaSlots(tagged: Array<{ slotId: string }>, allSlots: GameSlot[]): string {
+  const nameById = new Map(allSlots.map(s => [s.id, s.name]));
+  const order: string[] = [];
+  const seen = new Set<string>();
+  for (const m of tagged) {
+    const label = nameById.get(m.slotId) ?? m.slotId;
+    if (!seen.has(label)) {
+      seen.add(label);
+      order.push(label);
+    }
+  }
+  return order.join(", ");
+}
+
+/** All WhatsApp messages from every block, in order (for multi-game detection). */
+function collectAllParsedWaMessages(blocks: CalcBlock[]): ParsedMessage[] {
+  const out: ParsedMessage[] = [];
+  for (const b of blocks) {
+    const m = parseWhatsAppMessages(b.text);
+    if (m?.length) out.push(...m);
+  }
+  return out;
+}
+
+type PerUserCalc = {
+  blockId: string;
+  label: string;
+  text: string;
+  result: CalculationResult;
+  pendingTagged: TaggedMessages[] | null;
+  isWAMode: boolean;
+};
 
 export default function Calculator({
   slots, settings,
   loadSessionsByDate, loadPaymentsByDate,
   saveSessionDoc, savePaymentDoc, logCalculationAudit,
 }: Props) {
-  const [input,          setInput]          = useState("");
-  const [result,         setResult]         = useState<CalculationResult | null>(null);
+  const [blocks, setBlocks] = useState<CalcBlock[]>([
+    { id: newBlockId(), label: "User 1", text: "", labelLocked: false },
+  ]);
+  const [userResults, setUserResults] = useState<PerUserCalc[] | null>(null);
+  /** Which user row has line-by-line breakdown open (accordion, one at a time). */
+  const [expandedResultBlockId, setExpandedResultBlockId] = useState<string | null>(null);
   const [copied,         setCopied]         = useState(false);
   const [showReport,     setShowReport]     = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [saving,         setSaving]         = useState(false);
 
-  // After calculation, what's pending to be saved
-  const [pendingTagged,  setPendingTagged]  = useState<(TaggedMessages)[] | null>(null); // WA messages
-  const [isWAMode,       setIsWAMode]       = useState(false); // true = WA input
-
-  // After save
   const [savedInfo,      setSavedInfo]      = useState<{ date: string; slots: string[] } | null>(null);
   const [isSaved,        setIsSaved]        = useState(false);
 
-  // Detected slot from WhatsApp timestamps (null = no detection)
-  const [detectedSlotId, setDetectedSlotId] = useState<string | null>(null);
+  /** Comma-separated game names from all WA lines (all blocks); null if no WA paste. */
+  const [detectedSlotsSummary, setDetectedSlotsSummary] = useState<string | null>(null);
+  /** More than one distinct game inferred from timestamps across the paste. */
+  const [detectedMultiSlots, setDetectedMultiSlots] = useState(false);
+  /** When exactly one game applies to all WA lines — used for "Reset to auto" + syncing the dropdown. */
+  const [waSingleFallbackSlotId, setWaSingleFallbackSlotId] = useState<string | null>(null);
   const [slotOverridden, setSlotOverridden] = useState(false);
 
   const enabledSlots = slots.filter(s => s.enabled);
@@ -76,105 +133,179 @@ export default function Calculator({
 
   const [selectedSlotId, setSelectedSlotId] = useState<string>(autoSlot.id);
 
+  const blocksTextSig = useMemo(
+    () => blocks.map(b => `${b.label}\t${b.text}`).join("\n~\n"),
+    [blocks],
+  );
+
   useEffect(() => {
     if (!enabledSlots.find(s => s.id === selectedSlotId)) {
       setSelectedSlotId(autoSlot.id);
     }
   }, [slots, enabledSlots, selectedSlotId, autoSlot.id]);
 
-  // Auto-detect slot when input or slots change
+  // Auto-detect games from all WhatsApp lines (all blocks); sync dropdown only when a single game applies
   useEffect(() => {
-    const messages = parseWhatsAppMessages(input);
-    if (messages && messages.length > 0) {
-      const detected = detectSlotFromTimestamp(messages[0].timestamp, slots);
-      if (detected) {
-        setDetectedSlotId(detected.id);
-        if (!slotOverridden) setSelectedSlotId(detected.id);
-      } else {
-        setDetectedSlotId(null);
+    const allMsgs = collectAllParsedWaMessages(blocks);
+    const fallbackSlot = enabledSlots.find(s => s.id === selectedSlotId) ?? autoSlot;
+
+    if (allMsgs.length > 0) {
+      const tagged = allMsgs.map(msg => ({
+        slotId: (detectSlotFromTimestamp(msg.timestamp, slots) ?? fallbackSlot).id,
+      }));
+      const summary = summarizeWaSlots(tagged, slots);
+      const uniqueIds = [...new Set(tagged.map(t => t.slotId))];
+
+      setDetectedSlotsSummary(summary || null);
+      setDetectedMultiSlots(uniqueIds.length > 1);
+      setWaSingleFallbackSlotId(uniqueIds.length === 1 ? uniqueIds[0] : null);
+
+      if (!slotOverridden && uniqueIds.length === 1) {
+        setSelectedSlotId(uniqueIds[0]);
       }
     } else {
-      setDetectedSlotId(null);
+      setDetectedSlotsSummary(null);
+      setDetectedMultiSlots(false);
+      setWaSingleFallbackSlotId(null);
       if (!slotOverridden) setSelectedSlotId(autoSlot.id);
     }
-    // Reset save state when input changes
-    setPendingTagged(null);
+    setUserResults(null);
     setIsSaved(false);
     setSavedInfo(null);
-  // Only re-run when input changes; slots/slotOverridden are intentionally not
-  // deps to avoid clearing pendingTagged when user changes settings mid-flow.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- slotOverridden omitted like original; selectedSlotId needed for fallback assignment
+  }, [blocksTextSig, slots, autoSlot.id, selectedSlotId]);
 
   const selectedSlot = enabledSlots.find(s => s.id === selectedSlotId) ?? autoSlot;
 
-  // ── Step 1: Calculate only (no DB) ──────────────────────────────────────────
+  const updateBlockText = (id: string, text: string) => {
+    setBlocks(prev => {
+      const idx = prev.findIndex(b => b.id === id);
+      if (idx < 0) return prev;
+      const b = prev[idx];
+      const wa = parseWhatsAppMessages(text);
+      let nextLabel = b.label;
+      let nextLocked = b.labelLocked ?? false;
+      if (wa && wa.length > 0) {
+        nextLabel = uniqueContactLabel(wa, idx + 1);
+        nextLocked = false;
+      } else if (!nextLocked) {
+        nextLabel = `User ${idx + 1}`;
+      }
+      return prev.map(x => (x.id === id ? { ...x, text, label: nextLabel, labelLocked: nextLocked } : x));
+    });
+  };
+
+  const updateBlockLabel = (id: string, label: string) => {
+    setBlocks(prev => prev.map(b => (b.id === id ? { ...b, label, labelLocked: true } : b)));
+  };
+
+  const addBlock = () => {
+    const n = blocks.length + 1;
+    setBlocks(prev => [...prev, { id: newBlockId(), label: `User ${n}`, text: "", labelLocked: false }]);
+  };
+
+  const removeBlock = (id: string) => {
+    setBlocks(prev => (prev.length <= 1 ? prev : prev.filter(b => b.id !== id)));
+  };
+
   const handleCalculate = () => {
     setCopied(false);
     setIsSaved(false);
     setSavedInfo(null);
 
-    const waMessages = parseWhatsAppMessages(input);
+    const next: PerUserCalc[] = [];
+    for (let idx = 0; idx < blocks.length; idx++) {
+      const b = blocks[idx];
+      const raw = b.text.trim();
+      if (!raw) continue;
 
-    if (waMessages && waMessages.length > 0) {
-      const tagged = waMessages.map(m => {
-        const auto = detectSlotFromTimestamp(m.timestamp, slots);
-        return { ...m, slotId: (auto ?? selectedSlot).id };
-      }) as TaggedMessages[];
-      const nextResult = {
-        results: tagged.flatMap(m => m.result.results),
-        total:   tagged.reduce((s, m) => s + m.result.total, 0),
-      };
-      setResult(nextResult);
-      setPendingTagged(tagged);
-      setIsWAMode(true);
-      void logCalculationAudit({
-        input,
-        mode: "wa",
-        total: nextResult.total,
-        resultCount: nextResult.results.length,
-        failedCount: 0,
-        selectedSlotId: selectedSlot.id,
-        selectedSlotName: selectedSlot.name,
-        waMessageCount: tagged.length,
-      });
-    } else {
-      // Manual entry — just show result, nothing pending
-      const nextResult = calculateTotal(input);
-      setResult(nextResult);
-      setPendingTagged(null);
-      setIsWAMode(false);
-      void logCalculationAudit({
-        input,
-        mode: "manual",
-        total: nextResult.total,
-        resultCount: nextResult.results.length,
-        failedCount: nextResult.failedLines?.length ?? 0,
-        selectedSlotId: selectedSlot.id,
-        selectedSlotName: selectedSlot.name,
-      });
+      const waMessages = parseWhatsAppMessages(b.text);
+      const displayLabel =
+        waMessages && waMessages.length > 0
+          ? uniqueContactLabel(waMessages, idx + 1)
+          : (b.label.trim() || `User ${idx + 1}`);
+
+      if (waMessages && waMessages.length > 0) {
+        const tagged = waMessages.map(m => {
+          const auto = detectSlotFromTimestamp(m.timestamp, slots);
+          return { ...m, slotId: (auto ?? selectedSlot).id };
+        }) as TaggedMessages[];
+        const nextResult: CalculationResult = {
+          results: tagged.flatMap(m => m.result.results),
+          total:   tagged.reduce((s, m) => s + m.result.total, 0),
+        };
+        next.push({
+          blockId: b.id,
+          label: displayLabel,
+          text: b.text,
+          result: nextResult,
+          pendingTagged: tagged,
+          isWAMode: true,
+        });
+        void logCalculationAudit({
+          input: b.text,
+          mode: "wa",
+          total: nextResult.total,
+          resultCount: nextResult.results.length,
+          failedCount: 0,
+          selectedSlotId: selectedSlot.id,
+          selectedSlotName: selectedSlot.name,
+          waSlotsSummary: summarizeWaSlots(tagged, slots),
+          waMessageCount: tagged.length,
+        });
+      } else {
+        const nextResult = calculateTotal(b.text);
+        next.push({
+          blockId: b.id,
+          label: displayLabel,
+          text: b.text,
+          result: nextResult,
+          pendingTagged: null,
+          isWAMode: false,
+        });
+        void logCalculationAudit({
+          input: b.text,
+          mode: "manual",
+          total: nextResult.total,
+          resultCount: nextResult.results.length,
+          failedCount: nextResult.failedLines?.length ?? 0,
+          selectedSlotId: selectedSlot.id,
+          selectedSlotName: selectedSlot.name,
+        });
+      }
     }
+
+    if (next.length === 0) {
+      toast.error("Add text in at least one box before calculating.");
+      return;
+    }
+    setExpandedResultBlockId(null);
+    setUserResults(next);
   };
 
-  // ── Step 2: Save to Firestore (only when user explicitly asks) ───────────────
-  const handleSave = async () => {
-    if (!result) return;
+  const handleSave = async (): Promise<boolean> => {
+    if (!userResults?.length) return false;
     setSaving(true);
     try {
-      if (isWAMode && pendingTagged && pendingTagged.length > 0) {
-        // ── WhatsApp save ────────────────────────────────────────────────────
-        const tagged = pendingTagged;
-        const dates  = [...new Set(tagged.map(m => m.date))];
+      const allTagged: TaggedMessages[] = [];
+      for (const u of userResults) {
+        if (u.isWAMode && u.pendingTagged?.length) allTagged.push(...u.pendingTagged);
+      }
+
+      const slotNames = new Set<string>();
+      let dateSummary = "";
+
+      if (allTagged.length > 0) {
+        const dates  = [...new Set(allTagged.map(m => m.date))];
         const existing: SavedSession[] = (
           await Promise.all(dates.map(d => loadSessionsByDate(d)))
         ).flat();
 
-        const updated = mergeIntoSessions(existing, tagged);
+        const updated = mergeIntoSessions(existing, allTagged);
         await Promise.all(updated.map(s => saveSessionDoc(s)));
 
-        // Build per-date, per-slot contact map so payment stubs get the correct date
         const dateSlotContactMap = new Map<string, Map<string, Set<string>>>();
-        for (const m of tagged) {
+        for (const m of allTagged) {
           if (!dateSlotContactMap.has(m.date))
             dateSlotContactMap.set(m.date, new Map());
           const slotMap = dateSlotContactMap.get(m.date)!;
@@ -191,78 +322,130 @@ export default function Calculator({
             allPayments = upsertPaymentStubs(allPayments, [...contacts], slotObj, date, settings.commissionPct);
           }
           await Promise.all(
-            allPayments.filter(p => !existingIds.has(p.id)).map(p => savePaymentDoc(p))
+            allPayments.filter(p => !existingIds.has(p.id)).map(p => savePaymentDoc(p)),
           );
         }
 
-        const savedDates = [...dateSlotContactMap.keys()].sort().join(", ");
-        const assignedSlotNames = [...new Set(
-          tagged.map(m => slots.find(s => s.id === m.slotId)?.name ?? m.slotId)
-        )];
-        setSavedInfo({ date: savedDates, slots: assignedSlotNames });
+        dateSummary = [...dateSlotContactMap.keys()].sort().join(", ");
+        allTagged.forEach(m => {
+          const name = slots.find(s => s.id === m.slotId)?.name ?? m.slotId;
+          slotNames.add(name);
+        });
+      }
 
-      } else {
-        // ── Manual entry save ────────────────────────────────────────────────
-        const date    = todayDate();
-        const timeStr = new Date()
-          .toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })
-          .toLowerCase();
-        const uniqueId = `manual|${date.replace(/\//g, "-")}|${Date.now()}`;
+      const date    = todayDate();
+      const timeStr = new Date()
+        .toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })
+        .toLowerCase();
+
+      for (const u of userResults) {
+        if (u.isWAMode) continue;
+        const uniqueId = `manual|${date.replace(/\//g, "-")}|${u.blockId}|${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const existing = await loadSessionsByDate(date);
+        const contact  = u.label.trim() || "Manual Entry";
         const updated  = mergeIntoSessions(existing, [{
-          id: uniqueId, contact: "Manual Entry", date, timestamp: timeStr,
-          text: input.trim(), result, slotId: selectedSlot.id,
+          id: uniqueId,
+          contact,
+          date,
+          timestamp: timeStr,
+          text: u.text.trim(),
+          result: u.result,
+          slotId: selectedSlot.id,
         }]);
         await Promise.all(updated.map(s => saveSessionDoc(s)));
 
         const existingPayments = await loadPaymentsByDate(date);
         const newPayments = upsertPaymentStubs(
-          existingPayments, ["Manual Entry"], selectedSlot, date, settings.commissionPct
+          existingPayments, [contact], selectedSlot, date, settings.commissionPct,
         );
         const existingIds = new Set(existingPayments.map(p => p.id));
         await Promise.all(newPayments.filter(p => !existingIds.has(p.id)).map(p => savePaymentDoc(p)));
 
-        setSavedInfo({ date, slots: [selectedSlot.name] });
+        slotNames.add(selectedSlot.name);
       }
 
+      const manualDates = userResults.some(u => !u.isWAMode) ? [date] : [];
+      const parts = [dateSummary, ...manualDates].filter(Boolean);
+      const mergedDates = [...new Set(parts.join(",").split(",").map(s => s.trim()).filter(Boolean))].join(", ");
+
+      setSavedInfo({
+        date: mergedDates || date,
+        slots: [...slotNames],
+      });
       setIsSaved(true);
+      return true;
     } catch (err) {
       console.error("handleSave failed:", err);
       toastApiError(err, "Save failed. Please check your internet connection and try again.");
+      return false;
     } finally {
       setSaving(false);
     }
   };
 
-  const handleClear = () => {
-    setInput(""); setResult(null); setCopied(false);
-    setPendingTagged(null); setIsWAMode(false);
-    setIsSaved(false); setSavedInfo(null);
-    setDetectedSlotId(null); setSlotOverridden(false);
+  const performClear = () => {
+    setShowClearConfirm(false);
+    setExpandedResultBlockId(null);
+    setBlocks([{ id: newBlockId(), label: "User 1", text: "", labelLocked: false }]);
+    setUserResults(null);
+    setCopied(false);
+    setIsSaved(false);
+    setSavedInfo(null);
+    setDetectedSlotsSummary(null);
+    setDetectedMultiSlots(false);
+    setWaSingleFallbackSlotId(null);
+    setSlotOverridden(false);
+  };
+
+  const needsClearConfirm =
+    blocks.some(b => b.text.trim()) || blocks.length > 1 || Boolean(userResults?.length);
+
+  const canSaveBeforeClear = Boolean(userResults?.length) && !isSaved;
+
+  const requestClear = () => {
+    if (!needsClearConfirm) performClear();
+    else setShowClearConfirm(true);
+  };
+
+  const saveThenClear = async () => {
+    const ok = await handleSave();
+    if (ok) performClear();
   };
 
   const handleCopy = () => {
-    if (!result) return;
-    navigator.clipboard.writeText(String(result.total)).then(() => {
+    if (!userResults?.length) return;
+    const grand = userResults.reduce((s, u) => s + u.result.total, 0);
+    navigator.clipboard.writeText(String(grand)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     }).catch(() => {
-      // Clipboard API blocked (e.g. non-HTTPS / permissions denied) — fail silently
+      /* clipboard blocked */
     });
   };
 
-  const detectedSlot      = detectedSlotId ? enabledSlots.find(s => s.id === detectedSlotId) : null;
-  const showDetectedBadge = detectedSlot && !slotOverridden;
+  const updateUserResult = (blockId: string, r: CalculationResult) => {
+    setUserResults(prev =>
+      prev?.map(u => (u.blockId === blockId ? { ...u, result: r } : u)) ?? null,
+    );
+    setIsSaved(false);
+  };
+
+  const grandTotal = userResults?.reduce((s, u) => s + u.result.total, 0) ?? 0;
+  const anyWAMode  = userResults?.some(u => u.isWAMode) ?? false;
+  const reportPrefill = blocks.map(b => b.text.trim()).filter(Boolean).join("\n\n--- next ---\n\n");
+
+  const showDetectedBadge = Boolean(detectedSlotsSummary) && !slotOverridden;
 
   return (
     <>
-      {/* Header */}
       <div className="w-full max-w-[520px] text-center mb-4">
         <h1 className="text-[26px] font-bold text-[#1a1a1a] leading-tight">Calculator</h1>
-        <p className="text-[15px] text-[#777] mt-1">Paste or type the numbers below</p>
+        <p className="text-[15px] text-[#777] mt-1">
+          Paste each person&apos;s WhatsApp text in its own box — names fill in from the chat; otherwise
+          User 1, User 2, … Then calculate.
+        </p>
       </div>
 
-      {/* ── Game selector ── */}
       <div className="w-full max-w-[520px] mb-4">
         <div className="bg-white rounded-[18px] shadow-sm border-2 border-[#dde8f8] p-4">
           <div className="text-[13px] font-bold text-gray-400 uppercase tracking-widest mb-2">
@@ -283,15 +466,23 @@ export default function Calculator({
             ))}
           </select>
           {showDetectedBadge ? (
-            <p className="text-[12px] text-green-700 font-semibold mt-2">
-              🔍 Auto-detected from message time ({detectedSlot!.name} Game)
-            </p>
+            <div className="mt-2 space-y-1">
+              <p className="text-[12px] text-green-700 font-semibold">
+                🔍 {detectedMultiSlots
+                  ? `Auto-detected from message times (${detectedSlotsSummary})`
+                  : `Auto-detected from message time (${detectedSlotsSummary} Game)`}
+              </p>
+              {detectedMultiSlots && (
+                <p className="text-[11px] text-green-700/90 leading-snug">
+                  Each line uses the game for its timestamp. The menu above is only a fallback when a time cannot be read.
+                </p>
+              )}
+            </div>
           ) : slotOverridden ? (
             <p className="text-[12px] text-orange-600 font-semibold mt-2">
-              ✏️ Manually selected · <button className="underline" onClick={() => {
+              ✏️ Manually selected · <button type="button" className="underline" onClick={() => {
                 setSlotOverridden(false);
-                const detected = detectedSlotId ? enabledSlots.find(s => s.id === detectedSlotId) : null;
-                setSelectedSlotId(detected?.id ?? autoSlot.id);
+                setSelectedSlotId(waSingleFallbackSlotId ?? autoSlot.id);
               }}>Reset to auto</button>
             </p>
           ) : (
@@ -302,74 +493,255 @@ export default function Calculator({
         </div>
       </div>
 
-      {/* ── Input card ── */}
-      <div className="w-full max-w-[520px] bg-white rounded-[20px] shadow-[0_6px_32px_rgba(0,0,0,0.10)] p-6">
-        <label className="block text-[18px] font-bold text-[#222] mb-2">
-          Enter numbers:
-        </label>
+      <div className="w-full max-w-[520px] bg-white rounded-[20px] shadow-[0_6px_32px_rgba(0,0,0,0.10)] p-6 space-y-5">
+        <div className="flex items-center justify-between gap-2">
+          <label className="block text-[18px] font-bold text-[#222]">
+            User inputs
+          </label>
+          <button
+            type="button"
+            onClick={addBlock}
+            className="shrink-0 text-[13px] font-bold text-[#1d6fb8] bg-[#f0f6ff] border-2 border-[#c5d8f0] rounded-[10px] px-3 py-1.5 active:opacity-80"
+          >
+            + Add user
+          </button>
+        </div>
 
-        <textarea
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          placeholder={"43*93*(75)wp\n48--98-(50)wp\n47--42*(35)wp"}
-          spellCheck={false}
-          autoCapitalize="none"
-          autoCorrect="off"
-          className="w-full min-h-[180px] p-4 text-[18px] font-mono border-[3px] border-[#c5cfe0] focus:border-[#1d6fb8] rounded-[14px] resize-y outline-none text-[#111] leading-[1.8] bg-[#f8faff] tracking-wide transition-colors"
-        />
+        {blocks.map((b, idx) => (
+          <div
+            key={b.id}
+            className="rounded-[14px] border-2 border-[#e4edf8] bg-[#fafcff] p-4 space-y-2"
+          >
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="text-[12px] font-bold text-gray-500 shrink-0">Name</label>
+              <input
+                type="text"
+                value={b.label}
+                onChange={e => updateBlockLabel(b.id, e.target.value)}
+                placeholder={`User ${idx + 1} or contact from WhatsApp`}
+                className="flex-1 min-w-[120px] text-[15px] font-semibold border-2 border-[#d5e0f0] rounded-[10px] px-3 py-2 outline-none focus:border-[#1d6fb8] bg-white"
+              />
+              {blocks.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeBlock(b.id)}
+                  className="text-[12px] font-bold text-red-600 border border-red-200 rounded-[8px] px-2 py-1.5 hover:bg-red-50"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            <textarea
+              value={b.text}
+              onChange={e => updateBlockText(b.id, e.target.value)}
+              placeholder={"43*93*(75)wp\n48--98-(50)wp\nor paste WhatsApp chat…"}
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
+              className="w-full min-h-[140px] p-3 text-[16px] font-mono border-[3px] border-[#c5cfe0] focus:border-[#1d6fb8] rounded-[12px] resize-y outline-none text-[#111] leading-[1.8] bg-white tracking-wide transition-colors"
+            />
+          </div>
+        ))}
 
         <button
+          type="button"
+          onClick={addBlock}
+          className="block w-full text-[13px] font-bold text-[#1d6fb8] bg-[#f0f6ff] border-2 border-[#c5d8f0] rounded-[10px] px-3 py-2.5 active:opacity-80 hover:bg-[#e8f2ff] transition-colors"
+        >
+          + Add user
+        </button>
+
+        <button
+          type="button"
           onClick={handleCalculate}
-          className="block w-full mt-4 py-5 text-[22px] font-bold bg-[#1d6fb8] text-white rounded-[14px] cursor-pointer shadow-[0_4px_14px_rgba(29,111,184,0.35)] active:opacity-85 transition-opacity"
+          className="block w-full py-5 text-[22px] font-bold bg-[#1d6fb8] text-white rounded-[14px] cursor-pointer shadow-[0_4px_14px_rgba(29,111,184,0.35)] active:opacity-85 transition-opacity"
         >
-          ✅ Calculate
+          ✅ Calculate all
         </button>
 
         <button
-          onClick={handleClear}
-          className="block w-full mt-3 py-4 text-[18px] font-semibold bg-white text-[#c0392b] border-[2.5px] border-[#e0b0ad] rounded-[14px] cursor-pointer active:opacity-85 transition-opacity"
+          type="button"
+          onClick={requestClear}
+          className="block w-full py-4 text-[18px] font-semibold bg-white text-[#c0392b] border-[2.5px] border-[#e0b0ad] rounded-[14px] cursor-pointer active:opacity-85 transition-opacity"
         >
-          🗑 Clear
+          🗑 Clear all
         </button>
 
         <button
+          type="button"
           onClick={() => setShowReport(true)}
-          className="block w-full mt-2 py-2.5 text-[13px] font-semibold text-gray-400 hover:text-[#1d6fb8] transition-colors text-center"
+          className="block w-full py-2.5 text-[13px] font-semibold text-gray-400 hover:text-[#1d6fb8] transition-colors text-center"
         >
           🐛 Report a number pattern issue
         </button>
       </div>
 
       {showReport && (
-        <ReportIssue prefillInput={input} onClose={() => setShowReport(false)} />
+        <ReportIssue prefillInput={reportPrefill} onClose={() => setShowReport(false)} />
       )}
 
-      {/* ── Result ── */}
-      {result && (
-        <div className="w-full max-w-[520px] mt-5">
+      {showClearConfirm && (
+        <div
+          className="fixed inset-0 z-60 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          onClick={e => {
+            if (e.target === e.currentTarget) setShowClearConfirm(false);
+          }}
+        >
+          <div
+            className="bg-white rounded-[20px] shadow-2xl w-full max-w-[400px] overflow-hidden border-2 border-[#dde8f0]"
+            role="dialog"
+            aria-labelledby="clear-dialog-title"
+            aria-modal="true"
+          >
+            <div className="px-5 py-4 border-b border-[#e7eef7]">
+              <h2 id="clear-dialog-title" className="text-[18px] font-extrabold text-[#1a1a1a]">
+                Clear everything?
+              </h2>
+              <p className="text-[13px] text-gray-600 mt-2 leading-snug">
+                {canSaveBeforeClear
+                  ? "You have calculated results that are not saved to History yet. Save them first, or clear without saving."
+                  : Boolean(userResults?.length) && isSaved
+                    ? "This will remove all users, pasted text, and the on-screen summary. Your data is already saved in History."
+                    : "You have pasted text or extra user boxes. This will remove all of it."}
+              </p>
+            </div>
+            <div className="p-4 flex flex-col gap-2">
+              {canSaveBeforeClear && (
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void saveThenClear()}
+                  className="w-full py-3 rounded-[12px] text-[15px] font-bold bg-green-600 text-white disabled:opacity-50 active:opacity-90"
+                >
+                  {saving ? "⏳ Saving…" : "💾 Save to History & clear"}
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={saving}
+                onClick={performClear}
+                className="w-full py-3 rounded-[12px] text-[15px] font-bold bg-red-50 text-red-700 border-2 border-red-200 disabled:opacity-50 active:opacity-90"
+              >
+                Clear without saving
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setShowClearConfirm(false)}
+                className="w-full py-3 rounded-[12px] text-[15px] font-semibold text-gray-600 bg-white border-2 border-gray-200 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-          {/* Total card */}
-          <div className="bg-[#1d6fb8] rounded-[20px] px-6 py-7 shadow-[0_6px_24px_rgba(29,111,184,0.30)] flex items-center justify-between">
+      {userResults && userResults.length > 0 && (
+        <div className="w-full max-w-[520px] mt-5 space-y-3">
+          <div className="px-1">
+            <h2 className="text-[17px] font-bold text-[#222]">Results by user</h2>
+            <p className="text-[12px] text-gray-500 mt-0.5">
+              Tap a row to show or hide line-by-line details.
+            </p>
+          </div>
+
+          {userResults.map(u => {
+            const isOpen = expandedResultBlockId === u.blockId;
+            const hasLines = u.result.results.length > 0;
+            const lineCount = u.result.results.length;
+            const lineCountLabel = hasLines
+              ? `${lineCountFormatter.format(lineCount)} ${lineCount === 1 ? "line" : "lines"}`
+              : "";
+            return (
+              <div
+                key={u.blockId}
+                className="bg-white rounded-[18px] border-2 border-[#dde8f0] shadow-sm overflow-hidden"
+              >
+                <button
+                  type="button"
+                  disabled={!hasLines}
+                  aria-expanded={hasLines ? isOpen : undefined}
+                  aria-label={
+                    hasLines
+                      ? `${u.label}: ${lineCountLabel}, total ${lineCountFormatter.format(u.result.total)}`
+                      : `${u.label}: no line items`
+                  }
+                  onClick={() => {
+                    if (!hasLines) return;
+                    setExpandedResultBlockId(prev => (prev === u.blockId ? null : u.blockId));
+                  }}
+                  className={`w-full flex items-center justify-between gap-3 px-4 py-3.5 bg-[#f6f9fd] text-left transition-colors ${
+                    hasLines
+                      ? "hover:bg-[#eef4fc] cursor-pointer border-b border-[#e3edf7]"
+                      : "opacity-70 cursor-default border-b border-[#e3edf7]"
+                  }`}
+                >
+                  <div className="flex flex-col items-start min-w-0 gap-1">
+                    <span className="text-[16px] font-extrabold text-[#1a1a1a] truncate w-full">
+                      {u.label}
+                    </span>
+                    {hasLines ? (
+                      <span className="inline-flex items-center gap-2 rounded-[10px] bg-white border border-[#d5e4f5] px-2.5 py-1 shadow-sm">
+                        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">
+                          Lines
+                        </span>
+                        <span className="text-[15px] font-black tabular-nums text-[#1d6fb8] leading-none">
+                          {lineCountFormatter.format(lineCount)}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-[12px] font-semibold text-gray-600">
+                        No line items to expand
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[22px] font-black text-[#1d6fb8] tabular-nums">
+                      {u.result.total}
+                    </span>
+                    {hasLines && (
+                      <span className="text-[11px] font-bold text-[#4a6685] w-5 text-center select-none" aria-hidden>
+                        {isOpen ? "▲" : "▼"}
+                      </span>
+                    )}
+                  </div>
+                </button>
+                {isOpen && hasLines && (
+                  <div className="p-4 border-t border-[#eef2f7]">
+                    <EditableBreakdown
+                      result={u.result}
+                      onChange={r => updateUserResult(u.blockId, r)}
+                      compact
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          <div className="bg-[#1d6fb8] rounded-[20px] px-6 py-7 shadow-[0_6px_24px_rgba(29,111,184,0.30)] flex items-center justify-between gap-3">
             <div>
               <div className="text-[14px] font-semibold text-white/70 uppercase tracking-widest mb-1">
-                Total Amount
+                All users total
               </div>
-              <div className="text-[56px] font-extrabold text-white leading-none">
-                {result.total}
+              <div className="text-[48px] font-extrabold text-white leading-none tabular-nums">
+                {grandTotal}
               </div>
             </div>
             <button
+              type="button"
               onClick={handleCopy}
-              className={`px-5 py-3.5 text-[17px] font-bold text-white border-2 border-white/50 rounded-xl cursor-pointer whitespace-nowrap transition-colors ${
+              className={`shrink-0 px-5 py-3.5 text-[17px] font-bold text-white border-2 border-white/50 rounded-xl cursor-pointer whitespace-nowrap transition-colors ${
                 copied ? "bg-[#27ae60]" : "bg-white/20 hover:bg-white/30"
               }`}
             >
-              {copied ? "✓ Copied" : "📋 Copy"}
+              {copied ? "✓ Copied" : "📋 Copy total"}
             </button>
           </div>
 
-          {/* ── Save to History card ── */}
-          <div className="mt-3">
+          <div className="mt-1">
             {isSaved && savedInfo ? (
               <div className="bg-green-50 border-2 border-green-200 rounded-[16px] px-4 py-3.5">
                 <div className="text-[15px] font-bold text-green-700 mb-1">✅ Saved to History!</div>
@@ -380,15 +752,16 @@ export default function Calculator({
                   <span className="font-semibold">Game{savedInfo.slots.length > 1 ? "s" : ""}:</span> {savedInfo.slots.join(", ")}
                 </div>
                 <div className="text-[12px] text-green-600 mt-1.5">
-                  Go to <span className="font-bold">History</span> or <span className="font-bold">Payments</span> tab → <span className="font-bold">{savedInfo.date}</span>
+                  Go to <span className="font-bold">History</span> or <span className="font-bold">Payments</span> tab to review.
                 </div>
               </div>
             ) : (
               <button
-                onClick={handleSave}
+                type="button"
+                onClick={() => void handleSave()}
                 disabled={saving}
                 className={`w-full py-4 text-[17px] font-bold rounded-[16px] border-2 transition-all active:opacity-80 disabled:opacity-50 ${
-                  isWAMode
+                  anyWAMode
                     ? "bg-green-600 text-white border-green-600 shadow-sm"
                     : "bg-white text-green-700 border-green-300"
                 }`}
@@ -397,19 +770,6 @@ export default function Calculator({
               </button>
             )}
           </div>
-
-          {/* Line-by-line breakdown */}
-          {result.results.length > 0 && (
-            <div className="bg-white rounded-[20px] p-6 mt-4 shadow-[0_4px_20px_rgba(0,0,0,0.07)]">
-              <div className="mb-4 border-b-2 border-[#f0f0f0] pb-2.5">
-                <span className="text-[18px] font-bold text-[#222]">Line by Line</span>
-              </div>
-              <EditableBreakdown
-                result={result}
-                onChange={r => { setResult(r); setIsSaved(false); }}
-              />
-            </div>
-          )}
         </div>
       )}
     </>

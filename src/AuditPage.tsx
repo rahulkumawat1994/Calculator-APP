@@ -143,7 +143,11 @@ export default function AuditPage() {
                     <tr key={r.id} className="border-b border-[#eef2f7] align-top">
                       <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{fmtTs(r.createdAt)}</td>
                       <td className="px-3 py-2 font-semibold">{r.mode}</td>
-                      <td className="px-3 py-2">{r.selectedSlotName ?? r.selectedSlotId ?? "-"}</td>
+                      <td className="px-3 py-2">
+                        {r.mode === "wa" && r.waSlotsSummary
+                          ? r.waSlotsSummary
+                          : (r.selectedSlotName ?? r.selectedSlotId ?? "-")}
+                      </td>
                       <td className="px-3 py-2 font-bold">₹{r.total}</td>
                       <td className="px-3 py-2">{r.resultCount}</td>
                       <td className="px-3 py-2">{r.failedCount}</td>

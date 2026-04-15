@@ -235,7 +235,11 @@ export default function AdminPage() {
                         <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fmtTs(r.createdAt)}</td>
                         <td className="px-3 py-2 font-semibold">{r.mode}</td>
                         <td className="px-3 py-2 font-bold">₹{r.total}</td>
-                        <td className="px-3 py-2">{r.selectedSlotName ?? r.selectedSlotId ?? "-"}</td>
+                        <td className="px-3 py-2">
+                          {r.mode === "wa" && r.waSlotsSummary
+                            ? r.waSlotsSummary
+                            : (r.selectedSlotName ?? r.selectedSlotId ?? "-")}
+                        </td>
                         <td className="px-3 py-2">
                           <pre className="whitespace-pre-wrap wrap-break-word bg-[#f8fbff] border border-[#e4edf8] rounded-[10px] p-2 max-h-[120px] overflow-auto font-mono text-[11px]">{r.input}</pre>
                         </td>

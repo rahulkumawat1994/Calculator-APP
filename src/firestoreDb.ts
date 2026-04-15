@@ -194,6 +194,8 @@ export interface CalculationAuditPayload {
   failedCount: number;
   selectedSlotId?: string;
   selectedSlotName?: string;
+  /** WhatsApp: unique game names actually assigned per message time (not only the UI fallback). */
+  waSlotsSummary?: string;
   waMessageCount?: number;
 }
 
