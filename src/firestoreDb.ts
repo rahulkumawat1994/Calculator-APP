@@ -14,8 +14,8 @@
 
 import {
   collection, doc,
-  getDoc, setDoc, deleteDoc, getDocs,
-  query, where,
+  getDoc, setDoc, deleteDoc, getDocs, addDoc, updateDoc,
+  query, where, orderBy, limit,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import type { SavedSession, GameSlot, AppSettings, PaymentRecord } from "./types";
@@ -156,6 +156,171 @@ export async function loadPaymentsByMonth(year: number, month: number): Promise<
     ));
     return snap.docs.map(d => d.data() as PaymentRecord);
   } catch { return []; }
+}
+
+// ─── Private calculation audit logs ───────────────────────────────────────────
+
+export interface CalculationAuditPayload {
+  input: string;
+  mode: "manual" | "wa";
+  total: number;
+  resultCount: number;
+  failedCount: number;
+  selectedSlotId?: string;
+  selectedSlotName?: string;
+  waMessageCount?: number;
+}
+
+export interface CalculationAuditLog extends CalculationAuditPayload {
+  id: string;
+  createdAt: number;
+}
+
+export interface ReportIssuePayload {
+  input: string;
+  expected?: string;
+  note?: string;
+}
+
+export interface ReportIssueLog extends ReportIssuePayload {
+  id: string;
+  createdAt: number;
+  /** When true, the issue is treated as resolved (admin-only field). */
+  fixed?: boolean;
+}
+
+/**
+ * Internal analytics log for calculate clicks.
+ * Uses a dedicated collection so it never touches app business data.
+ */
+export async function logCalculationAudit(payload: CalculationAuditPayload): Promise<void> {
+  try {
+    await addDoc(collection(db, "calc_audit_logs"), {
+      ...payload,
+      // Guard against very large paste payloads.
+      input: payload.input.slice(0, 12000),
+      createdAt: Date.now(),
+    });
+  } catch (e) {
+    // Best-effort only; never break user flow.
+    console.warn("logCalculationAudit failed:", e);
+  }
+}
+
+export async function loadCalculationAuditLogs(maxRows = 300): Promise<CalculationAuditLog[]> {
+  try {
+    const snap = await getDocs(query(
+      collection(db, "calc_audit_logs"),
+      orderBy("createdAt", "desc"),
+      limit(maxRows),
+    ));
+    return snap.docs.map(d => {
+      const data = d.data() as Omit<CalculationAuditLog, "id">;
+      return { id: d.id, ...data };
+    });
+  } catch (e) {
+    console.warn("loadCalculationAuditLogs failed:", e);
+    return [];
+  }
+}
+
+export async function deleteCalculationAuditLog(id: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, "calc_audit_logs", id));
+  } catch (e) {
+    console.warn("deleteCalculationAuditLog failed:", e);
+    throw e;
+  }
+}
+
+/**
+ * Clears audit logs in the dedicated collection.
+ * Returns deleted count (best effort).
+ */
+export async function clearCalculationAuditLogs(maxRows = 2000): Promise<number> {
+  try {
+    const snap = await getDocs(query(
+      collection(db, "calc_audit_logs"),
+      orderBy("createdAt", "desc"),
+      limit(maxRows),
+    ));
+    if (snap.empty) return 0;
+    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+    return snap.docs.length;
+  } catch (e) {
+    console.warn("clearCalculationAuditLogs failed:", e);
+    throw e;
+  }
+}
+
+export async function logReportIssue(payload: ReportIssuePayload): Promise<void> {
+  try {
+    await addDoc(collection(db, "report_issue_logs"), {
+      input: payload.input.slice(0, 12000),
+      expected: (payload.expected ?? "").slice(0, 3000),
+      note: (payload.note ?? "").slice(0, 3000),
+      createdAt: Date.now(),
+      fixed: false,
+    });
+  } catch (e) {
+    console.warn("logReportIssue failed:", e);
+    throw e;
+  }
+}
+
+export async function loadReportIssueLogs(maxRows = 300): Promise<ReportIssueLog[]> {
+  try {
+    const snap = await getDocs(query(
+      collection(db, "report_issue_logs"),
+      orderBy("createdAt", "desc"),
+      limit(maxRows),
+    ));
+    return snap.docs.map(d => {
+      const data = d.data() as Omit<ReportIssueLog, "id">;
+      return {
+        id: d.id,
+        ...data,
+        fixed: data.fixed === true,
+      };
+    });
+  } catch (e) {
+    console.warn("loadReportIssueLogs failed:", e);
+    return [];
+  }
+}
+
+export async function updateReportIssueFixed(id: string, fixed: boolean): Promise<void> {
+  try {
+    await updateDoc(doc(db, "report_issue_logs", id), { fixed });
+  } catch (e) {
+    console.warn("updateReportIssueFixed failed:", e);
+    throw e;
+  }
+}
+
+export async function deleteReportIssueLog(id: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, "report_issue_logs", id));
+  } catch (e) {
+    console.warn("deleteReportIssueLog failed:", e);
+    throw e;
+  }
+}
+
+export async function clearReportIssueLogs(maxRows = 2000): Promise<number> {
+  try {
+    const snap = await getDocs(query(
+      collection(db, "report_issue_logs"),
+      orderBy("createdAt", "desc"),
+      limit(maxRows),
+    ));
+    if (snap.empty) return 0;
+    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+    return snap.docs.length;
+  } catch (e) {
+    console.warn("clearReportIssueLogs failed:", e);
+    throw e;
+  }
 }
 
 // ─── One-time migration from old bulk-doc structure ───────────────────────────

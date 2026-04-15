@@ -10,6 +10,7 @@ import {
 } from "./calcUtils";
 import EditableBreakdown from "./EditableBreakdown";
 import ReportIssue from "./ReportIssue";
+import type { CalculationAuditPayload } from "./firestoreDb";
 import type { CalculationResult, SavedSession, GameSlot, AppSettings, PaymentRecord } from "./types";
 
 interface Props {
@@ -19,6 +20,7 @@ interface Props {
   loadPaymentsByDate:  (date: string) => Promise<PaymentRecord[]>;
   saveSessionDoc:      (session: SavedSession) => Promise<void>;
   savePaymentDoc:      (payment: PaymentRecord) => Promise<void>;
+  logCalculationAudit: (payload: CalculationAuditPayload) => Promise<void>;
 }
 
 // ─── Auto-detect slot from a timestamp string ─────────────────────────────────
@@ -48,7 +50,7 @@ type TaggedMessages = ReturnType<typeof parseWhatsAppMessages> extends (infer T)
 export default function Calculator({
   slots, settings,
   loadSessionsByDate, loadPaymentsByDate,
-  saveSessionDoc, savePaymentDoc,
+  saveSessionDoc, savePaymentDoc, logCalculationAudit,
 }: Props) {
   const [input,          setInput]          = useState("");
   const [result,         setResult]         = useState<CalculationResult | null>(null);
@@ -118,17 +120,38 @@ export default function Calculator({
         const auto = detectSlotFromTimestamp(m.timestamp, slots);
         return { ...m, slotId: (auto ?? selectedSlot).id };
       }) as TaggedMessages[];
-      setResult({
+      const nextResult = {
         results: tagged.flatMap(m => m.result.results),
         total:   tagged.reduce((s, m) => s + m.result.total, 0),
-      });
+      };
+      setResult(nextResult);
       setPendingTagged(tagged);
       setIsWAMode(true);
+      void logCalculationAudit({
+        input,
+        mode: "wa",
+        total: nextResult.total,
+        resultCount: nextResult.results.length,
+        failedCount: 0,
+        selectedSlotId: selectedSlot.id,
+        selectedSlotName: selectedSlot.name,
+        waMessageCount: tagged.length,
+      });
     } else {
       // Manual entry — just show result, nothing pending
-      setResult(calculateTotal(input));
+      const nextResult = calculateTotal(input);
+      setResult(nextResult);
       setPendingTagged(null);
       setIsWAMode(false);
+      void logCalculationAudit({
+        input,
+        mode: "manual",
+        total: nextResult.total,
+        resultCount: nextResult.results.length,
+        failedCount: nextResult.failedLines?.length ?? 0,
+        selectedSlotId: selectedSlot.id,
+        selectedSlotName: selectedSlot.name,
+      });
     }
   };
 

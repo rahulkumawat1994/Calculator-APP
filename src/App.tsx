@@ -35,6 +35,7 @@ export default function App() {
     deletePaymentsByContactDate,
     loadPaymentsByDate,
     loadPaymentsByMonth,
+    logCalculationAudit,
   } = useAppData();
 
   if (loading) {
@@ -98,6 +99,7 @@ export default function App() {
             loadPaymentsByDate={loadPaymentsByDate}
             saveSessionDoc={saveSessionDoc}
             savePaymentDoc={savePaymentDoc}
+            logCalculationAudit={logCalculationAudit}
           />
         </div>
 

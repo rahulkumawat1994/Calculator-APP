@@ -12,6 +12,7 @@ import {
   savePaymentDoc, deletePaymentDoc, deletePaymentsByContactDate,
   loadPaymentsByDate, loadPaymentsByMonth,
   migrateOldFirestoreData,
+  logCalculationAudit,
 } from "./firestoreDb";
 import type { GameSlot, AppSettings } from "./types";
 
@@ -105,5 +106,6 @@ export function useAppData() {
     loadSessionsByDate, loadSessionsByMonth, loadSessionDatesForMonth,
     savePaymentDoc,    deletePaymentDoc, deletePaymentsByContactDate,
     loadPaymentsByDate, loadPaymentsByMonth,
+    logCalculationAudit,
   };
 }

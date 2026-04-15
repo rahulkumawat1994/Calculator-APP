@@ -1,6 +1,5 @@
 import { useState } from "react";
-
-const SCRIPT_URL = (import.meta.env.VITE_GOOGLE_SCRIPT_URL as string | undefined) ?? "";
+import { logReportIssue } from "./firestoreDb";
 
 interface Props {
   prefillInput?: string;
@@ -17,24 +16,13 @@ export default function ReportIssue({ prefillInput = "", onClose }: Props) {
 
   const handleSubmit = async () => {
     if (!input.trim()) return;
-    if (!SCRIPT_URL) {
-      setStatus("error");
-      return;
-    }
     setStatus("sending");
     try {
-      await fetch(SCRIPT_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "text/plain" },
-        body: JSON.stringify({
-          input: input.trim(),
-          expected: expected.trim(),
-          note: note.trim(),
-          timestamp: new Date().toISOString(),
-        }),
+      await logReportIssue({
+        input: input.trim(),
+        expected: expected.trim(),
+        note: note.trim(),
       });
-      // no-cors means response is opaque — assume success if no throw
       setStatus("success");
     } catch {
       setStatus("error");
