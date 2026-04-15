@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { toastApiError } from "./apiToast";
 import { slotMinutes, formatSlotTime, getCurrentSlot, upsertPayment } from "./calcUtils";
 import type { SavedSession, GameSlot, AppSettings, PaymentRecord } from "./types";
 import { useLoadingSignal } from "./TopProgressBar";
@@ -232,8 +233,9 @@ export default function GamesView({
         setDayPayments(p);
         putDayDataCache(selectedDate, [...s], [...p]);
       })
-      .catch(() => {
+      .catch((err) => {
         if (seq !== daySeqRef.current) return;
+        toastApiError(err, "Could not refresh payments for this day.");
         if (cached) {
           setDaySessions([...cached.sessions]);
           setDayPayments([...cached.payments]);
@@ -268,8 +270,9 @@ export default function GamesView({
         setMonthPayments(p);
         putMonthDataCache(monthYear.year, monthYear.month, [...s], [...p]);
       })
-      .catch(() => {
+      .catch((err) => {
         if (seq !== monthSeqRef.current) return;
+        toastApiError(err, "Could not refresh monthly payments.");
         if (cached) {
           setMonthSessions([...cached.sessions]);
           setMonthPayments([...cached.payments]);
@@ -334,7 +337,7 @@ export default function GamesView({
         putDayDataCache(selectedDate, daySessions, updatedPayments);
       } catch (err) {
         console.error("saveEdit failed:", err);
-        alert("Save failed. Please check your internet connection and try again.");
+        toastApiError(err, "Save failed. Please check your internet connection and try again.");
         return;
       }
     }

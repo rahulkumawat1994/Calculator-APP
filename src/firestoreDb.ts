@@ -18,6 +18,7 @@ import {
   query, where, orderBy, limit,
 } from "firebase/firestore";
 import { db } from "./firebase";
+import { toastApiError } from "./apiToast";
 import type { SavedSession, GameSlot, AppSettings, PaymentRecord } from "./types";
 import { DEFAULT_GAME_SLOTS, DEFAULT_SETTINGS, toDateISO } from "./calcUtils";
 
@@ -42,7 +43,10 @@ export async function loadSlotsDB(): Promise<GameSlot[]> {
       if (snap.exists()) return snap.data().slots as GameSlot[];
     }
     return DEFAULT_GAME_SLOTS;
-  } catch { return DEFAULT_GAME_SLOTS; }
+  } catch (e) {
+    toastApiError(e, "Could not load game slots from the database.", { toastId: "load-config-db" });
+    return DEFAULT_GAME_SLOTS;
+  }
 }
 
 export async function saveSlotsDB(slots: GameSlot[]): Promise<void> {
@@ -60,7 +64,10 @@ export async function loadSettingsDB(): Promise<AppSettings> {
       if (snap.exists()) return snap.data() as AppSettings;
     }
     return DEFAULT_SETTINGS;
-  } catch { return DEFAULT_SETTINGS; }
+  } catch (e) {
+    toastApiError(e, "Could not load settings from the database.", { toastId: "load-config-db" });
+    return DEFAULT_SETTINGS;
+  }
 }
 
 export async function saveSettingsDB(settings: AppSettings): Promise<void> {
@@ -87,7 +94,11 @@ export async function loadSessionsByDate(date: string): Promise<SavedSession[]> 
   try {
     const snap = await getDocs(query(collection(db, "sessions"), where("date", "==", date)));
     return snap.docs.map(d => d.data() as SavedSession);
-  } catch (e) { console.error("loadSessionsByDate failed:", e); return []; }
+  } catch (e) {
+    console.error("loadSessionsByDate failed:", e);
+    toastApiError(e, "Could not load sessions for this day.", { toastId: "load-day-ledger" });
+    return [];
+  }
 }
 
 export async function loadSessionsByMonth(year: number, month: number): Promise<SavedSession[]> {
@@ -99,7 +110,10 @@ export async function loadSessionsByMonth(year: number, month: number): Promise<
       where("dateISO", "<=", `${year}-${pad(month)}-31`),
     ));
     return snap.docs.map(d => d.data() as SavedSession);
-  } catch { return []; }
+  } catch (e) {
+    toastApiError(e, "Could not load sessions for this month.", { toastId: "load-month-ledger" });
+    return [];
+  }
 }
 
 // ─── Payments ─────────────────────────────────────────────────────────────────
@@ -123,14 +137,20 @@ export async function deletePaymentsByContactDate(contact: string, date: string)
     const snap = await getDocs(query(collection(db, "payments"), where("date", "==", date)));
     const toDelete = snap.docs.filter(d => d.data().contact === contact);
     await Promise.all(toDelete.map(d => deleteDoc(d.ref)));
-  } catch { /* non-fatal */ }
+  } catch {
+    /* Caller surfaces errors (e.g. History delete) */
+  }
 }
 
 export async function loadPaymentsByDate(date: string): Promise<PaymentRecord[]> {
   try {
     const snap = await getDocs(query(collection(db, "payments"), where("date", "==", date)));
     return snap.docs.map(d => d.data() as PaymentRecord);
-  } catch (e) { console.error("loadPaymentsByDate failed:", e); return []; }
+  } catch (e) {
+    console.error("loadPaymentsByDate failed:", e);
+    toastApiError(e, "Could not load payments for this day.", { toastId: "load-day-ledger" });
+    return [];
+  }
 }
 
 /** Returns all distinct dates (DD/MM/YYYY) that have sessions in the given month. */
@@ -143,7 +163,10 @@ export async function loadSessionDatesForMonth(year: number, month: number): Pro
       where("dateISO", "<=", `${year}-${pad(month)}-31`),
     ));
     return [...new Set(snap.docs.map(d => d.data().date as string))];
-  } catch { return []; }
+  } catch (e) {
+    toastApiError(e, "Could not load calendar dates.", { toastId: "load-calendar-dates" });
+    return [];
+  }
 }
 
 export async function loadPaymentsByMonth(year: number, month: number): Promise<PaymentRecord[]> {
@@ -155,7 +178,10 @@ export async function loadPaymentsByMonth(year: number, month: number): Promise<
       where("dateISO", "<=", `${year}-${pad(month)}-31`),
     ));
     return snap.docs.map(d => d.data() as PaymentRecord);
-  } catch { return []; }
+  } catch (e) {
+    toastApiError(e, "Could not load payments for this month.", { toastId: "load-month-ledger" });
+    return [];
+  }
 }
 
 // ─── Private calculation audit logs ───────────────────────────────────────────
@@ -202,8 +228,8 @@ export async function logCalculationAudit(payload: CalculationAuditPayload): Pro
       createdAt: Date.now(),
     });
   } catch (e) {
-    // Best-effort only; never break user flow.
     console.warn("logCalculationAudit failed:", e);
+    toastApiError(e, "Could not save calculation audit log.", { toastId: "calc-audit-log" });
   }
 }
 
@@ -220,6 +246,7 @@ export async function loadCalculationAuditLogs(maxRows = 300): Promise<Calculati
     });
   } catch (e) {
     console.warn("loadCalculationAuditLogs failed:", e);
+    toastApiError(e, "Could not load audit logs.");
     return [];
   }
 }
@@ -285,6 +312,7 @@ export async function loadReportIssueLogs(maxRows = 300): Promise<ReportIssueLog
     });
   } catch (e) {
     console.warn("loadReportIssueLogs failed:", e);
+    toastApiError(e, "Could not load report issues.");
     return [];
   }
 }
@@ -343,5 +371,6 @@ export async function migrateOldFirestoreData(): Promise<void> {
     await Promise.all(jobs);
   } catch (e) {
     console.warn("Firestore migration error:", e);
+    toastApiError(e, "Firestore data migration had a problem.", { toastId: "migrate-firestore" });
   }
 }

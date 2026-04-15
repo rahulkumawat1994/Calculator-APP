@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { toastApiError } from "./apiToast";
 import {
   calculateTotal,
   parseWhatsAppMessages,
@@ -227,7 +228,7 @@ export default function Calculator({
       setIsSaved(true);
     } catch (err) {
       console.error("handleSave failed:", err);
-      alert("Save failed. Please check your internet connection and try again.");
+      toastApiError(err, "Save failed. Please check your internet connection and try again.");
     } finally {
       setSaving(false);
     }

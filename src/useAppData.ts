@@ -15,6 +15,7 @@ import {
   logCalculationAudit,
 } from "./firestoreDb";
 import type { GameSlot, AppSettings } from "./types";
+import { toastApiError } from "./apiToast";
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
@@ -62,6 +63,7 @@ export function useAppData() {
         setSettings(se);
       } catch (err) {
         console.warn("Firebase unavailable, using localStorage:", err);
+        toastApiError(err, "Could not connect to the database. Using offline data.");
         setSlots(loadGameSlots());
         setSettings(loadSettings());
         setDbError(true);
@@ -80,7 +82,8 @@ export function useAppData() {
     try {
       await saveSlotsDB(u);
       setWriteError(false);
-    } catch {
+    } catch (err) {
+      toastApiError(err, "Could not save game list to the database.");
       setWriteError(true);
     }
   };
@@ -91,7 +94,8 @@ export function useAppData() {
     try {
       await saveSettingsDB(u);
       setWriteError(false);
-    } catch {
+    } catch (err) {
+      toastApiError(err, "Could not save settings to the database.");
       setWriteError(true);
     }
   };

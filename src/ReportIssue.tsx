@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toastApiError } from "./apiToast";
 import { logReportIssue } from "./firestoreDb";
 
 interface Props {
@@ -24,7 +25,8 @@ export default function ReportIssue({ prefillInput = "", onClose }: Props) {
         note: note.trim(),
       });
       setStatus("success");
-    } catch {
+    } catch (err) {
+      toastApiError(err, "Could not send your report. Please try again.");
       setStatus("error");
     }
   };

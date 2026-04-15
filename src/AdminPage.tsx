@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { toastApiError } from "./apiToast";
 import {
   clearCalculationAuditLogs,
   clearReportIssueLogs,
@@ -51,7 +52,9 @@ export default function AdminPage() {
       setAuditRows(audits);
       setReportRows(reports);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load admin data.");
+      const msg = e instanceof Error ? e.message : "Failed to load admin data.";
+      setError(msg);
+      toastApiError(e, msg);
     } finally {
       setLoading(false);
     }
@@ -70,7 +73,9 @@ export default function AdminPage() {
       await deleteCalculationAuditLog(id);
       setAuditRows(prev => prev.filter(r => r.id !== id));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to delete audit row.");
+      const msg = e instanceof Error ? e.message : "Failed to delete audit row.";
+      setError(msg);
+      toastApiError(e, msg);
     } finally {
       setBusyAuditId(null);
     }
@@ -85,7 +90,9 @@ export default function AdminPage() {
       await clearCalculationAuditLogs(5000);
       setAuditRows([]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to clear audit logs.");
+      const msg = e instanceof Error ? e.message : "Failed to clear audit logs.";
+      setError(msg);
+      toastApiError(e, msg);
     } finally {
       setClearingAudit(false);
     }
@@ -100,7 +107,9 @@ export default function AdminPage() {
       await deleteReportIssueLog(id);
       setReportRows(prev => prev.filter(r => r.id !== id));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to delete report row.");
+      const msg = e instanceof Error ? e.message : "Failed to delete report row.";
+      setError(msg);
+      toastApiError(e, msg);
     } finally {
       setBusyReportId(null);
     }
@@ -115,7 +124,9 @@ export default function AdminPage() {
       await clearReportIssueLogs(5000);
       setReportRows([]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to clear report logs.");
+      const msg = e instanceof Error ? e.message : "Failed to clear report logs.";
+      setError(msg);
+      toastApiError(e, msg);
     } finally {
       setClearingReport(false);
     }
@@ -132,7 +143,9 @@ export default function AdminPage() {
       setReportRows(prev =>
         prev.map(r => (r.id === id ? { ...r, fixed: previousFixed } : r)),
       );
-      setError(e instanceof Error ? e.message : "Failed to update fixed status.");
+      const msg = e instanceof Error ? e.message : "Failed to update fixed status.";
+      setError(msg);
+      toastApiError(e, msg);
     } finally {
       setBusyFixedReportId(null);
     }

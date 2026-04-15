@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { toastApiError } from "./apiToast";
 import {
   clearCalculationAuditLogs,
   deleteCalculationAuditLog,
@@ -37,7 +38,9 @@ export default function AuditPage() {
       const data = await loadCalculationAuditLogs(400);
       setRows(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load logs.");
+      const msg = e instanceof Error ? e.message : "Failed to load logs.";
+      setError(msg);
+      toastApiError(e, msg);
     } finally {
       setLoading(false);
     }
@@ -56,7 +59,9 @@ export default function AuditPage() {
       await deleteCalculationAuditLog(id);
       setRows(prev => prev.filter(r => r.id !== id));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to delete row.");
+      const msg = e instanceof Error ? e.message : "Failed to delete row.";
+      setError(msg);
+      toastApiError(e, msg);
     } finally {
       setBusyId(null);
     }
@@ -72,7 +77,9 @@ export default function AuditPage() {
       setRows([]);
       if (deleted === 0) setError("No logs found to delete.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to clear logs.");
+      const msg = e instanceof Error ? e.message : "Failed to clear logs.";
+      setError(msg);
+      toastApiError(e, msg);
     } finally {
       setClearing(false);
     }

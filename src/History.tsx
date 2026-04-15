@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { toastApiError } from "./apiToast";
 import type { SavedSession, CalculationResult, GameSlot, PaymentRecord } from "./types";
 import EditableBreakdown from "./EditableBreakdown";
 import { useLoadingSignal } from "./TopProgressBar";
@@ -170,7 +171,9 @@ export default function History({
         setSelectedDate(sorted[0]);
         setInitialJumpDone(true);
       }
-    }).catch(() => { /* non-fatal – calendar dots just won't show */ });
+    }).catch((err) => {
+      toastApiError(err, "Could not load calendar highlights.");
+    });
   }, [cal.year, cal.month]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load sessions+payments when selectedDate changes: paint from cache if any, always refetch
@@ -197,8 +200,9 @@ export default function History({
           return next;
         });
       })
-      .catch(() => {
+      .catch((err) => {
         if (seq !== loadSeqRef.current) return;
+        toastApiError(err, "Could not refresh data for this day.");
         if (cached) {
           setDaySessions([...cached.sessions].sort((a, b) => b.createdAt - a.createdAt));
           setDayPayments([...cached.payments]);
@@ -239,7 +243,7 @@ export default function History({
       if (session) await deletePaymentsByContactDate(session.contact, session.date);
     } catch (err) {
       console.error("deleteSession failed:", err);
-      alert("Delete failed. Please check your internet connection and try again.");
+      toastApiError(err, "Delete failed. Please check your internet connection and try again.");
       return;
     }
     const remaining = daySessions.filter(s => s.id !== id);
@@ -266,6 +270,7 @@ export default function History({
         await saveSessionDoc(target);
       } catch (err) {
         console.error("handleResultChange save failed:", err);
+        toastApiError(err, "Could not save your change to the database.");
       }
     }
   };
@@ -280,7 +285,7 @@ export default function History({
       ));
     } catch (err) {
       console.error("handleClearAll failed:", err);
-      alert("Clear all failed. Please check your internet connection and try again.");
+      toastApiError(err, "Clear all failed. Please check your internet connection and try again.");
       setConfirmClear(false);
       return;
     }
