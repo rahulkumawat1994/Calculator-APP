@@ -57,6 +57,49 @@ function has3DigitBet(numbersText: string): boolean {
   return /(?<!\d)\d{3}(?!\d)/.test(numbersText);
 }
 
+/**
+ * Same-digit run (333, 4444, 44444, …): AB / अब → count 2×rate; lone A or B → 1×rate.
+ * A/B/AB may appear anywhere in modifierSource (before/after digits or rate). Rate digits
+ * are stripped so *20 does not interfere. No WP/palat here — those use the normal pair path.
+ */
+function solidRunAbMultiplier(modifierSource: string): { count: number; isDouble: boolean } {
+  let s = modifierSource;
+  if (/अब/.test(s)) return { count: 2, isDouble: true };
+  // Strip rate chunks only (do not treat the "x" inside "Ax333…" as ×rate).
+  s = s
+    .replace(/\(\s*\d+\s*\)/g, ' ')
+    .replace(/\*\s*\d+/g, ' ')
+    .replace(/=+\s*\d+/g, ' ')
+    .replace(/(?:^|[\s,])x\s*\d+(?=$|[\s,]|[^0-9])/gi, ' ');
+  if (/AB/i.test(s)) return { count: 2, isDouble: true };
+  const noAb = s.replace(/AB/gi, '');
+  if (/(?:^|[^A-Za-z])A(?:[^A-Za-z]|$)/i.test(noAb) || /(?:^|[^A-Za-z])B(?:[^A-Za-z]|$)/i.test(noAb))
+    return { count: 1, isDouble: false };
+  return { count: 1, isDouble: false };
+}
+
+/** One same-digit run length ≥ 3; no other digits outside that run in the numbers chunk. */
+function trySolidRunSegment(
+  numbersText: string,
+  rate: number,
+  modifierSource: string,
+): Segment | null {
+  const nt = numbersText.trim();
+  if (!nt || !Number.isFinite(rate) || rate <= 0) return null;
+  if (/\b(?:wp|palat)\b/i.test(modifierSource) || /पलट/.test(modifierSource)) return null;
+
+  const rm = nt.match(/(\d)\1{2,}/);
+  if (!rm || rm.index === undefined) return null;
+  const run = rm[0];
+  const bi = rm.index;
+  const ai = bi + run.length;
+  if (/\d/.test(nt.slice(0, bi)) || /\d/.test(nt.slice(ai))) return null;
+
+  const { count, isDouble } = solidRunAbMultiplier(modifierSource);
+  const display = nt.replace(/^[\s*\-_.,:|]+|[\s*\-_.,:|]+$/g, '').trim() || run;
+  return { line: display, rate, isWP: false, isDouble, count, lineTotal: count * rate };
+}
+
 // ─── Line parser ───────────────────────────────────────────────────────────────
 
 export function processLine(line: string): Segment[] {
@@ -85,16 +128,22 @@ export function processLine(line: string): Segment[] {
   // Paren format: numbers(rate)[suffix]
   const parenPattern = /([^()]*)\((\d+)\)\s*([a-zA-Z]*)/gi;
   while ((match = parenPattern.exec(trimmed)) !== null) {
-    const nums = (match[1].match(/(?<!\d)\d{2}(?!\d)/g) ?? []).map(Number);
-    if (!nums.length) continue;
-    const suffix = match[3] ?? '';
-    const { isWP, isDouble: isDoubleFlagged } = parseFlags(suffix);
-    const isDouble = isDoubleFlagged || has3DigitBet(match[1]);
+    const numbersPart = match[1];
     const rate = parseInt(match[2], 10);
+    const suffix = match[3] ?? '';
+    const solid = trySolidRunSegment(numbersPart, rate, match[0]);
+    if (solid) {
+      results.push(solid);
+      continue;
+    }
+    const nums = (numbersPart.match(/(?<!\d)\d{2}(?!\d)/g) ?? []).map(Number);
+    if (!nums.length) continue;
+    const { isWP, isDouble: isDoubleFlagged } = parseFlags(suffix);
+    const isDouble = isDoubleFlagged || has3DigitBet(numbersPart);
     const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
     if (count > 0) {
-      const display = match[1].replace(/^[\s*\-_.,:|]+|[\s*\-_.,:|]+$/g, '').trim();
-      results.push({ line: display || match[1].trim(), rate, isWP, isDouble, count, lineTotal: count * rate });
+      const display = numbersPart.replace(/^[\s*\-_.,:|]+|[\s*\-_.,:|]+$/g, '').trim();
+      results.push({ line: display || numbersPart.trim(), rate, isWP, isDouble, count, lineTotal: count * rate });
     }
   }
   if (results.length) return results;
@@ -107,10 +156,19 @@ export function processLine(line: string): Segment[] {
   const sepMatches = [...trimmed.matchAll(sepRe)];
   if (sepMatches.length > 0) {
     let prevEnd = 0;
-    for (const m of sepMatches) {
+    for (let si = 0; si < sepMatches.length; si++) {
+      const m = sepMatches[si];
       const numbersText = trimmed.slice(prevEnd, m.index);
       const rate = parseInt(m[1], 10);
       const suffix = m[2] ?? '';
+      const clauseEnd = (m.index ?? 0) + m[0].length;
+      const segmentSlice = trimmed.slice(prevEnd, clauseEnd);
+      const solid = trySolidRunSegment(numbersText, rate, segmentSlice);
+      if (solid) {
+        results.push(solid);
+        prevEnd = (m.index ?? 0) + m[0].length;
+        continue;
+      }
       const nums = extractPairedNumbers(numbersText);
       if (nums.length > 0) {
         const { isWP, isDouble: isDoubleFlagged } = parseFlags(suffix);
@@ -139,14 +197,19 @@ export function processLine(line: string): Segment[] {
         const lastNum = allNumMatches[allNumMatches.length - 1];
         const rate = Number(lastNum[0]);
         const numbersText = beforeFlag.slice(0, lastNum.index!);
-        const nums = extractPairedNumbers(numbersText);
-        if (nums.length > 0) {
-          const { isWP, isDouble: isDoubleFlagged } = parseFlags(flagText);
-          const isDouble = isDoubleFlagged || has3DigitBet(numbersText);
-          const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
-          if (count > 0) {
-            const display = numbersText.replace(/^\D+/, '').replace(/\D+$/, '').trim();
-            results.push({ line: display || numbersText.trim(), rate, isWP, isDouble, count, lineTotal: count * rate });
+        const solidF = trySolidRunSegment(numbersText, rate, trimmed);
+        if (solidF) {
+          results.push(solidF);
+        } else {
+          const nums = extractPairedNumbers(numbersText);
+          if (nums.length > 0) {
+            const { isWP, isDouble: isDoubleFlagged } = parseFlags(flagText);
+            const isDouble = isDoubleFlagged || has3DigitBet(numbersText);
+            const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
+            if (count > 0) {
+              const display = numbersText.replace(/^\D+/, '').replace(/\D+$/, '').trim();
+              results.push({ line: display || numbersText.trim(), rate, isWP, isDouble, count, lineTotal: count * rate });
+            }
           }
         }
       }
@@ -167,14 +230,19 @@ export function processLine(line: string): Segment[] {
       const isWP = isWPFlag || (/\S/.test(afterForWP) && afterForWP.length > 0);
       const rate = Number(last[0]);
       const numbersText = trimmed.slice(0, last.index);
-      // 3-digit numbers (000–999) in the bet text automatically imply AB
-      const isDouble = isDoubleFlagged || has3DigitBet(numbersText);
-      const nums = extractPairedNumbers(numbersText);
-      if (nums.length > 0) {
-        const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
-        if (count > 0) {
-          const display = numbersText.replace(/[,\s.]+$/, '').trim();
-          results.push({ line: display, rate, isWP, isDouble, count, lineTotal: count * rate });
+      const solidC = trySolidRunSegment(numbersText, rate, trimmed);
+      if (solidC) {
+        results.push(solidC);
+      } else {
+        // 3-digit numbers (000–999) in the bet text automatically imply AB
+        const isDouble = isDoubleFlagged || has3DigitBet(numbersText);
+        const nums = extractPairedNumbers(numbersText);
+        if (nums.length > 0) {
+          const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
+          if (count > 0) {
+            const display = numbersText.replace(/[,\s.]+$/, '').trim();
+            results.push({ line: display, rate, isWP, isDouble, count, lineTotal: count * rate });
+          }
         }
       }
     }
