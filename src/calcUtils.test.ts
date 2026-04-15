@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateTotal, processLine } from "./calcUtils";
+import { calculateTotal, processLine, splitWhatsAppInputByContact } from "./calcUtils";
 
 describe("calculateTotal regression scenarios", () => {
   const rows = [
@@ -52,5 +52,36 @@ describe("parser structure checks", () => {
     const out = calculateTotal("12;34|56,10");
     expect(out.total).toBe(30);
     expect(out.results[0]).toMatchObject({ count: 3, rate: 10, lineTotal: 30 });
+  });
+});
+
+describe("splitWhatsAppInputByContact", () => {
+  it("returns null for plain text", () => {
+    expect(splitWhatsAppInputByContact("12 34 56 x10")).toBeNull();
+  });
+
+  it("returns null when only one contact appears", () => {
+    const one = `[6:16 pm, 12/4/2026] Alice:
+10 20 x5
+[6:17 pm, 12/4/2026] Alice:
+30 x10`;
+    expect(splitWhatsAppInputByContact(one)).toBeNull();
+  });
+
+  it("splits two contacts into two snippets with headers preserved", () => {
+    const raw = `[6:16 pm, 12/4/2026] Alice:
+10 20 x5
+
+[6:17 pm, 12/4/2026] Bob:
+30 x10`;
+    const out = splitWhatsAppInputByContact(raw);
+    expect(out).not.toBeNull();
+    expect(out).toHaveLength(2);
+    expect(out![0].contact).toBe("Alice");
+    expect(out![0].text).toContain("Alice:");
+    expect(out![0].text).toContain("10 20 x5");
+    expect(out![1].contact).toBe("Bob");
+    expect(out![1].text).toContain("Bob:");
+    expect(out![1].text).toContain("30 x10");
   });
 });

@@ -4,6 +4,7 @@ import { toastApiError } from "./apiToast";
 import {
   calculateTotal,
   parseWhatsAppMessages,
+  splitWhatsAppInputByContact,
   mergeIntoSessions,
   getCurrentSlot,
   formatSlotTime,
@@ -51,6 +52,11 @@ function newBlockId(): string {
 }
 
 const lineCountFormatter = new Intl.NumberFormat("en-IN");
+
+/** Normalize pasted body text so duplicate segment detection is stable across OS line endings. */
+function normPasteText(s: string): string {
+  return s.trim().replace(/\r\n/g, "\n");
+}
 
 /** WhatsApp header contact(s); empty / missing → `User ${fallbackIndex1}` (1-based). */
 function uniqueContactLabel(messages: ParsedMessage[], fallbackIndex1: number): string {
@@ -178,6 +184,29 @@ export default function Calculator({
   const selectedSlot = enabledSlots.find(s => s.id === selectedSlotId) ?? autoSlot;
 
   const updateBlockText = (id: string, text: string) => {
+    const split = splitWhatsAppInputByContact(text.trim());
+    if (split && split.length > 1) {
+      setBlocks(prev => {
+        const idx = prev.findIndex(b => b.id === id);
+        if (idx < 0) return prev;
+        const segmentTexts = new Set(split.map(s => normPasteText(s.text)));
+        const newBlocks: CalcBlock[] = split.map((seg, j) => ({
+          id: newBlockId(),
+          label: seg.contact.trim() || `User ${idx + j + 1}`,
+          text: seg.text,
+          labelLocked: false,
+        }));
+        // Drop following rows that are the same snippet as a new segment (avoids duplicate
+        // users when the full chat is pasted again into the first box after an earlier split).
+        const tail = prev.slice(idx + 1).filter(b => !segmentTexts.has(normPasteText(b.text)));
+        return [...prev.slice(0, idx), ...newBlocks, ...tail];
+      });
+      setUserResults(null);
+      setIsSaved(false);
+      setSavedInfo(null);
+      return;
+    }
+
     setBlocks(prev => {
       const idx = prev.findIndex(b => b.id === id);
       if (idx < 0) return prev;
@@ -442,7 +471,8 @@ export default function Calculator({
         <h1 className="text-[26px] font-bold text-[#1a1a1a] leading-tight">Calculator</h1>
         <p className="text-[15px] text-[#777] mt-1">
           Paste each person&apos;s WhatsApp text in its own box — names fill in from the chat; otherwise
-          User 1, User 2, … Then calculate.
+          User 1, User 2, … One chat with <strong>several contacts</strong> splits into separate boxes automatically.
+          Then calculate.
         </p>
       </div>
 

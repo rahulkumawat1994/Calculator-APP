@@ -514,6 +514,53 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
   return messages.length ? messages : null;
 }
 
+/**
+ * When a paste looks like WhatsApp and contains **more than one distinct contact**
+ * (each with at least one non-empty message body), returns one combined snippet per
+ * contact so the UI can open separate text areas. Otherwise `null` (keep one area).
+ */
+export function splitWhatsAppInputByContact(input: string): { contact: string; text: string }[] | null {
+  if (!/\[[^\]]*\]\s*[^:\n]+:/.test(input)) return null;
+
+  const headerRegex = /\[([^\]]*)\]\s*([^:\n]+):\s*/g;
+  const headers: Array<{ index: number; end: number; contact: string }> = [];
+
+  let match: RegExpExecArray | null;
+  while ((match = headerRegex.exec(input)) !== null) {
+    headers.push({
+      index: match.index,
+      end: match.index + match[0].length,
+      contact: match[2].trim(),
+    });
+  }
+
+  if (!headers.length) return null;
+
+  const chunksByContact = new Map<string, string[]>();
+  const order: string[] = [];
+
+  for (let i = 0; i < headers.length; i++) {
+    const h = headers[i];
+    const textEnd = i + 1 < headers.length ? headers[i + 1].index : input.length;
+    const body = input.slice(h.end, textEnd).trim();
+    if (!body) continue;
+    const block = input.slice(h.index, textEnd).trim();
+    const key = h.contact;
+    if (!chunksByContact.has(key)) {
+      chunksByContact.set(key, []);
+      order.push(key);
+    }
+    chunksByContact.get(key)!.push(block);
+  }
+
+  if (order.length <= 1) return null;
+
+  return order.map(contact => ({
+    contact,
+    text: chunksByContact.get(contact)!.join("\n\n"),
+  }));
+}
+
 // ─── Session management ────────────────────────────────────────────────────────
 
 /** "DD/MM/YYYY" → "YYYY-MM-DD" */
