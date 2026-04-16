@@ -12,23 +12,41 @@ const publicDir = path.join(root, "public");
 const outFile = path.join(publicDir, "firebase-messaging-sw.js");
 const pkgPath = path.join(root, "package.json");
 
+const FIREBASE_ENV_KEYS = [
+  "VITE_FIREBASE_API_KEY",
+  "VITE_FIREBASE_AUTH_DOMAIN",
+  "VITE_FIREBASE_PROJECT_ID",
+  "VITE_FIREBASE_STORAGE_BUCKET",
+  "VITE_FIREBASE_MESSAGING_SENDER_ID",
+  "VITE_FIREBASE_APP_ID",
+];
+
+/** Root `.env` (local) + `process.env` (Vercel / CI injects `VITE_*` at build time). */
 function loadEnv() {
-  const envPath = path.join(root, ".env");
-  const out = {};
-  if (!fs.existsSync(envPath)) return out;
-  for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
-    const t = line.trim();
-    if (!t || t.startsWith("#")) continue;
-    const eq = t.indexOf("=");
-    if (eq <= 0) continue;
-    const key = t.slice(0, eq).trim();
-    let val = t.slice(eq + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
-    }
-    out[key] = val;
+  const fromProcess = {};
+  for (const key of FIREBASE_ENV_KEYS) {
+    const v = process.env[key];
+    if (v != null && String(v).trim() !== "") fromProcess[key] = String(v).trim();
   }
-  return out;
+
+  const envPath = path.join(root, ".env");
+  const fromFile = {};
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const eq = t.indexOf("=");
+      if (eq <= 0) continue;
+      const key = t.slice(0, eq).trim();
+      let val = t.slice(eq + 1).trim();
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      fromFile[key] = val;
+    }
+  }
+
+  return { ...fromProcess, ...fromFile };
 }
 
 function firebaseSdkVersion() {
