@@ -8,22 +8,11 @@ import {
   deleteReportIssueLog,
   loadCalculationAuditLogs,
   loadReportIssueLogs,
-  getReportPushTokenCount,
   pruneDuplicateCalculationAuditLogs,
   updateReportIssueFixed,
   type CalculationAuditLog,
   type ReportIssueLog,
 } from "./firestoreDb";
-import { registerReportPush, unregisterReportPush } from "./reportPush";
-import {
-  REPORT_NOTIFY_CHANGED_EVENT,
-  REPORT_NOTIFY_STORAGE_KEY,
-} from "./useReportIssueNotifications";
-
-const REPORT_NOTIFY_TOOLTIP =
-  "Push + in-app alerts when someone submits a pattern issue (calculator → Report). Allow when the browser asks. " +
-  "Background push needs a valid VITE_FIREBASE_VAPID_KEY, deployed functions, and functions/.env APP_PUBLIC_URL (full https:// origin). " +
-  "Enable alerts on the same HTTPS URL you deploy (tokens are per-origin). This device only.";
 
 function fmtTs(ts?: number): string {
   if (!ts) return "-";
@@ -48,33 +37,23 @@ export default function AdminPage() {
   const [reportRows, setReportRows] = useState<ReportIssueLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [reportNotifyOn, setReportNotifyOn] = useState(() => {
-    try {
-      return localStorage.getItem(REPORT_NOTIFY_STORAGE_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
   const [busyAuditId, setBusyAuditId] = useState<string | null>(null);
   const [busyReportId, setBusyReportId] = useState<string | null>(null);
   const [busyFixedReportId, setBusyFixedReportId] = useState<string | null>(null);
   const [clearingAudit, setClearingAudit] = useState(false);
   const [clearingReport, setClearingReport] = useState(false);
   const [pruningAuditDupes, setPruningAuditDupes] = useState(false);
-  const [pushTokenCount, setPushTokenCount] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [audits, reports, pushCount] = await Promise.all([
+      const [audits, reports] = await Promise.all([
         loadCalculationAuditLogs(400),
         loadReportIssueLogs(400),
-        getReportPushTokenCount(),
       ]);
       setAuditRows(audits);
       setReportRows(reports);
-      setPushTokenCount(pushCount);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load admin data.";
       setError(msg);
@@ -87,93 +66,6 @@ export default function AdminPage() {
   useEffect(() => {
     void load();
   }, []);
-
-  useEffect(() => {
-    const sync = () => {
-      try {
-        setReportNotifyOn(localStorage.getItem(REPORT_NOTIFY_STORAGE_KEY) === "1");
-      } catch {
-        setReportNotifyOn(false);
-      }
-    };
-    window.addEventListener(REPORT_NOTIFY_CHANGED_EVENT, sync);
-    return () => window.removeEventListener(REPORT_NOTIFY_CHANGED_EVENT, sync);
-  }, []);
-
-  useEffect(() => {
-    if (typeof Notification === "undefined") return;
-    if (reportNotifyOn && Notification.permission === "denied") {
-      try {
-        localStorage.removeItem(REPORT_NOTIFY_STORAGE_KEY);
-      } catch {
-        /* ignore */
-      }
-      setReportNotifyOn(false);
-      window.dispatchEvent(new Event(REPORT_NOTIFY_CHANGED_EVENT));
-      toast.info("Notifications were blocked; turn them on in browser settings to use this.");
-    }
-  }, [reportNotifyOn]);
-
-  const toggleReportNotifications = async () => {
-    if (reportNotifyOn) {
-      await unregisterReportPush();
-      try {
-        localStorage.removeItem(REPORT_NOTIFY_STORAGE_KEY);
-      } catch {
-        /* ignore */
-      }
-      setReportNotifyOn(false);
-      window.dispatchEvent(new Event(REPORT_NOTIFY_CHANGED_EVENT));
-      try {
-        setPushTokenCount(await getReportPushTokenCount());
-      } catch {
-        /* ignore */
-      }
-      toast.info("Report notifications off for this browser.");
-      return;
-    }
-    if (typeof Notification === "undefined") {
-      toast.error("This browser does not support notifications.");
-      return;
-    }
-    const perm = await Notification.requestPermission();
-    if (perm !== "granted") {
-      toast.error("Notifications not allowed. Check browser site settings.");
-      return;
-    }
-    try {
-      localStorage.setItem(REPORT_NOTIFY_STORAGE_KEY, "1");
-    } catch {
-      /* ignore */
-    }
-    setReportNotifyOn(true);
-    window.dispatchEvent(new Event(REPORT_NOTIFY_CHANGED_EVENT));
-    const push = await registerReportPush();
-    if (!push.ok) {
-      if (push.reason === "no_vapid") {
-        toast.warn(
-          "Add VITE_FIREBASE_VAPID_KEY (.env) from Firebase → Project settings → Cloud Messaging → Web Push certificates, then run npm run dev again. In-app + Firestore alerts still work.",
-        );
-      } else if (push.reason === "invalid_vapid") {
-        toast.warn(
-          push.detail ??
-            "VITE_FIREBASE_VAPID_KEY is invalid or truncated. Copy the full Web Push public key from Firebase.",
-        );
-      } else if (push.reason === "error" && push.detail) {
-        toast.warn(`Push registration: ${push.detail}`);
-      }
-      toast.success("Report alerts on—in-app and Firestore alerts work on this device.");
-    } else {
-      toast.success(
-        "Report alerts on—FCM token saved. Redeploy functions with functions/.env APP_PUBLIC_URL set to this site’s https origin, then test with all tabs closed.",
-      );
-    }
-    try {
-      setPushTokenCount(await getReportPushTokenCount());
-    } catch {
-      /* ignore */
-    }
-  };
 
   const deleteAudit = async (id: string) => {
     const ok = window.confirm("Delete this audit log?");
@@ -294,13 +186,6 @@ export default function AdminPage() {
             <h1 className="text-[22px] font-black text-[#1a1a1a]">Admin Panel</h1>
             <p className="text-[13px] text-gray-500 mt-1">
               Combined view: <code>calc_audit_logs</code> and <code>report_issue_logs</code>
-              {pushTokenCount != null && pushTokenCount >= 0 && (
-                <span className="text-[#1d6fb8] font-semibold">
-                  {" "}
-                  · FCM devices in Firestore: {pushTokenCount}
-                  {pushTokenCount === 0 && " (enable alerts on production HTTPS to register a token)"}
-                </span>
-              )}
             </p>
             <div className="mt-3 inline-flex bg-[#f3f7fc] rounded-[10px] p-1 border border-[#d9e6f5]">
               <button
@@ -324,18 +209,6 @@ export default function AdminPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => void toggleReportNotifications()}
-              title={REPORT_NOTIFY_TOOLTIP}
-              className={`px-3 py-2.5 rounded-[12px] text-[13px] font-bold border-2 transition-colors ${
-                reportNotifyOn
-                  ? "bg-green-50 text-green-800 border-green-300"
-                  : "bg-white text-[#4a6685] border-[#dde8f0] hover:bg-[#f5f9ff]"
-              }`}
-            >
-              {reportNotifyOn ? "🔔 Reports: on" : "🔕 Enable report alerts"}
-            </button>
             <button
               type="button"
               onClick={() => void load()}
