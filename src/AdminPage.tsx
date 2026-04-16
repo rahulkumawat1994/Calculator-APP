@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { toast } from "react-toastify";
 import { toastApiError } from "./apiToast";
 import {
   clearCalculationAuditLogs,
@@ -7,6 +8,7 @@ import {
   deleteReportIssueLog,
   loadCalculationAuditLogs,
   loadReportIssueLogs,
+  pruneDuplicateCalculationAuditLogs,
   updateReportIssueFixed,
   type CalculationAuditLog,
   type ReportIssueLog,
@@ -40,6 +42,7 @@ export default function AdminPage() {
   const [busyFixedReportId, setBusyFixedReportId] = useState<string | null>(null);
   const [clearingAudit, setClearingAudit] = useState(false);
   const [clearingReport, setClearingReport] = useState(false);
+  const [pruningAuditDupes, setPruningAuditDupes] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -95,6 +98,30 @@ export default function AdminPage() {
       toastApiError(e, msg);
     } finally {
       setClearingAudit(false);
+    }
+  };
+
+  const pruneAuditDupes = async () => {
+    const ok = window.confirm(
+      "Delete duplicate inputs from Firestore? For each identical pasted input (newest 2000 logs), only the newest row is kept. This cannot be undone.",
+    );
+    if (!ok) return;
+    setPruningAuditDupes(true);
+    setError(null);
+    try {
+      const deleted = await pruneDuplicateCalculationAuditLogs(2000);
+      toast.success(
+        deleted > 0
+          ? `Deleted ${deleted} duplicate input row(s) from the database.`
+          : "No duplicate inputs found in the scanned range.",
+      );
+      await load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to delete duplicate inputs.";
+      setError(msg);
+      toastApiError(e, msg);
+    } finally {
+      setPruningAuditDupes(false);
     }
   };
 
@@ -184,7 +211,13 @@ export default function AdminPage() {
           <button
             type="button"
             onClick={() => void load()}
-            disabled={loading || clearingAudit || clearingReport || busyFixedReportId != null}
+            disabled={
+              loading ||
+              clearingAudit ||
+              clearingReport ||
+              pruningAuditDupes ||
+              busyFixedReportId != null
+            }
             className="px-4 py-2.5 rounded-[12px] text-[14px] font-bold bg-[#1d6fb8] text-white active:opacity-90 disabled:opacity-50"
           >
             Refresh
@@ -198,19 +231,29 @@ export default function AdminPage() {
         <div className="space-y-4">
           {activeTab === "audit" && (
           <section className="bg-white border-2 border-[#dde8f0] rounded-[16px] shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-[#e7eef7] flex items-center justify-between">
+            <div className="p-4 border-b border-[#e7eef7] flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h2 className="text-[18px] font-extrabold text-[#1a1a1a]">Calculation Audits</h2>
                 <p className="text-[12px] text-gray-500 mt-0.5">{auditRows.length} rows</p>
               </div>
-              <button
-                type="button"
-                onClick={() => void clearAudits()}
-                disabled={loading || clearingAudit || auditRows.length === 0}
-                className="px-3 py-2 rounded-[10px] text-[12px] font-bold bg-red-600 text-white disabled:opacity-50"
-              >
-                {clearingAudit ? "Clearing…" : "Clear logs"}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void pruneAuditDupes()}
+                  disabled={loading || clearingAudit || pruningAuditDupes}
+                  className="px-3 py-2 rounded-[10px] text-[12px] font-bold bg-amber-600 text-white disabled:opacity-50"
+                >
+                  {pruningAuditDupes ? "Deleting…" : "Delete duplicate inputs"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void clearAudits()}
+                  disabled={loading || clearingAudit || pruningAuditDupes || auditRows.length === 0}
+                  className="px-3 py-2 rounded-[10px] text-[12px] font-bold bg-red-600 text-white disabled:opacity-50"
+                >
+                  {clearingAudit ? "Clearing…" : "Clear logs"}
+                </button>
+              </div>
             </div>
             {loading ? (
               <div className="p-4 text-gray-500">Loading…</div>

@@ -15,7 +15,7 @@
 import {
   collection, doc,
   getDoc, setDoc, deleteDoc, getDocs, addDoc, updateDoc,
-  query, where, orderBy, limit,
+  query, where, orderBy, limit, writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { toastApiError } from "./apiToast";
@@ -250,6 +250,69 @@ export async function loadCalculationAuditLogs(maxRows = 300): Promise<Calculati
     console.warn("loadCalculationAuditLogs failed:", e);
     toastApiError(e, "Could not load audit logs.");
     return [];
+  }
+}
+
+/** Normalize pasted input so visually identical pastes share one dedupe key. */
+function calculationAuditInputDedupeKey(input: string | undefined): string {
+  return (input ?? "").replace(/\r\n/g, "\n").trim();
+}
+
+/**
+ * Deletes duplicate rows in `calc_audit_logs` (best effort, scanned newest first).
+ * Rows with the **same input text** (after trim + CRLF→LF) are duplicates: **keep the newest**
+ * `createdAt` and delete the rest. Empty inputs are skipped (never deduped together).
+ */
+export async function pruneDuplicateCalculationAuditLogs(maxScan = 2000): Promise<number> {
+  try {
+    const snap = await getDocs(query(
+      collection(db, "calc_audit_logs"),
+      orderBy("createdAt", "desc"),
+      limit(maxScan),
+    ));
+    const rows: CalculationAuditLog[] = snap.docs.map(d => {
+      const data = d.data() as Omit<CalculationAuditLog, "id">;
+      return { id: d.id, ...data };
+    });
+
+    const toDelete = new Set<string>();
+
+    const byInput = new Map<string, CalculationAuditLog[]>();
+    for (const r of rows) {
+      const key = calculationAuditInputDedupeKey(r.input);
+      if (!key) continue;
+      if (!byInput.has(key)) byInput.set(key, []);
+      byInput.get(key)!.push(r);
+    }
+    for (const group of byInput.values()) {
+      if (group.length < 2) continue;
+      const keep = group.reduce((a, b) =>
+        (a.createdAt ?? 0) >= (b.createdAt ?? 0) ? a : b,
+      );
+      for (const g of group) {
+        if (g.id !== keep.id) toDelete.add(g.id);
+      }
+    }
+
+    if (toDelete.size === 0) return 0;
+
+    const ids = [...toDelete];
+    const chunk = 450;
+    let deleted = 0;
+    for (let i = 0; i < ids.length; i += chunk) {
+      const slice = ids.slice(i, i + chunk);
+      const batch = writeBatch(db);
+      for (const id of slice) {
+        batch.delete(doc(db, "calc_audit_logs", id));
+      }
+      await batch.commit();
+      deleted += slice.length;
+    }
+    return deleted;
+  } catch (e) {
+    console.warn("pruneDuplicateCalculationAuditLogs failed:", e);
+    toastApiError(e, "Could not delete duplicate audit inputs.");
+    return 0;
   }
 }
 

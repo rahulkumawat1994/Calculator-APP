@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { toast } from "react-toastify";
 import { toastApiError } from "./apiToast";
 import {
   clearCalculationAuditLogs,
   deleteCalculationAuditLog,
   loadCalculationAuditLogs,
+  pruneDuplicateCalculationAuditLogs,
   type CalculationAuditLog,
 } from "./firestoreDb";
 
@@ -30,6 +32,7 @@ export default function AuditPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+  const [pruningDupes, setPruningDupes] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -67,6 +70,30 @@ export default function AuditPage() {
     }
   };
 
+  const handlePruneDuplicates = async () => {
+    const ok = window.confirm(
+      "Delete duplicate inputs from Firestore? For each identical pasted input (newest 2000 logs), only the newest row is kept and older copies are removed. This cannot be undone.",
+    );
+    if (!ok) return;
+    setPruningDupes(true);
+    setError(null);
+    try {
+      const deleted = await pruneDuplicateCalculationAuditLogs(2000);
+      toast.success(
+        deleted > 0
+          ? `Deleted ${deleted} duplicate input row(s) from the database.`
+          : "No duplicate inputs found in the scanned range.",
+      );
+      await load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to delete duplicate inputs.";
+      setError(msg);
+      toastApiError(e, msg);
+    } finally {
+      setPruningDupes(false);
+    }
+  };
+
   const handleClearAll = async () => {
     const ok = window.confirm("Delete all audit logs? This cannot be undone.");
     if (!ok) return;
@@ -95,11 +122,19 @@ export default function AuditPage() {
               Internal only: logs from collection <code>calc_audit_logs</code>
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => void handlePruneDuplicates()}
+              disabled={loading || clearing || pruningDupes}
+              className="px-4 py-2.5 rounded-[12px] text-[14px] font-bold bg-amber-600 text-white active:opacity-90 disabled:opacity-50"
+            >
+              {pruningDupes ? "Deleting…" : "Delete duplicate inputs"}
+            </button>
             <button
               type="button"
               onClick={handleClearAll}
-              disabled={loading || clearing || rows.length === 0}
+              disabled={loading || clearing || pruningDupes || rows.length === 0}
               className="px-4 py-2.5 rounded-[12px] text-[14px] font-bold bg-red-600 text-white active:opacity-90 disabled:opacity-50"
             >
               {clearing ? "Clearing…" : "Clear logs"}
@@ -107,7 +142,7 @@ export default function AuditPage() {
             <button
               type="button"
               onClick={() => void load()}
-              disabled={loading || clearing}
+              disabled={loading || clearing || pruningDupes}
               className="px-4 py-2.5 rounded-[12px] text-[14px] font-bold bg-[#1d6fb8] text-white active:opacity-90 disabled:opacity-50"
             >
               Refresh
