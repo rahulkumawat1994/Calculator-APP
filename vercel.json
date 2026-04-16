@@ -6,7 +6,6 @@
   },
   "rewrites": [
     { "source": "/admin", "destination": "/index.html" },
-    { "source": "/audit", "destination": "/index.html" },
-    { "source": "/fcm-demo", "destination": "/index.html" }
+    { "source": "/audit", "destination": "/index.html" }
   ]
 }

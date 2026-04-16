@@ -15,7 +15,7 @@
 import {
   collection, doc,
   getDoc, setDoc, deleteDoc, getDocs, addDoc, updateDoc,
-  query, where, orderBy, limit, writeBatch, getCountFromServer,
+  query, where, orderBy, limit, writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { toastApiError } from "./apiToast";
@@ -415,17 +415,6 @@ export async function clearReportIssueLogs(maxRows = 2000): Promise<number> {
   } catch (e) {
     console.warn("clearReportIssueLogs failed:", e);
     throw e;
-  }
-}
-
-/** Rows in report_push_tokens (FCM devices opted in for report alerts). */
-export async function getReportPushTokenCount(): Promise<number> {
-  try {
-    const snap = await getCountFromServer(collection(db, "report_push_tokens"));
-    return snap.data().count;
-  } catch (e) {
-    console.warn("getReportPushTokenCount failed:", e);
-    return -1;
   }
 }
 

@@ -6,7 +6,6 @@ import {
   clearReportIssueLogs,
   deleteCalculationAuditLog,
   deleteReportIssueLog,
-  getReportPushTokenCount,
   loadCalculationAuditLogs,
   loadReportIssueLogs,
   pruneDuplicateCalculationAuditLogs,
@@ -20,8 +19,7 @@ import {
   REPORT_PUSH_ENABLED_KEY,
 } from "./useReportIssuePush";
 
-const REPORT_PUSH_TOOLTIP =
-  "Alerts when someone submits a pattern issue. FCM tokens need VITE_FIREBASE_VAPID_KEY + firebase-messaging-sw.js (npm run dev). For pushes without an admin tab open, deploy to Vercel and set VITE_REPORT_NOTIFY_SECRET plus Vercel env REPORT_NOTIFY_SECRET, FIREBASE_SERVICE_ACCOUNT_JSON, and optional APP_PUBLIC_URL — see notes below.";
+const REPORT_PUSH_TOOLTIP = "Notify this browser when someone submits a pattern issue from the calculator.";
 
 function fmtTs(ts?: number): string {
   if (!ts) return "-";
@@ -60,20 +58,17 @@ export default function AdminPage() {
     }
   });
   const [pushError, setPushError] = useState<string | null>(null);
-  const [pushTokenCount, setPushTokenCount] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [audits, reports, pushCount] = await Promise.all([
+      const [audits, reports] = await Promise.all([
         loadCalculationAuditLogs(400),
         loadReportIssueLogs(400),
-        getReportPushTokenCount(),
       ]);
       setAuditRows(audits);
       setReportRows(reports);
-      setPushTokenCount(pushCount);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load admin data.";
       setError(msg);
@@ -123,11 +118,6 @@ export default function AdminPage() {
       }
       setReportPushOn(false);
       window.dispatchEvent(new Event(REPORT_PUSH_CHANGED_EVENT));
-      try {
-        setPushTokenCount(await getReportPushTokenCount());
-      } catch {
-        /* ignore */
-      }
       return;
     }
     if (typeof Notification === "undefined") {
@@ -163,11 +153,6 @@ export default function AdminPage() {
       } else {
         setPushError(res.detail ?? "Could not register push for this browser.");
       }
-    }
-    try {
-      setPushTokenCount(await getReportPushTokenCount());
-    } catch {
-      /* ignore */
     }
   };
 
@@ -284,18 +269,19 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-[#eef2f7] font-sans">
-      <div className="max-w-[1300px] mx-auto px-4 py-5">
-        <div className="bg-white border-2 border-[#dde8f0] rounded-[16px] p-4 shadow-sm mb-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-[22px] font-black text-[#1a1a1a]">Admin Panel</h1>
-            <p className="text-[13px] text-gray-500 mt-1">
-              Combined view: <code>calc_audit_logs</code> and <code>report_issue_logs</code>
+      <div className="mx-auto w-full max-w-[1300px] px-3 py-4 sm:px-4 sm:py-5">
+        <div className="mb-4 flex flex-col gap-4 rounded-[16px] border-2 border-[#dde8f0] bg-white p-3 shadow-sm sm:flex-row sm:items-start sm:justify-between sm:p-4">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl font-black text-[#1a1a1a] sm:text-[22px]">Admin Panel</h1>
+            <p className="mt-1 text-xs text-gray-500 sm:text-[13px]">
+              <span className="hidden sm:inline">Combined view: </span>
+              Audits and user pattern reports
             </p>
-            <div className="mt-3 inline-flex bg-[#f3f7fc] rounded-[10px] p-1 border border-[#d9e6f5]">
+            <div className="mt-3 inline-flex w-full max-w-[280px] rounded-[10px] border border-[#d9e6f5] bg-[#f3f7fc] p-1 sm:w-auto sm:max-w-none">
               <button
                 type="button"
                 onClick={() => setActiveTab("audit")}
-                className={`px-3 py-1.5 text-[12px] font-bold rounded-[8px] transition-colors ${
+                className={`min-h-[44px] flex-1 rounded-[8px] px-3 py-2 text-[12px] font-bold transition-colors sm:min-h-0 sm:flex-none sm:py-1.5 ${
                   activeTab === "audit" ? "bg-[#1d6fb8] text-white" : "text-[#4a6685]"
                 }`}
               >
@@ -304,7 +290,7 @@ export default function AdminPage() {
               <button
                 type="button"
                 onClick={() => setActiveTab("report")}
-                className={`px-3 py-1.5 text-[12px] font-bold rounded-[8px] transition-colors ${
+                className={`min-h-[44px] flex-1 rounded-[8px] px-3 py-2 text-[12px] font-bold transition-colors sm:min-h-0 sm:flex-none sm:py-1.5 ${
                   activeTab === "report" ? "bg-[#1d6fb8] text-white" : "text-[#4a6685]"
                 }`}
               >
@@ -312,16 +298,16 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
-          <div className="flex flex-col items-end gap-1 shrink-0">
-            <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:shrink-0 sm:items-end">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
               <button
                 type="button"
                 onClick={() => void toggleReportPush()}
                 title={REPORT_PUSH_TOOLTIP}
-                className={`px-3 py-2.5 rounded-[12px] text-[13px] font-bold border-2 transition-colors ${
+                className={`min-h-[44px] w-full rounded-[12px] border-2 px-3 py-2.5 text-[13px] font-bold transition-colors sm:min-h-0 sm:w-auto ${
                   reportPushOn
-                    ? "bg-green-50 text-green-800 border-green-300"
-                    : "bg-white text-[#4a6685] border-[#dde8f0] hover:bg-[#f5f9ff]"
+                    ? "border-green-300 bg-green-50 text-green-800"
+                    : "border-[#dde8f0] bg-white text-[#4a6685] hover:bg-[#f5f9ff]"
                 }`}
               >
                 {reportPushOn ? "🔔 Report alerts: on" : "🔕 Enable report alerts"}
@@ -336,59 +322,37 @@ export default function AdminPage() {
                   pruningAuditDupes ||
                   busyFixedReportId != null
                 }
-                className="px-4 py-2.5 rounded-[12px] text-[14px] font-bold bg-[#1d6fb8] text-white active:opacity-90 disabled:opacity-50"
+                className="min-h-[44px] w-full rounded-[12px] bg-[#1d6fb8] px-4 py-2.5 text-[14px] font-bold text-white active:opacity-90 disabled:opacity-50 sm:min-h-0 sm:w-auto"
               >
                 Refresh
               </button>
             </div>
             {pushError && (
-              <p className="text-[12px] text-red-600 max-w-[min(100%,420px)] text-right">{pushError}</p>
+              <p className="text-left text-[12px] text-red-600 sm:text-right">{pushError}</p>
             )}
-            {pushTokenCount != null && pushTokenCount >= 0 && (
-              <p className="text-[11px] text-gray-600 max-w-[min(100%,440px)] text-right leading-snug">
-                FCM devices in Firestore: <strong>{pushTokenCount}</strong>
-                {pushTokenCount === 0 && reportPushOn
-                  ? " — saving token after enable can take a second; refresh."
-                  : ""}
-              </p>
-            )}
-            <p className="text-[11px] text-gray-500 max-w-[min(100%,440px)] text-right leading-snug">
-              <strong>Vercel (recommended):</strong> add env vars{" "}
-              <code className="text-[10px] bg-gray-100 px-1 rounded">REPORT_NOTIFY_SECRET</code>,{" "}
-              <code className="text-[10px] bg-gray-100 px-1 rounded">FIREBASE_SERVICE_ACCOUNT_JSON</code>, optional{" "}
-              <code className="text-[10px] bg-gray-100 px-1 rounded">APP_PUBLIC_URL</code>. In{" "}
-              <code className="text-[10px] bg-gray-100 px-1 rounded">.env</code> set{" "}
-              <code className="text-[10px] bg-gray-100 px-1 rounded">VITE_REPORT_NOTIFY_SECRET</code> to the{" "}
-              <strong>same</strong> secret and rebuild. Local <code className="text-[10px] bg-gray-100 px-1 rounded">npm run dev</code>{" "}
-              can set <code className="text-[10px] bg-gray-100 px-1 rounded">VITE_REPORT_NOTIFY_URL</code> to your
-              deployed https origin so notify calls hit Vercel.
-            </p>
-            <p className="text-[10px] text-gray-500 max-w-[min(100%,480px)] text-right leading-snug">
-              <strong>No Vercel notify:</strong> keep this admin tab open — Firestore still shows new reports
-              in-page. <strong>With Vercel:</strong> submit triggers <code className="bg-gray-100 px-0.5 rounded">/api/notify-report-issue</code>{" "}
-              for FCM to registered devices.
-            </p>
           </div>
         </div>
 
         {error && (
-          <div className="bg-red-50 border-2 border-red-200 rounded-[16px] p-4 text-red-700 mb-4">{error}</div>
+          <div className="mb-4 rounded-[16px] border-2 border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:p-4">
+            {error}
+          </div>
         )}
 
         <div className="space-y-4">
           {activeTab === "audit" && (
-          <section className="bg-white border-2 border-[#dde8f0] rounded-[16px] shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-[#e7eef7] flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-[18px] font-extrabold text-[#1a1a1a]">Calculation Audits</h2>
-                <p className="text-[12px] text-gray-500 mt-0.5">{auditRows.length} rows</p>
+          <section className="overflow-hidden rounded-[16px] border-2 border-[#dde8f0] bg-white shadow-sm">
+            <div className="flex flex-col gap-3 border-b border-[#e7eef7] p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+              <div className="min-w-0">
+                <h2 className="text-lg font-extrabold text-[#1a1a1a] sm:text-[18px]">Calculation Audits</h2>
+                <p className="mt-0.5 text-[12px] text-gray-500">{auditRows.length} rows</p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                 <button
                   type="button"
                   onClick={() => void pruneAuditDupes()}
                   disabled={loading || clearingAudit || pruningAuditDupes}
-                  className="px-3 py-2 rounded-[10px] text-[12px] font-bold bg-amber-600 text-white disabled:opacity-50"
+                  className="min-h-[44px] rounded-[10px] bg-amber-600 px-3 py-2 text-left text-[12px] font-bold text-white disabled:opacity-50 sm:min-h-0 sm:text-center"
                 >
                   {pruningAuditDupes ? "Deleting…" : "Delete duplicate inputs"}
                 </button>
@@ -396,19 +360,19 @@ export default function AdminPage() {
                   type="button"
                   onClick={() => void clearAudits()}
                   disabled={loading || clearingAudit || pruningAuditDupes || auditRows.length === 0}
-                  className="px-3 py-2 rounded-[10px] text-[12px] font-bold bg-red-600 text-white disabled:opacity-50"
+                  className="min-h-[44px] rounded-[10px] bg-red-600 px-3 py-2 text-left text-[12px] font-bold text-white disabled:opacity-50 sm:min-h-0 sm:text-center"
                 >
                   {clearingAudit ? "Clearing…" : "Clear logs"}
                 </button>
               </div>
             </div>
             {loading ? (
-              <div className="p-4 text-gray-500">Loading…</div>
+              <div className="p-3 text-gray-500 sm:p-4">Loading…</div>
             ) : auditRows.length === 0 ? (
-              <div className="p-4 text-gray-500">No audit logs found.</div>
+              <div className="p-3 text-gray-500 sm:p-4">No audit logs found.</div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-[12px]">
+              <div className="touch-pan-x overflow-x-auto overscroll-x-contain">
+                <table className="w-full min-w-[640px] text-left text-[11px] sm:text-[12px]">
                   <thead className="bg-[#f6f9fd] border-b border-[#e3edf7]">
                     <tr>
                       <th className="px-3 py-2 font-bold">Time</th>
@@ -433,12 +397,12 @@ export default function AdminPage() {
                         <td className="px-3 py-2">
                           <pre className="whitespace-pre-wrap wrap-break-word bg-[#f8fbff] border border-[#e4edf8] rounded-[10px] p-2 max-h-[120px] overflow-auto font-mono text-[11px]">{r.input}</pre>
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-2 py-2 sm:px-3">
                           <button
                             type="button"
                             onClick={() => void deleteAudit(r.id)}
                             disabled={busyAuditId === r.id || clearingAudit}
-                            className="px-2.5 py-1.5 rounded-[10px] text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 disabled:opacity-50"
+                            className="min-h-[40px] min-w-[72px] rounded-[10px] border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] font-bold text-red-700 disabled:opacity-50 sm:min-h-0 sm:min-w-0 sm:py-1.5"
                           >
                             {busyAuditId === r.id ? "Deleting…" : "Delete"}
                           </button>
@@ -453,28 +417,28 @@ export default function AdminPage() {
           )}
 
           {activeTab === "report" && (
-          <section className="bg-white border-2 border-[#dde8f0] rounded-[16px] shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-[#e7eef7] flex items-center justify-between">
-              <div>
-                <h2 className="text-[18px] font-extrabold text-[#1a1a1a]">User Reports</h2>
-                <p className="text-[12px] text-gray-500 mt-0.5">{reportRows.length} rows</p>
+          <section className="overflow-hidden rounded-[16px] border-2 border-[#dde8f0] bg-white shadow-sm">
+            <div className="flex flex-col gap-3 border-b border-[#e7eef7] p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+              <div className="min-w-0">
+                <h2 className="text-lg font-extrabold text-[#1a1a1a] sm:text-[18px]">User Reports</h2>
+                <p className="mt-0.5 text-[12px] text-gray-500">{reportRows.length} rows</p>
               </div>
               <button
                 type="button"
                 onClick={() => void clearReports()}
                 disabled={loading || clearingReport || reportRows.length === 0}
-                className="px-3 py-2 rounded-[10px] text-[12px] font-bold bg-red-600 text-white disabled:opacity-50"
+                className="min-h-[44px] w-full rounded-[10px] bg-red-600 px-3 py-2 text-[12px] font-bold text-white disabled:opacity-50 sm:min-h-0 sm:w-auto"
               >
                 {clearingReport ? "Clearing…" : "Clear logs"}
               </button>
             </div>
             {loading ? (
-              <div className="p-4 text-gray-500">Loading…</div>
+              <div className="p-3 text-gray-500 sm:p-4">Loading…</div>
             ) : reportRows.length === 0 ? (
-              <div className="p-4 text-gray-500">No report issues found.</div>
+              <div className="p-3 text-gray-500 sm:p-4">No report issues found.</div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-[12px]">
+              <div className="touch-pan-x overflow-x-auto overscroll-x-contain">
+                <table className="w-full min-w-[720px] text-left text-[11px] sm:text-[12px]">
                   <thead className="bg-[#f6f9fd] border-b border-[#e3edf7]">
                     <tr>
                       <th className="px-3 py-2 font-bold">Time</th>
@@ -518,12 +482,12 @@ export default function AdminPage() {
                         <td className="px-3 py-2">
                           <pre className="whitespace-pre-wrap wrap-break-word bg-[#f8fbff] border border-[#e4edf8] rounded-[10px] p-2 max-h-[120px] overflow-auto font-mono text-[11px]">{r.note || "-"}</pre>
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-2 py-2 sm:px-3">
                           <button
                             type="button"
                             onClick={() => void deleteReport(r.id)}
                             disabled={busyReportId === r.id || clearingReport}
-                            className="px-2.5 py-1.5 rounded-[10px] text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 disabled:opacity-50"
+                            className="min-h-[40px] min-w-[72px] rounded-[10px] border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] font-bold text-red-700 disabled:opacity-50 sm:min-h-0 sm:min-w-0 sm:py-1.5"
                           >
                             {busyReportId === r.id ? "Deleting…" : "Delete"}
                           </button>

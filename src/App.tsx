@@ -101,14 +101,6 @@ export default function App() {
             savePaymentDoc={savePaymentDoc}
             logCalculationAudit={logCalculationAudit}
           />
-          <a
-            href="/fcm-demo"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-5 inline-flex items-center justify-center rounded-xl border-2 border-[#dde8f0] bg-white px-4 py-2.5 text-[13px] font-bold text-[#1d6fb8] shadow-sm hover:bg-[#f0f6fc] active:opacity-90"
-          >
-            Test push notifications
-          </a>
         </div>
 
         {tab === "history" && (

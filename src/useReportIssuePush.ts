@@ -6,6 +6,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  type QueryDocumentSnapshot,
   type Unsubscribe,
 } from "firebase/firestore";
 import type { MessagePayload } from "firebase/messaging";
@@ -96,8 +97,8 @@ async function showReportIssueNotification(payload: MessagePayload): Promise<voi
 
 /**
  * When admin enables report alerts:
- * - Firestore listener: works on Spark (no Cloud Functions); needs an open tab.
- * - FCM onMessage: optional when Functions + Blaze push to this token (deduped by report id).
+ * - Firestore listener: in-tab updates while this origin stays open.
+ * - FCM onMessage: pushes from Vercel /api (deduped by report id with Firestore path).
  */
 export function useReportIssuePush(): void {
   const fcmUnsubRef = useRef<(() => void) | null>(null);
@@ -124,31 +125,58 @@ export function useReportIssuePush(): void {
       );
 
       let fsPrimed = false;
-      let lastFsId: string | null = null;
+      let lastTopId: string | null = null;
+      let lastTopCreatedAt = 0;
+
+      const readCreatedAtMs = (d: QueryDocumentSnapshot): number => {
+        const v = d.get("createdAt");
+        if (typeof v === "number") return v;
+        if (v != null && typeof (v as { toMillis?: () => number }).toMillis === "function") {
+          return (v as { toMillis: () => number }).toMillis();
+        }
+        return 0;
+      };
 
       fsUnsubRef.current = onSnapshot(
         q,
         (snap) => {
           const docSnap = snap.docs[0];
-          if (!docSnap) return;
-          const id = docSnap.id;
-          if (!fsPrimed) {
-            fsPrimed = true;
-            lastFsId = id;
+          if (!docSnap) {
+            lastTopId = null;
+            lastTopCreatedAt = 0;
             return;
           }
-          if (id === lastFsId) return;
-          lastFsId = id;
-          const raw = docSnap.get("input");
-          const inputPreview =
-            typeof raw === "string" ? raw.replace(/\s+/g, " ").trim().slice(0, 140) : "";
-          const body = inputPreview || "(no preview)";
-          void showReportAlert(id, "New pattern issue report", body, {
-            logId: id,
-            type: "report_issue",
-            inputPreview: body,
-            clickUrl: adminPanelUrl(),
-          });
+          const id = docSnap.id;
+          const createdAt = readCreatedAtMs(docSnap);
+
+          if (!fsPrimed) {
+            fsPrimed = true;
+            lastTopId = id;
+            lastTopCreatedAt = createdAt;
+            return;
+          }
+
+          if (id === lastTopId) return;
+
+          // Deleting the newest row makes another doc "first" with an older createdAt — not a new report.
+          if (createdAt > lastTopCreatedAt) {
+            lastTopId = id;
+            lastTopCreatedAt = createdAt;
+            const raw = docSnap.get("input");
+            const inputPreview =
+              typeof raw === "string" ? raw.replace(/\s+/g, " ").trim().slice(0, 140) : "";
+            const body = inputPreview || "(no preview)";
+            void showReportAlert(id, "New pattern issue report", body, {
+              logId: id,
+              type: "report_issue",
+              inputPreview: body,
+              clickUrl: adminPanelUrl(),
+            });
+            return;
+          }
+
+          lastTopId = id;
+          lastTopCreatedAt = createdAt;
         },
         (err) => console.warn("[report alert] Firestore listener:", err),
       );
