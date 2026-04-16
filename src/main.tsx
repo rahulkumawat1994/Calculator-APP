@@ -5,13 +5,16 @@ import 'react-toastify/dist/ReactToastify.css';
 import './index.css';
 import App from './App';
 import AdminPage from './AdminPage';
+import FcmDemo from './FcmDemo';
 
-const isAdminPath = window.location.pathname === '/admin' || window.location.pathname === '/audit';
+const path = window.location.pathname;
+const isAdminPath = path === '/admin' || path === '/audit';
+const isFcmDemoPath = path === '/fcm-demo';
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
     <>
-      {isAdminPath ? <AdminPage /> : <App />}
+      {isFcmDemoPath ? <FcmDemo /> : isAdminPath ? <AdminPage /> : <App />}
       <ToastContainer
         position="top-center"
         newestOnTop
