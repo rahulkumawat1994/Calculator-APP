@@ -12,6 +12,16 @@ describe("calculateTotal regression scenarios", () => {
     { id: "solid-ab", input: "44444 *20 AB", expectedTotal: 40 },
     { id: "solid-a", input: "4444 *20 A", expectedTotal: 20 },
     { id: "solid-ax", input: "Ax33333*50", expectedTotal: 50 },
+    {
+      id: "solid-axb-harf-wa",
+      input: "SG harf AxB 00000x50",
+      expectedTotal: 100,
+    },
+    {
+      id: "solid-a-b-dash-harf",
+      input: "SG harf A-B 00000x50",
+      expectedTotal: 100,
+    },
     { id: "multix-b", input: "B.1111x9999x50", expectedTotal: 100 },
     { id: "multix-noprefix", input: "1111x2222x10", expectedTotal: 20 },
     { id: "label-harf", input: "Harf.B.1111x9999x50", expectedTotal: 100 },
@@ -39,6 +49,33 @@ describe("calculateTotal regression scenarios", () => {
 });
 
 describe("parser structure checks", () => {
+  it("treats AxB on same-digit run as AB (2×)", () => {
+    const out = processLine("SG harf AxB 00000x50");
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      rate: 50,
+      count: 2,
+      isDouble: true,
+      lineTotal: 100,
+    });
+  });
+
+  it("treats A-B on same-digit run as AB (2×)", () => {
+    const out = processLine("SG harf A-B 00000x50");
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      rate: 50,
+      count: 2,
+      isDouble: true,
+      lineTotal: 100,
+    });
+  });
+
+  it("treats A.B and A/B on same-digit run as AB (2×)", () => {
+    expect(processLine("SG harf A.B 11111x10")[0]?.lineTotal).toBe(20);
+    expect(processLine("harf A / B 22222x5")[0]?.lineTotal).toBe(10);
+  });
+
   it("parses multi-x same-digit chain into two segments", () => {
     const out = processLine("Harf.B.1111x9999x50");
     expect(out).toHaveLength(2);

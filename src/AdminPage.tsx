@@ -13,6 +13,15 @@ import {
   type CalculationAuditLog,
   type ReportIssueLog,
 } from "./firestoreDb";
+import {
+  REPORT_NOTIFY_CHANGED_EVENT,
+  REPORT_NOTIFY_STORAGE_KEY,
+} from "./useReportIssueNotifications";
+
+const REPORT_NOTIFY_TOOLTIP =
+  "Browser notifications when someone submits a pattern issue (calculator → Report). " +
+  "Allow when the browser asks. Works while any tab of this site is open (Calculate, History, etc.)—not only /admin. " +
+  "If you close every tab, alerts pause until you open the site again. This device only.";
 
 function fmtTs(ts?: number): string {
   if (!ts) return "-";
@@ -37,6 +46,13 @@ export default function AdminPage() {
   const [reportRows, setReportRows] = useState<ReportIssueLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reportNotifyOn, setReportNotifyOn] = useState(() => {
+    try {
+      return localStorage.getItem(REPORT_NOTIFY_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const [busyAuditId, setBusyAuditId] = useState<string | null>(null);
   const [busyReportId, setBusyReportId] = useState<string | null>(null);
   const [busyFixedReportId, setBusyFixedReportId] = useState<string | null>(null);
@@ -66,6 +82,63 @@ export default function AdminPage() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    const sync = () => {
+      try {
+        setReportNotifyOn(localStorage.getItem(REPORT_NOTIFY_STORAGE_KEY) === "1");
+      } catch {
+        setReportNotifyOn(false);
+      }
+    };
+    window.addEventListener(REPORT_NOTIFY_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(REPORT_NOTIFY_CHANGED_EVENT, sync);
+  }, []);
+
+  useEffect(() => {
+    if (typeof Notification === "undefined") return;
+    if (reportNotifyOn && Notification.permission === "denied") {
+      try {
+        localStorage.removeItem(REPORT_NOTIFY_STORAGE_KEY);
+      } catch {
+        /* ignore */
+      }
+      setReportNotifyOn(false);
+      window.dispatchEvent(new Event(REPORT_NOTIFY_CHANGED_EVENT));
+      toast.info("Notifications were blocked; turn them on in browser settings to use this.");
+    }
+  }, [reportNotifyOn]);
+
+  const toggleReportNotifications = async () => {
+    if (reportNotifyOn) {
+      try {
+        localStorage.removeItem(REPORT_NOTIFY_STORAGE_KEY);
+      } catch {
+        /* ignore */
+      }
+      setReportNotifyOn(false);
+      window.dispatchEvent(new Event(REPORT_NOTIFY_CHANGED_EVENT));
+      toast.info("Report notifications off for this browser.");
+      return;
+    }
+    if (typeof Notification === "undefined") {
+      toast.error("This browser does not support notifications.");
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") {
+      toast.error("Notifications not allowed. Check browser site settings.");
+      return;
+    }
+    try {
+      localStorage.setItem(REPORT_NOTIFY_STORAGE_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+    setReportNotifyOn(true);
+    window.dispatchEvent(new Event(REPORT_NOTIFY_CHANGED_EVENT));
+    toast.success("Report alerts on—you can leave /admin and use the app.");
+  };
 
   const deleteAudit = async (id: string) => {
     const ok = window.confirm("Delete this audit log?");
@@ -208,20 +281,34 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={
-              loading ||
-              clearingAudit ||
-              clearingReport ||
-              pruningAuditDupes ||
-              busyFixedReportId != null
-            }
-            className="px-4 py-2.5 rounded-[12px] text-[14px] font-bold bg-[#1d6fb8] text-white active:opacity-90 disabled:opacity-50"
-          >
-            Refresh
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => void toggleReportNotifications()}
+              title={REPORT_NOTIFY_TOOLTIP}
+              className={`px-3 py-2.5 rounded-[12px] text-[13px] font-bold border-2 transition-colors ${
+                reportNotifyOn
+                  ? "bg-green-50 text-green-800 border-green-300"
+                  : "bg-white text-[#4a6685] border-[#dde8f0] hover:bg-[#f5f9ff]"
+              }`}
+            >
+              {reportNotifyOn ? "🔔 Reports: on" : "🔕 Enable report alerts"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={
+                loading ||
+                clearingAudit ||
+                clearingReport ||
+                pruningAuditDupes ||
+                busyFixedReportId != null
+              }
+              className="px-4 py-2.5 rounded-[12px] text-[14px] font-bold bg-[#1d6fb8] text-white active:opacity-90 disabled:opacity-50"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
 
         {error && (

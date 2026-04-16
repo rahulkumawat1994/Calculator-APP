@@ -5,6 +5,7 @@ import GamesView from "./GamesView";
 import SlotsSettings from "./SlotsSettings";
 import { useAppData } from "./useAppData";
 import { LoadingProvider } from "./TopProgressBar";
+import { useReportIssueNotifications } from "./useReportIssueNotifications";
 
 type Tab = "calculator" | "history" | "games" | "settings";
 
@@ -17,6 +18,7 @@ const TABS: { id: Tab; icon: string; label: string }[] = [
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("calculator");
+  useReportIssueNotifications();
 
   const {
     loading,

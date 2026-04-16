@@ -69,7 +69,7 @@ function has3DigitBet(numbersText: string): boolean {
 }
 
 /**
- * Same-digit run (333, 4444, 44444, …): AB / अब → count 2×rate; lone A or B → 1×rate.
+ * Same-digit run (333, 4444, 44444, …): AB / अब / A…B (any punctuation between A & B) → count 2×rate; lone A or B → 1×rate.
  * A/B/AB may appear anywhere in modifierSource (before/after digits or rate). Rate digits
  * are stripped so *20 does not interfere. No WP/palat here — those use the normal pair path.
  */
@@ -82,6 +82,9 @@ function solidRunAbMultiplier(modifierSource: string): { count: number; isDouble
     .replace(/\*\s*\d+/g, ' ')
     .replace(/=+\s*\d+/g, ' ')
     .replace(/(?:^|[\s,])x\s*\d+(?=$|[\s,]|[^0-9])/gi, ' ');
+  // A and B separated by punctuation/spaces; include "x" and "×" (letters otherwise) for AxB / A×B.
+  // Literal "AB" with no separator is handled by the next check.
+  if (/\bA(?:[^A-Za-z0-9]|x|×)+B\b/i.test(s)) return { count: 2, isDouble: true };
   if (/AB/i.test(s)) return { count: 2, isDouble: true };
   const noAb = s.replace(/AB/gi, '');
   if (/(?:^|[^A-Za-z])A(?:[^A-Za-z]|$)/i.test(noAb) || /(?:^|[^A-Za-z])B(?:[^A-Za-z]|$)/i.test(noAb))
