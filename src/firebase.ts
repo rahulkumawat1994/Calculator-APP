@@ -1,5 +1,6 @@
 import { initializeApp, type FirebaseApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import type { Messaging } from "firebase/messaging";
 
 const REQUIRED_VARS = [
   "VITE_FIREBASE_API_KEY",
@@ -24,3 +25,18 @@ const firebaseConfig = {
 
 export const app: FirebaseApp = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
+
+let messagingPromise: Promise<Messaging | null> | null = null;
+
+export function getFirebaseMessaging(): Promise<Messaging | null> {
+  if (typeof window === "undefined") return Promise.resolve(null);
+  if (!messagingPromise) {
+    messagingPromise = import("firebase/messaging")
+      .then(async ({ getMessaging, isSupported }) => {
+        if (!(await isSupported().catch(() => false))) return null;
+        return getMessaging(app);
+      })
+      .catch(() => null);
+  }
+  return messagingPromise;
+}

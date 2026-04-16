@@ -6,6 +6,7 @@ import {
   clearReportIssueLogs,
   deleteCalculationAuditLog,
   deleteReportIssueLog,
+  getReportPushTokenCount,
   loadCalculationAuditLogs,
   loadReportIssueLogs,
   pruneDuplicateCalculationAuditLogs,
@@ -13,6 +14,14 @@ import {
   type CalculationAuditLog,
   type ReportIssueLog,
 } from "./firestoreDb";
+import { registerReportPush, unregisterReportPush } from "./reportPush";
+import {
+  REPORT_PUSH_CHANGED_EVENT,
+  REPORT_PUSH_ENABLED_KEY,
+} from "./useReportIssuePush";
+
+const REPORT_PUSH_TOOLTIP =
+  "Browser push when someone submits a pattern issue (Calculator → Report). Requires VITE_FIREBASE_VAPID_KEY in .env, npm run dev (generates firebase-messaging-sw.js), and Cloud Function onReportIssueCreatedPush deployed with APP_PUBLIC_URL in functions/.env.";
 
 function fmtTs(ts?: number): string {
   if (!ts) return "-";
@@ -43,17 +52,28 @@ export default function AdminPage() {
   const [clearingAudit, setClearingAudit] = useState(false);
   const [clearingReport, setClearingReport] = useState(false);
   const [pruningAuditDupes, setPruningAuditDupes] = useState(false);
+  const [reportPushOn, setReportPushOn] = useState(() => {
+    try {
+      return localStorage.getItem(REPORT_PUSH_ENABLED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [pushError, setPushError] = useState<string | null>(null);
+  const [pushTokenCount, setPushTokenCount] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [audits, reports] = await Promise.all([
+      const [audits, reports, pushCount] = await Promise.all([
         loadCalculationAuditLogs(400),
         loadReportIssueLogs(400),
+        getReportPushTokenCount(),
       ]);
       setAuditRows(audits);
       setReportRows(reports);
+      setPushTokenCount(pushCount);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load admin data.";
       setError(msg);
@@ -66,6 +86,90 @@ export default function AdminPage() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    const sync = () => {
+      try {
+        setReportPushOn(localStorage.getItem(REPORT_PUSH_ENABLED_KEY) === "1");
+      } catch {
+        setReportPushOn(false);
+      }
+    };
+    window.addEventListener(REPORT_PUSH_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(REPORT_PUSH_CHANGED_EVENT, sync);
+  }, []);
+
+  useEffect(() => {
+    if (typeof Notification === "undefined") return;
+    if (reportPushOn && Notification.permission === "denied") {
+      try {
+        localStorage.removeItem(REPORT_PUSH_ENABLED_KEY);
+      } catch {
+        /* ignore */
+      }
+      setReportPushOn(false);
+      window.dispatchEvent(new Event(REPORT_PUSH_CHANGED_EVENT));
+    }
+  }, [reportPushOn]);
+
+  const toggleReportPush = async () => {
+    setPushError(null);
+    if (reportPushOn) {
+      await unregisterReportPush();
+      try {
+        localStorage.removeItem(REPORT_PUSH_ENABLED_KEY);
+      } catch {
+        /* ignore */
+      }
+      setReportPushOn(false);
+      window.dispatchEvent(new Event(REPORT_PUSH_CHANGED_EVENT));
+      try {
+        setPushTokenCount(await getReportPushTokenCount());
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    if (typeof Notification === "undefined") {
+      setPushError("This browser does not support notifications.");
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") {
+      setPushError("Notifications blocked. Allow them in site settings, then try again.");
+      return;
+    }
+    try {
+      localStorage.setItem(REPORT_PUSH_ENABLED_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+    setReportPushOn(true);
+    window.dispatchEvent(new Event(REPORT_PUSH_CHANGED_EVENT));
+
+    const res = await registerReportPush();
+    if (!res.ok) {
+      try {
+        localStorage.removeItem(REPORT_PUSH_ENABLED_KEY);
+      } catch {
+        /* ignore */
+      }
+      setReportPushOn(false);
+      window.dispatchEvent(new Event(REPORT_PUSH_CHANGED_EVENT));
+      if (res.reason === "no_vapid") {
+        setPushError("Add VITE_FIREBASE_VAPID_KEY to .env, restart dev, then enable again.");
+      } else if (res.reason === "invalid_vapid") {
+        setPushError(res.detail ?? "Invalid VAPID key.");
+      } else {
+        setPushError(res.detail ?? "Could not register push for this browser.");
+      }
+    }
+    try {
+      setPushTokenCount(await getReportPushTokenCount());
+    } catch {
+      /* ignore */
+    }
+  };
 
   const deleteAudit = async (id: string) => {
     const ok = window.confirm("Delete this audit log?");
@@ -209,20 +313,51 @@ export default function AdminPage() {
             </div>
           </div>
           <div className="flex flex-col items-end gap-1 shrink-0">
-            <button
-              type="button"
-              onClick={() => void load()}
-              disabled={
-                loading ||
-                clearingAudit ||
-                clearingReport ||
-                pruningAuditDupes ||
-                busyFixedReportId != null
-              }
-              className="px-4 py-2.5 rounded-[12px] text-[14px] font-bold bg-[#1d6fb8] text-white active:opacity-90 disabled:opacity-50"
-            >
-              Refresh
-            </button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => void toggleReportPush()}
+                title={REPORT_PUSH_TOOLTIP}
+                className={`px-3 py-2.5 rounded-[12px] text-[13px] font-bold border-2 transition-colors ${
+                  reportPushOn
+                    ? "bg-green-50 text-green-800 border-green-300"
+                    : "bg-white text-[#4a6685] border-[#dde8f0] hover:bg-[#f5f9ff]"
+                }`}
+              >
+                {reportPushOn ? "🔔 Report push: on" : "🔕 Enable report push"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void load()}
+                disabled={
+                  loading ||
+                  clearingAudit ||
+                  clearingReport ||
+                  pruningAuditDupes ||
+                  busyFixedReportId != null
+                }
+                className="px-4 py-2.5 rounded-[12px] text-[14px] font-bold bg-[#1d6fb8] text-white active:opacity-90 disabled:opacity-50"
+              >
+                Refresh
+              </button>
+            </div>
+            {pushError && (
+              <p className="text-[12px] text-red-600 max-w-[min(100%,420px)] text-right">{pushError}</p>
+            )}
+            {pushTokenCount != null && pushTokenCount >= 0 && (
+              <p className="text-[11px] text-gray-600 max-w-[min(100%,440px)] text-right leading-snug">
+                FCM devices in Firestore: <strong>{pushTokenCount}</strong>
+                {pushTokenCount === 0 && reportPushOn
+                  ? " — saving token after enable can take a second; refresh."
+                  : ""}
+              </p>
+            )}
+            <p className="text-[11px] text-gray-500 max-w-[min(100%,440px)] text-right leading-snug">
+              Deploy <code className="text-[10px] bg-gray-100 px-1 rounded">firebase deploy --only functions</code>{" "}
+              and set <code className="text-[10px] bg-gray-100 px-1 rounded">APP_PUBLIC_URL</code> in{" "}
+              <code className="text-[10px] bg-gray-100 px-1 rounded">functions/.env</code> to your live https
+              origin so submits notify registered browsers.
+            </p>
           </div>
         </div>
 
