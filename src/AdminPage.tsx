@@ -13,15 +13,16 @@ import {
   type CalculationAuditLog,
   type ReportIssueLog,
 } from "./firestoreDb";
+import { registerReportPush, unregisterReportPush } from "./reportPush";
 import {
   REPORT_NOTIFY_CHANGED_EVENT,
   REPORT_NOTIFY_STORAGE_KEY,
 } from "./useReportIssueNotifications";
 
 const REPORT_NOTIFY_TOOLTIP =
-  "Browser notifications when someone submits a pattern issue (calculator → Report). " +
-  "Allow when the browser asks. Works while any tab of this site is open (Calculate, History, etc.)—not only /admin. " +
-  "If you close every tab, alerts pause until you open the site again. This device only.";
+  "Push + in-app alerts when someone submits a pattern issue (calculator → Report). Allow when the browser asks. " +
+  "Add VITE_FIREBASE_VAPID_KEY to .env and deploy Cloud Functions (see functions/index.js) for true background push. " +
+  "HTTPS required in production. This device only.";
 
 function fmtTs(ts?: number): string {
   if (!ts) return "-";
@@ -111,6 +112,7 @@ export default function AdminPage() {
 
   const toggleReportNotifications = async () => {
     if (reportNotifyOn) {
+      await unregisterReportPush();
       try {
         localStorage.removeItem(REPORT_NOTIFY_STORAGE_KEY);
       } catch {
@@ -137,7 +139,21 @@ export default function AdminPage() {
     }
     setReportNotifyOn(true);
     window.dispatchEvent(new Event(REPORT_NOTIFY_CHANGED_EVENT));
-    toast.success("Report alerts on—you can leave /admin and use the app.");
+    const push = await registerReportPush();
+    if (!push.ok) {
+      if (push.reason === "no_vapid") {
+        toast.warn(
+          "Add VITE_FIREBASE_VAPID_KEY (.env) from Firebase → Project settings → Cloud Messaging → Web Push certificates, then run npm run dev again. In-app + Firestore alerts still work.",
+        );
+      } else if (push.reason === "error" && push.detail) {
+        toast.warn(`Push registration: ${push.detail}`);
+      }
+      toast.success("Report alerts on—in-app and Firestore alerts work on this device.");
+    } else {
+      toast.success(
+        "Report alerts on—push enabled for this device. Deploy Cloud Functions (firebase deploy --only functions) for delivery when the site is closed.",
+      );
+    }
   };
 
   const deleteAudit = async (id: string) => {
