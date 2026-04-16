@@ -3,9 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "fcm:sw": "node scripts/write-fcm-sw.mjs",
-    "predev": "npm run fcm:sw",
-    "prebuild": "npm run fcm:sw",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
