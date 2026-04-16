@@ -36,10 +36,22 @@ exports.onReportIssueCreatedPush = onDocumentCreated(
     const logId = String(event.params.logId);
     const inputPreview = raw.slice(0, 200);
 
+    const appPublicUrl = (process.env.APP_PUBLIC_URL || "").trim().replace(/\/$/, "");
+    const clickLink = appPublicUrl.startsWith("https://") ? `${appPublicUrl}/admin` : null;
+    if (!clickLink) {
+      console.log(
+        "[onReportIssueCreatedPush] APP_PUBLIC_URL unset in functions/.env — push sends without click URL (set to your site’s https origin + redeploy).",
+      );
+    }
+
+    console.log(
+      `[onReportIssueCreatedPush] logId=${logId} sending to ${tokens.length} FCM token(s)`,
+    );
+
     const chunkSize = 500;
     for (let i = 0; i < tokens.length; i += chunkSize) {
       const chunk = tokens.slice(i, i + chunkSize);
-      const resp = await messaging.sendEachForMulticast({
+      const message = {
         tokens: chunk,
         notification: { title, body },
         data: {
@@ -48,15 +60,26 @@ exports.onReportIssueCreatedPush = onDocumentCreated(
           inputPreview,
         },
         webpush: {
-          fcmOptions: {
-            link: "/admin",
+          headers: {
+            Urgency: "high",
           },
+          ...(clickLink ? { fcmOptions: { link: clickLink } } : {}),
         },
-      });
+      };
+
+      const resp = await messaging.sendEachForMulticast(message);
+      console.log(
+        `[onReportIssueCreatedPush] batch success=${resp.successCount} failure=${resp.failureCount}`,
+      );
 
       for (let j = 0; j < resp.responses.length; j++) {
         const r = resp.responses[j];
         if (r.success) continue;
+        console.warn(
+          `[onReportIssueCreatedPush] token ${j} failed:`,
+          r.error?.code,
+          r.error?.message,
+        );
         const code = r.error?.code;
         if (
           code === "messaging/registration-token-not-registered" ||

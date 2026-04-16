@@ -13,12 +13,42 @@ import { db, getFirebaseMessaging } from "./firebase";
 
 export type RegisterPushResult =
   | { ok: true }
-  | { ok: false; reason: "no_vapid" | "unsupported" | "no_sw" | "permission" | "error"; detail?: string };
+  | {
+      ok: false;
+      reason:
+        | "no_vapid"
+        | "invalid_vapid"
+        | "unsupported"
+        | "no_sw"
+        | "permission"
+        | "error";
+      detail?: string;
+    };
 
 function vapidKey(): string | undefined {
   const v = import.meta.env.VITE_FIREBASE_VAPID_KEY as string | undefined;
   const t = v?.trim();
   return t || undefined;
+}
+
+/** Web Push VAPID public key must decode to 65 bytes (0x04||X||Y) or 33 compressed. */
+function vapidPublicKeyLooksValid(base64Url: string): boolean {
+  const s = base64Url.trim().replace(/\s/g, "");
+  if (!s) return false;
+  try {
+    const pad = "=".repeat((4 - (s.length % 4)) % 4);
+    const base64 = s.replace(/-/g, "+").replace(/_/g, "/") + pad;
+    const raw = atob(base64);
+    const len = raw.length;
+    if (len === 65 && raw.charCodeAt(0) === 0x04) return true;
+    if (len === 33) {
+      const b0 = raw.charCodeAt(0);
+      return b0 === 0x02 || b0 === 0x03;
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 async function saveTokenRow(token: string): Promise<void> {
@@ -29,6 +59,7 @@ async function saveTokenRow(token: string): Promise<void> {
     token,
     updatedAt: Date.now(),
     ua: typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 500) : "",
+    origin: typeof location !== "undefined" ? location.origin.slice(0, 200) : "",
   };
   if (!existing.empty) {
     await updateDoc(existing.docs[0].ref, payload);
@@ -50,6 +81,14 @@ async function deleteTokenRows(token: string): Promise<void> {
 export async function registerReportPush(): Promise<RegisterPushResult> {
   const vk = vapidKey();
   if (!vk) return { ok: false, reason: "no_vapid" };
+  if (!vapidPublicKeyLooksValid(vk)) {
+    return {
+      ok: false,
+      reason: "invalid_vapid",
+      detail:
+        "VAPID key looks truncated (~87 chars from Firebase). Re-copy from Cloud Messaging → Web Push certificates.",
+    };
+  }
 
   const messaging = await getFirebaseMessaging();
   if (!messaging) return { ok: false, reason: "unsupported" };

@@ -8,6 +8,7 @@ import {
   deleteReportIssueLog,
   loadCalculationAuditLogs,
   loadReportIssueLogs,
+  getReportPushTokenCount,
   pruneDuplicateCalculationAuditLogs,
   updateReportIssueFixed,
   type CalculationAuditLog,
@@ -21,8 +22,8 @@ import {
 
 const REPORT_NOTIFY_TOOLTIP =
   "Push + in-app alerts when someone submits a pattern issue (calculator → Report). Allow when the browser asks. " +
-  "Add VITE_FIREBASE_VAPID_KEY to .env and deploy Cloud Functions (see functions/index.js) for true background push. " +
-  "HTTPS required in production. This device only.";
+  "Background push needs a valid VITE_FIREBASE_VAPID_KEY, deployed functions, and functions/.env APP_PUBLIC_URL (full https:// origin). " +
+  "Enable alerts on the same HTTPS URL you deploy (tokens are per-origin). This device only.";
 
 function fmtTs(ts?: number): string {
   if (!ts) return "-";
@@ -60,17 +61,20 @@ export default function AdminPage() {
   const [clearingAudit, setClearingAudit] = useState(false);
   const [clearingReport, setClearingReport] = useState(false);
   const [pruningAuditDupes, setPruningAuditDupes] = useState(false);
+  const [pushTokenCount, setPushTokenCount] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [audits, reports] = await Promise.all([
+      const [audits, reports, pushCount] = await Promise.all([
         loadCalculationAuditLogs(400),
         loadReportIssueLogs(400),
+        getReportPushTokenCount(),
       ]);
       setAuditRows(audits);
       setReportRows(reports);
+      setPushTokenCount(pushCount);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load admin data.";
       setError(msg);
@@ -120,6 +124,11 @@ export default function AdminPage() {
       }
       setReportNotifyOn(false);
       window.dispatchEvent(new Event(REPORT_NOTIFY_CHANGED_EVENT));
+      try {
+        setPushTokenCount(await getReportPushTokenCount());
+      } catch {
+        /* ignore */
+      }
       toast.info("Report notifications off for this browser.");
       return;
     }
@@ -145,14 +154,24 @@ export default function AdminPage() {
         toast.warn(
           "Add VITE_FIREBASE_VAPID_KEY (.env) from Firebase → Project settings → Cloud Messaging → Web Push certificates, then run npm run dev again. In-app + Firestore alerts still work.",
         );
+      } else if (push.reason === "invalid_vapid") {
+        toast.warn(
+          push.detail ??
+            "VITE_FIREBASE_VAPID_KEY is invalid or truncated. Copy the full Web Push public key from Firebase.",
+        );
       } else if (push.reason === "error" && push.detail) {
         toast.warn(`Push registration: ${push.detail}`);
       }
       toast.success("Report alerts on—in-app and Firestore alerts work on this device.");
     } else {
       toast.success(
-        "Report alerts on—push enabled for this device. Deploy Cloud Functions (firebase deploy --only functions) for delivery when the site is closed.",
+        "Report alerts on—FCM token saved. Redeploy functions with functions/.env APP_PUBLIC_URL set to this site’s https origin, then test with all tabs closed.",
       );
+    }
+    try {
+      setPushTokenCount(await getReportPushTokenCount());
+    } catch {
+      /* ignore */
     }
   };
 
@@ -275,6 +294,13 @@ export default function AdminPage() {
             <h1 className="text-[22px] font-black text-[#1a1a1a]">Admin Panel</h1>
             <p className="text-[13px] text-gray-500 mt-1">
               Combined view: <code>calc_audit_logs</code> and <code>report_issue_logs</code>
+              {pushTokenCount != null && pushTokenCount >= 0 && (
+                <span className="text-[#1d6fb8] font-semibold">
+                  {" "}
+                  · FCM devices in Firestore: {pushTokenCount}
+                  {pushTokenCount === 0 && " (enable alerts on production HTTPS to register a token)"}
+                </span>
+              )}
             </p>
             <div className="mt-3 inline-flex bg-[#f3f7fc] rounded-[10px] p-1 border border-[#d9e6f5]">
               <button
