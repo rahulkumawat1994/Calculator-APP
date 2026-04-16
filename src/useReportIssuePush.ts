@@ -28,13 +28,17 @@ async function showForegroundReportNotification(payload: MessagePayload): Promis
     (typeof payload.data?.logId === "string" && payload.data.logId) ||
     `report-${Date.now()}`;
 
-  const reg = await navigator.serviceWorker.ready;
-  await reg.showNotification(title, {
-    body,
-    tag,
-    silent: false,
-    data: { ...(payload.data as Record<string, string> | undefined) },
-  });
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification(title, {
+      body,
+      tag,
+      silent: false,
+      data: { ...(payload.data as Record<string, string> | undefined) },
+    });
+  } catch (e) {
+    console.warn("[report push] foreground showNotification failed:", e);
+  }
 }
 
 /**
@@ -86,6 +90,8 @@ export function useReportIssuePush(): void {
       if (cancelled || !messaging) return;
 
       const ret = onMessage(messaging, (payload) => {
+        const t = payload.data?.type;
+        if (t != null && t !== "report_issue") return;
         void showForegroundReportNotification(payload);
       });
       if (typeof ret === "function") unsubscribe = ret;

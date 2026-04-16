@@ -8,6 +8,7 @@ import {
   deleteReportIssueLog,
   loadCalculationAuditLogs,
   loadReportIssueLogs,
+  getReportPushTokenCount,
   pruneDuplicateCalculationAuditLogs,
   updateReportIssueFixed,
   type CalculationAuditLog,
@@ -59,17 +60,20 @@ export default function AdminPage() {
     }
   });
   const [pushError, setPushError] = useState<string | null>(null);
+  const [pushTokenCount, setPushTokenCount] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [audits, reports] = await Promise.all([
+      const [audits, reports, pushCount] = await Promise.all([
         loadCalculationAuditLogs(400),
         loadReportIssueLogs(400),
+        getReportPushTokenCount(),
       ]);
       setAuditRows(audits);
       setReportRows(reports);
+      setPushTokenCount(pushCount);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load admin data.";
       setError(msg);
@@ -119,6 +123,11 @@ export default function AdminPage() {
       }
       setReportPushOn(false);
       window.dispatchEvent(new Event(REPORT_PUSH_CHANGED_EVENT));
+      try {
+        setPushTokenCount(await getReportPushTokenCount());
+      } catch {
+        /* ignore */
+      }
       return;
     }
     if (typeof Notification === "undefined") {
@@ -154,6 +163,11 @@ export default function AdminPage() {
       } else {
         setPushError(res.detail ?? "Could not register push for this browser.");
       }
+    }
+    try {
+      setPushTokenCount(await getReportPushTokenCount());
+    } catch {
+      /* ignore */
     }
   };
 
@@ -330,6 +344,22 @@ export default function AdminPage() {
             {pushError && (
               <p className="text-[12px] text-red-600 max-w-[min(100%,420px)] text-right">{pushError}</p>
             )}
+            {pushTokenCount != null && pushTokenCount >= 0 && (
+              <p className="text-[11px] text-gray-600 max-w-[min(100%,440px)] text-right leading-snug">
+                FCM subscribers in Firestore: <strong>{pushTokenCount}</strong>
+                {pushTokenCount === 0 && reportPushOn
+                  ? " — token not stored yet; check console / VAPID / HTTPS."
+                  : ""}
+              </p>
+            )}
+            <p className="text-[11px] text-gray-500 max-w-[min(100%,440px)] text-right leading-snug">
+              Background alerts require{" "}
+              <code className="text-[10px] bg-gray-100 px-1 rounded">firebase deploy --only functions</code>{" "}
+              and <code className="text-[10px] bg-gray-100 px-1 rounded">APP_PUBLIC_URL</code> in{" "}
+              <code className="text-[10px] bg-gray-100 px-1 rounded">functions/.env</code> (same https host as
+              this site). Test by submitting a report from another window or device while this browser allows
+              notifications.
+            </p>
           </div>
         </div>
 

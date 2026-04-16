@@ -58,10 +58,11 @@ exports.onReportIssueCreatedPush = onDocumentCreated(
         data: {
           logId,
           type: "report_issue",
-          inputPreview,
+          inputPreview: String(inputPreview),
         },
         webpush: {
           headers: { Urgency: "high" },
+          notification: { title, body },
           ...(clickLink ? { fcmOptions: { link: clickLink } } : {}),
         },
       };

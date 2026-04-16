@@ -77,9 +77,10 @@ firebase.initializeApp(${cfgJson});
 const messaging = firebase.messaging();
 messaging.onBackgroundMessage((payload) => {
   const n = payload.notification || {};
+  const fromData = (payload.data && payload.data.inputPreview) ? String(payload.data.inputPreview) : '';
   const title = n.title || 'New pattern issue report';
   const options = {
-    body: n.body || '',
+    body: (n.body || fromData || '(no preview)').trim(),
     icon: n.icon,
     data: payload.data || {},
   };
