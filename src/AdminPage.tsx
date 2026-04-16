@@ -13,6 +13,14 @@ import {
   type CalculationAuditLog,
   type ReportIssueLog,
 } from "./firestoreDb";
+import { registerReportPush, unregisterReportPush } from "./reportPush";
+import {
+  REPORT_PUSH_CHANGED_EVENT,
+  REPORT_PUSH_ENABLED_KEY,
+} from "./useReportIssuePush";
+
+const REPORT_PUSH_TOOLTIP =
+  "Browser push when someone submits a pattern issue (Calculator → Report). Requires HTTPS in production, VITE_FIREBASE_VAPID_KEY in .env, and Cloud Functions deployed with functions/.env APP_PUBLIC_URL set to this site’s https origin. No in-page toasts—only system notifications.";
 
 function fmtTs(ts?: number): string {
   if (!ts) return "-";
@@ -43,6 +51,14 @@ export default function AdminPage() {
   const [clearingAudit, setClearingAudit] = useState(false);
   const [clearingReport, setClearingReport] = useState(false);
   const [pruningAuditDupes, setPruningAuditDupes] = useState(false);
+  const [reportPushOn, setReportPushOn] = useState(() => {
+    try {
+      return localStorage.getItem(REPORT_PUSH_ENABLED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [pushError, setPushError] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -66,6 +82,80 @@ export default function AdminPage() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    const sync = () => {
+      try {
+        setReportPushOn(localStorage.getItem(REPORT_PUSH_ENABLED_KEY) === "1");
+      } catch {
+        setReportPushOn(false);
+      }
+    };
+    window.addEventListener(REPORT_PUSH_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(REPORT_PUSH_CHANGED_EVENT, sync);
+  }, []);
+
+  useEffect(() => {
+    if (typeof Notification === "undefined") return;
+    if (reportPushOn && Notification.permission === "denied") {
+      try {
+        localStorage.removeItem(REPORT_PUSH_ENABLED_KEY);
+      } catch {
+        /* ignore */
+      }
+      setReportPushOn(false);
+      window.dispatchEvent(new Event(REPORT_PUSH_CHANGED_EVENT));
+    }
+  }, [reportPushOn]);
+
+  const toggleReportPush = async () => {
+    setPushError(null);
+    if (reportPushOn) {
+      await unregisterReportPush();
+      try {
+        localStorage.removeItem(REPORT_PUSH_ENABLED_KEY);
+      } catch {
+        /* ignore */
+      }
+      setReportPushOn(false);
+      window.dispatchEvent(new Event(REPORT_PUSH_CHANGED_EVENT));
+      return;
+    }
+    if (typeof Notification === "undefined") {
+      setPushError("This browser does not support notifications.");
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") {
+      setPushError("Notifications blocked. Allow them in browser settings for this site, then try again.");
+      return;
+    }
+    try {
+      localStorage.setItem(REPORT_PUSH_ENABLED_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+    setReportPushOn(true);
+    window.dispatchEvent(new Event(REPORT_PUSH_CHANGED_EVENT));
+
+    const res = await registerReportPush();
+    if (!res.ok) {
+      try {
+        localStorage.removeItem(REPORT_PUSH_ENABLED_KEY);
+      } catch {
+        /* ignore */
+      }
+      setReportPushOn(false);
+      window.dispatchEvent(new Event(REPORT_PUSH_CHANGED_EVENT));
+      if (res.reason === "no_vapid") {
+        setPushError("Add VITE_FIREBASE_VAPID_KEY to .env (Firebase → Cloud Messaging → Web Push certificates), run npm run dev, then enable again.");
+      } else if (res.reason === "invalid_vapid") {
+        setPushError(res.detail ?? "Invalid VAPID key.");
+      } else {
+        setPushError(res.detail ?? "Could not register push for this browser.");
+      }
+    }
+  };
 
   const deleteAudit = async (id: string) => {
     const ok = window.confirm("Delete this audit log?");
@@ -208,7 +298,20 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => void toggleReportPush()}
+              title={REPORT_PUSH_TOOLTIP}
+              className={`px-3 py-2.5 rounded-[12px] text-[13px] font-bold border-2 transition-colors ${
+                reportPushOn
+                  ? "bg-green-50 text-green-800 border-green-300"
+                  : "bg-white text-[#4a6685] border-[#dde8f0] hover:bg-[#f5f9ff]"
+              }`}
+            >
+              {reportPushOn ? "🔔 Report push: on" : "🔕 Enable report push"}
+            </button>
             <button
               type="button"
               onClick={() => void load()}
@@ -223,6 +326,10 @@ export default function AdminPage() {
             >
               Refresh
             </button>
+            </div>
+            {pushError && (
+              <p className="text-[12px] text-red-600 max-w-[min(100%,420px)] text-right">{pushError}</p>
+            )}
           </div>
         </div>
 
