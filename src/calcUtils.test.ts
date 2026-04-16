@@ -15,6 +15,7 @@ describe("calculateTotal regression scenarios", () => {
     { id: "multix-b", input: "B.1111x9999x50", expectedTotal: 100 },
     { id: "multix-noprefix", input: "1111x2222x10", expectedTotal: 20 },
     { id: "label-harf", input: "Harf.B.1111x9999x50", expectedTotal: 100 },
+    { id: "label-harf-typo-seps", input: "Harf.B..2222.x7777x50", expectedTotal: 100 },
     { id: "label-db", input: "DB. 29.09.11x10", expectedTotal: 30 },
     {
       id: "multiline-sep",
@@ -43,6 +44,13 @@ describe("parser structure checks", () => {
     expect(out).toHaveLength(2);
     expect(out[0]).toMatchObject({ line: "B.1111", rate: 50, count: 1, lineTotal: 50 });
     expect(out[1]).toMatchObject({ line: "B.9999", rate: 50, count: 1, lineTotal: 50 });
+  });
+
+  it("parses multi-x chain with extra separators around x", () => {
+    const out = processLine("Harf.B..2222.x7777x50");
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ line: "B.2222", rate: 50, count: 1, lineTotal: 50 });
+    expect(out[1]).toMatchObject({ line: "B.7777", rate: 50, count: 1, lineTotal: 50 });
   });
 
   it("supports trailing dash-rate style", () => {

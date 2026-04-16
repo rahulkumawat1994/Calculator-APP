@@ -124,7 +124,9 @@ function parseMultiXChainStructure(trimmed: string): { pre: string; nums: string
   const lead = trimmed.match(/^(AB|A|B)\.?\s*/i);
   const pre = lead ? `${lead[1].toUpperCase()}.` : "";
   const rest = lead ? trimmed.slice(lead[0].length).trim() : trimmed;
-  const compact = rest.replace(/\s+/g, "");
+  // Tolerate light separator typos between chunks (e.g. "B..2222.x7777x50").
+  // Keep letters intact so accidental words still fail strict chain mode below.
+  const compact = rest.replace(/[\s._|:/\\-]+/g, "");
   // Chain mode is strict: only digits + x separators (prevents words from splitting on x).
   if (!/^[0-9xX]+$/.test(compact)) return null;
   const parts = compact.split(/x+/i).filter(Boolean);

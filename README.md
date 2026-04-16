@@ -17,22 +17,6 @@ Open [http://localhost:5173](http://localhost:5173)
 npm run build
 ```
 
-## Automated Testing
-
-```bash
-npm run test
-```
-
-Useful test commands:
-
-```bash
-npm run test:watch
-npm run test:coverage
-```
-
-Parser regression tests live in `src/calcUtils.test.ts` and reuse scenarios from
-`src/testScenarios.ts`.
-
 ## Deploy to Vercel
 
 ### Option 1 — Vercel CLI (fastest)
