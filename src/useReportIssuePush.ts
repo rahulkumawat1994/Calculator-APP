@@ -19,14 +19,19 @@ function readPushEnabled(): boolean {
 /** Foreground FCM: show OS notification via SW (no Toastify). */
 async function showForegroundReportNotification(payload: MessagePayload): Promise<void> {
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  const d = payload.data;
   const n = payload.notification;
-  const title = n?.title ?? "New pattern issue report";
-  const fromData =
-    typeof payload.data?.inputPreview === "string" ? payload.data.inputPreview : "";
-  const body = (n?.body || fromData || "(no preview)").trim();
+  const title =
+    (typeof d?.title === "string" && d.title) ||
+    n?.title ||
+    "New pattern issue report";
+  const body =
+    (typeof d?.body === "string" && d.body) ||
+    n?.body ||
+    (typeof d?.inputPreview === "string" ? d.inputPreview : "") ||
+    "(no preview)";
   const tag =
-    (typeof payload.data?.logId === "string" && payload.data.logId) ||
-    `report-${Date.now()}`;
+    (typeof d?.logId === "string" && d.logId) || `report-${Date.now()}`;
 
   try {
     const reg = await navigator.serviceWorker.ready;
@@ -90,8 +95,8 @@ export function useReportIssuePush(): void {
       if (cancelled || !messaging) return;
 
       const ret = onMessage(messaging, (payload) => {
-        const t = payload.data?.type;
-        if (t != null && t !== "report_issue") return;
+        const ty = payload.data?.type;
+        if (typeof ty === "string" && ty !== "report_issue") return;
         void showForegroundReportNotification(payload);
       });
       if (typeof ret === "function") unsubscribe = ret;

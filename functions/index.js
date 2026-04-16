@@ -52,11 +52,14 @@ exports.onReportIssueCreatedPush = onDocumentCreated(
     const chunkSize = 500;
     for (let i = 0; i < tokens.length; i += chunkSize) {
       const chunk = tokens.slice(i, i + chunkSize);
+      // Web: avoid top-level `notification` + `data` together (foreground onMessage / SW can miss).
+      // All `data` values must be strings for FCM.
       const message = {
         tokens: chunk,
-        notification: { title, body },
         data: {
-          logId,
+          title: String(title),
+          body: String(body),
+          logId: String(logId),
           type: "report_issue",
           inputPreview: String(inputPreview),
         },

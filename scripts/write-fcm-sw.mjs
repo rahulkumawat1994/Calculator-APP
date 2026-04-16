@@ -76,15 +76,16 @@ importScripts('https://www.gstatic.com/firebasejs/${ver}/firebase-messaging-comp
 firebase.initializeApp(${cfgJson});
 const messaging = firebase.messaging();
 messaging.onBackgroundMessage((payload) => {
+  const d = payload.data || {};
   const n = payload.notification || {};
-  const fromData = (payload.data && payload.data.inputPreview) ? String(payload.data.inputPreview) : '';
-  const title = n.title || 'New pattern issue report';
+  const title = (d.title && String(d.title)) || n.title || 'New pattern issue report';
+  const body = (d.body && String(d.body)) || n.body || (d.inputPreview && String(d.inputPreview)) || '(no preview)';
   const options = {
-    body: (n.body || fromData || '(no preview)').trim(),
+    body: String(body).trim(),
     icon: n.icon,
-    data: payload.data || {},
+    data: typeof d === 'object' ? d : {},
   };
-  return self.registration.showNotification(title, options);
+  return self.registration.showNotification(String(title), options);
 });
 `;
 
