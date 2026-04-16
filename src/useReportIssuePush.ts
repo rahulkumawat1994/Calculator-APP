@@ -34,6 +34,11 @@ function markShown(reportId: string): boolean {
   return true;
 }
 
+function adminPanelUrl(): string {
+  if (typeof window === "undefined") return "/admin";
+  return `${window.location.origin}/admin`;
+}
+
 async function showReportAlert(
   reportId: string,
   title: string,
@@ -47,12 +52,20 @@ async function showReportAlert(
   });
 
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  const clickUrl =
+    (data?.clickUrl != null && String(data.clickUrl).trim()) || adminPanelUrl();
+  const merged = {
+    logId: reportId,
+    type: "report_issue",
+    ...data,
+    clickUrl,
+  };
   try {
     const reg = await navigator.serviceWorker.ready;
     await reg.showNotification(title, {
       body,
       tag: `report-${reportId}`,
-      data: data ?? { logId: reportId, type: "report_issue" },
+      data: merged,
     });
   } catch (e) {
     console.warn("[report alert] showNotification failed:", e);
@@ -134,6 +147,7 @@ export function useReportIssuePush(): void {
             logId: id,
             type: "report_issue",
             inputPreview: body,
+            clickUrl: adminPanelUrl(),
           });
         },
         (err) => console.warn("[report alert] Firestore listener:", err),

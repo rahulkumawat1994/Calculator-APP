@@ -56,13 +56,47 @@ importScripts(
   "https://www.gstatic.com/firebasejs/${ver}/firebase-messaging-compat.js",
 );
 firebase.initializeApp(${configJson});
-const messaging = firebase.messaging();
 
 // Activate new SW immediately so push handling matches the latest script.
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
+
+// Open /admin (or payload clickUrl) when the user taps a notification — register before messaging().
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const d = event.notification.data || {};
+  let target = (d.clickUrl && String(d.clickUrl).trim()) || (d.url && String(d.url).trim()) || "";
+  const tag = String(event.notification.tag || "");
+  if (!target) {
+    if (d.type === "report_issue" || tag.startsWith("report-")) {
+      target = new URL("/admin", self.location.origin).href;
+    } else {
+      target = new URL("/", self.location.origin).href;
+    }
+  } else if (target.startsWith("/")) {
+    target = new URL(target, self.location.origin).href;
+  }
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      const path = new URL(target).pathname || "";
+      for (const c of clientList) {
+        try {
+          const u = new URL(c.url);
+          if (u.origin === new URL(target).origin && u.pathname === path && "focus" in c) {
+            return c.focus();
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(target);
+    }),
+  );
+});
+
+const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
   console.log("[firebase-messaging-sw.js] onBackgroundMessage", payload);

@@ -69,7 +69,10 @@ module.exports = async (req, res) => {
     }
 
     const appPublicUrl = (process.env.APP_PUBLIC_URL || "").trim().replace(/\/$/, "");
-    const clickLink = appPublicUrl.startsWith("https://") ? `${appPublicUrl}/admin` : null;
+    const clickLink =
+      appPublicUrl.startsWith("https://") || appPublicUrl.startsWith("http://localhost")
+        ? `${appPublicUrl}/admin`
+        : null;
 
     const messaging = getMessaging(app);
     const chunkSize = 500;
@@ -86,10 +89,14 @@ module.exports = async (req, res) => {
           logId: String(logId),
           type: "report_issue",
           inputPreview: String(inputPreview),
+          // SW notificationclick opens this (absolute URL preferred for multi-host).
+          clickUrl: clickLink ? String(clickLink) : "",
         },
         webpush: {
           headers: { Urgency: "high" },
-          ...(clickLink ? { fcmOptions: { link: clickLink } } : {}),
+          ...(clickLink && clickLink.startsWith("https://")
+            ? { fcmOptions: { link: clickLink } }
+            : {}),
         },
       };
 
