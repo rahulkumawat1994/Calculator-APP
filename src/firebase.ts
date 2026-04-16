@@ -14,6 +14,15 @@ for (const key of REQUIRED_VARS) {
   }
 }
 
+const MESSAGING_VARS = ["VITE_FIREBASE_APP_ID", "VITE_FIREBASE_MESSAGING_SENDER_ID"] as const;
+for (const key of MESSAGING_VARS) {
+  if (!import.meta.env[key]) {
+    console.warn(
+      `[firebase] Missing ${key} — FCM / Installations will fail until it is set (same values as Firebase web app config).`,
+    );
+  }
+}
+
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY as string,
   authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string,

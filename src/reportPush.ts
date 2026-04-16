@@ -25,6 +25,24 @@ function vapidKey(): string | undefined {
   return t || undefined;
 }
 
+/**
+ * Firebase Installations (used by FCM getToken) rejects bad/missing web `appId` with 400 INVALID_ARGUMENT.
+ */
+function validateFirebaseWebConfigForMessaging(): string | null {
+  const appId = (import.meta.env.VITE_FIREBASE_APP_ID as string | undefined)?.trim();
+  const sender = (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string | undefined)?.trim();
+  if (!appId) {
+    return "Missing VITE_FIREBASE_APP_ID — copy the full “App ID” from Firebase → Project settings → Your apps (web).";
+  }
+  if (!/^1:\d+:web:[a-zA-Z0-9]+$/.test(appId)) {
+    return "VITE_FIREBASE_APP_ID must look like 1:123456789:web:abc123 — fix .env (no line breaks in the value).";
+  }
+  if (!sender || !/^\d+$/.test(sender)) {
+    return "Missing or invalid VITE_FIREBASE_MESSAGING_SENDER_ID — use the numeric “messaging sender id” from the same Firebase web config.";
+  }
+  return null;
+}
+
 /** P-256 public key: 65 bytes uncompressed (0x04||X||Y) or 33 compressed. */
 function vapidPublicKeyLooksValid(base64Url: string): boolean {
   const s = base64Url.trim().replace(/\s/g, "");
@@ -71,6 +89,8 @@ async function deleteTokenRows(token: string): Promise<void> {
 export async function registerReportPush(): Promise<RegisterPushResult> {
   const vk = vapidKey();
   if (!vk) return { ok: false, reason: "no_vapid" };
+  const cfgErr = validateFirebaseWebConfigForMessaging();
+  if (cfgErr) return { ok: false, reason: "error", detail: cfgErr };
   if (!vapidPublicKeyLooksValid(vk)) {
     return {
       ok: false,
