@@ -4,5 +4,4 @@ dist/
 *.local
 .env
 .env.*
-functions/.env
 public/firebase-messaging-sw.js

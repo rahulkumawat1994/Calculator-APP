@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { toastApiError } from "./apiToast";
 import { logReportIssue } from "./firestoreDb";
+import { notifyReportListenersAfterSubmit } from "./reportNotify";
 
 interface Props {
   prefillInput?: string;
@@ -19,11 +20,12 @@ export default function ReportIssue({ prefillInput = "", onClose }: Props) {
     if (!input.trim()) return;
     setStatus("sending");
     try {
-      await logReportIssue({
+      const logId = await logReportIssue({
         input: input.trim(),
         expected: expected.trim(),
         note: note.trim(),
       });
+      void notifyReportListenersAfterSubmit(logId);
       setStatus("success");
     } catch (err) {
       toastApiError(err, "Could not send your report. Please try again.");

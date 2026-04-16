@@ -345,15 +345,17 @@ export async function clearCalculationAuditLogs(maxRows = 2000): Promise<number>
   }
 }
 
-export async function logReportIssue(payload: ReportIssuePayload): Promise<void> {
+/** @returns new Firestore document id */
+export async function logReportIssue(payload: ReportIssuePayload): Promise<string> {
   try {
-    await addDoc(collection(db, "report_issue_logs"), {
+    const ref = await addDoc(collection(db, "report_issue_logs"), {
       input: payload.input.slice(0, 12000),
       expected: (payload.expected ?? "").slice(0, 3000),
       note: (payload.note ?? "").slice(0, 3000),
       createdAt: Date.now(),
       fixed: false,
     });
+    return ref.id;
   } catch (e) {
     console.warn("logReportIssue failed:", e);
     throw e;

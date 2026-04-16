@@ -21,7 +21,7 @@ import {
 } from "./useReportIssuePush";
 
 const REPORT_PUSH_TOOLTIP =
-  "Browser push when someone submits a pattern issue (Calculator → Report). Requires VITE_FIREBASE_VAPID_KEY in .env, npm run dev (generates firebase-messaging-sw.js), and Cloud Function onReportIssueCreatedPush deployed with APP_PUBLIC_URL in functions/.env.";
+  "Alerts when someone submits a pattern issue. FCM tokens need VITE_FIREBASE_VAPID_KEY + firebase-messaging-sw.js (npm run dev). For pushes without an admin tab open, deploy to Vercel and set VITE_REPORT_NOTIFY_SECRET plus Vercel env REPORT_NOTIFY_SECRET, FIREBASE_SERVICE_ACCOUNT_JSON, and optional APP_PUBLIC_URL — see notes below.";
 
 function fmtTs(ts?: number): string {
   if (!ts) return "-";
@@ -324,7 +324,7 @@ export default function AdminPage() {
                     : "bg-white text-[#4a6685] border-[#dde8f0] hover:bg-[#f5f9ff]"
                 }`}
               >
-                {reportPushOn ? "🔔 Report push: on" : "🔕 Enable report push"}
+                {reportPushOn ? "🔔 Report alerts: on" : "🔕 Enable report alerts"}
               </button>
               <button
                 type="button"
@@ -353,19 +353,20 @@ export default function AdminPage() {
               </p>
             )}
             <p className="text-[11px] text-gray-500 max-w-[min(100%,440px)] text-right leading-snug">
-              Deploy <code className="text-[10px] bg-gray-100 px-1 rounded">firebase deploy --only functions</code>{" "}
-              and set <code className="text-[10px] bg-gray-100 px-1 rounded">APP_PUBLIC_URL</code> in{" "}
-              <code className="text-[10px] bg-gray-100 px-1 rounded">functions/.env</code> to your live https
-              origin so submits notify registered browsers.
+              <strong>Vercel (recommended):</strong> add env vars{" "}
+              <code className="text-[10px] bg-gray-100 px-1 rounded">REPORT_NOTIFY_SECRET</code>,{" "}
+              <code className="text-[10px] bg-gray-100 px-1 rounded">FIREBASE_SERVICE_ACCOUNT_JSON</code>, optional{" "}
+              <code className="text-[10px] bg-gray-100 px-1 rounded">APP_PUBLIC_URL</code>. In{" "}
+              <code className="text-[10px] bg-gray-100 px-1 rounded">.env</code> set{" "}
+              <code className="text-[10px] bg-gray-100 px-1 rounded">VITE_REPORT_NOTIFY_SECRET</code> to the{" "}
+              <strong>same</strong> secret and rebuild. Local <code className="text-[10px] bg-gray-100 px-1 rounded">npm run dev</code>{" "}
+              can set <code className="text-[10px] bg-gray-100 px-1 rounded">VITE_REPORT_NOTIFY_URL</code> to your
+              deployed https origin so notify calls hit Vercel.
             </p>
             <p className="text-[10px] text-gray-500 max-w-[min(100%,480px)] text-right leading-snug">
-              No notification? In Firebase Console → Functions → Logs, open{" "}
-              <code className="bg-gray-100 px-0.5 rounded">onReportIssueCreatedPush</code>: expect{" "}
-              <code className="bg-gray-100 px-0.5 rounded">tokens=N</code> (N≥1) and a non‑zero success
-              count. If{" "}
-              <code className="bg-gray-100 px-0.5 rounded">tokens=0</code>, enable push here first. Test
-              background: leave this site open in a tab but switch to another tab before submitting a report
-              elsewhere.
+              <strong>No Vercel notify:</strong> keep this admin tab open — Firestore still shows new reports
+              in-page. <strong>With Vercel:</strong> submit triggers <code className="bg-gray-100 px-0.5 rounded">/api/notify-report-issue</code>{" "}
+              for FCM to registered devices.
             </p>
           </div>
         </div>

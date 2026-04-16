@@ -1,4 +1,9 @@
 {
+  "functions": {
+    "api/notify-report-issue.js": {
+      "maxDuration": 30
+    }
+  },
   "rewrites": [
     { "source": "/admin", "destination": "/index.html" },
     { "source": "/audit", "destination": "/index.html" },
