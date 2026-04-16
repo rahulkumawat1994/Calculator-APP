@@ -68,11 +68,13 @@ messaging.onBackgroundMessage((payload) => {
   console.log("[firebase-messaging-sw.js] onBackgroundMessage", payload);
   const n = payload.notification || {};
   const d = payload.data || {};
-  const title = String(n.title || d.title || "FCM (background)").trim() || "FCM (background)";
+  const title =
+    String(n.title != null ? n.title : d.title != null ? d.title : "").trim() ||
+    "New pattern issue report";
   const bodyText =
-    String(n.body || d.body || "").trim() ||
+    String(n.body != null ? n.body : d.body != null ? d.body : "").trim() ||
     (Object.keys(d).length ? JSON.stringify(d) : "") ||
-    "New message (open Firebase Console payload if empty)";
+    "New report (no body in payload)";
   return self.registration
     .showNotification(title, {
       body: String(bodyText),

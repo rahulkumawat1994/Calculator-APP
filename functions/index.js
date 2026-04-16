@@ -1,3 +1,11 @@
+const path = require("node:path");
+try {
+  // v2 deploy: load functions/.env so APP_PUBLIC_URL is set (do not commit .env).
+  require("dotenv").config({ path: path.join(__dirname, ".env") });
+} catch (_) {
+  /* dotenv optional during minimal installs */
+}
+
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
@@ -54,6 +62,8 @@ exports.onReportIssueCreatedPush = onDocumentCreated(
     const chunkSize = 500;
     for (let i = 0; i < tokens.length; i += chunkSize) {
       const chunk = tokens.slice(i, i + chunkSize);
+      // Web: avoid webpush.notification + data (unreliable onBackgroundMessage / OS display).
+      // Service worker shows from data.title / data.body only.
       const message = {
         tokens: chunk,
         data: {
@@ -65,7 +75,6 @@ exports.onReportIssueCreatedPush = onDocumentCreated(
         },
         webpush: {
           headers: { Urgency: "high" },
-          notification: { title, body: preview },
           ...(clickLink ? { fcmOptions: { link: clickLink } } : {}),
         },
       };

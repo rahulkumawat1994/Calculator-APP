@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { toast } from "react-toastify";
 import type { MessagePayload } from "firebase/messaging";
 import { getFirebaseMessaging } from "./firebase";
 import { registerReportPush } from "./reportPush";
@@ -15,19 +16,25 @@ function isReportPushEnabled(): boolean {
 }
 
 async function showReportIssueNotification(payload: MessagePayload): Promise<void> {
-  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
   const d = payload.data;
   const n = payload.notification;
   const title =
-    (typeof d?.title === "string" && d.title) ||
+    (d?.title != null && String(d.title).trim()) ||
     n?.title ||
     "New pattern issue report";
   const body =
-    (typeof d?.body === "string" && d.body) ||
+    (d?.body != null && String(d.body).trim()) ||
     n?.body ||
-    (typeof d?.inputPreview === "string" ? d.inputPreview : "") ||
+    (d?.inputPreview != null ? String(d.inputPreview) : "") ||
     "(no preview)";
-  const tag = (typeof d?.logId === "string" && d.logId) || `report-${Date.now()}`;
+  const tag =
+    (d?.logId != null && String(d.logId)) || `report-${Date.now()}`;
+
+  toast.info(`${title}: ${body.slice(0, 100)}${body.length > 100 ? "…" : ""}`, {
+    toastId: `report-push-${tag}`,
+  });
+
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
   try {
     const reg = await navigator.serviceWorker.ready;
     await reg.showNotification(title, { body, tag, data: d });
@@ -66,8 +73,9 @@ export function useReportIssuePush(): void {
         if (cancelled || !messaging) return;
         const { onMessage } = await import("firebase/messaging");
         unsubRef.current = onMessage(messaging, (payload) => {
-          const ty = payload.data?.type;
-          if (typeof ty === "string" && ty !== "report_issue") return;
+          const rawTy = payload.data?.type;
+          const ty = rawTy != null ? String(rawTy) : "";
+          if (ty !== "" && ty !== "report_issue") return;
           void showReportIssueNotification(payload);
         });
       })();

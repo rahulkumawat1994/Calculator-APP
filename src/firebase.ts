@@ -26,17 +26,18 @@ const firebaseConfig = {
 export const app: FirebaseApp = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
-let messagingPromise: Promise<Messaging | null> | null = null;
-
-export function getFirebaseMessaging(): Promise<Messaging | null> {
-  if (typeof window === "undefined") return Promise.resolve(null);
-  if (!messagingPromise) {
-    messagingPromise = import("firebase/messaging")
-      .then(async ({ getMessaging, isSupported }) => {
-        if (!(await isSupported().catch(() => false))) return null;
-        return getMessaging(app);
-      })
-      .catch(() => null);
+/**
+ * Fresh messaging instance (no sticky null cache if the first init failed).
+ * Firebase reuses one Messaging per `app` internally.
+ */
+export async function getFirebaseMessaging(): Promise<Messaging | null> {
+  if (typeof window === "undefined") return null;
+  try {
+    const { getMessaging, isSupported } = await import("firebase/messaging");
+    if (!(await isSupported().catch(() => false))) return null;
+    return getMessaging(app);
+  } catch (e) {
+    console.warn("[firebase] getFirebaseMessaging failed:", e);
+    return null;
   }
-  return messagingPromise;
 }

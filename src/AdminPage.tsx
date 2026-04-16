@@ -358,6 +358,15 @@ export default function AdminPage() {
               <code className="text-[10px] bg-gray-100 px-1 rounded">functions/.env</code> to your live https
               origin so submits notify registered browsers.
             </p>
+            <p className="text-[10px] text-gray-500 max-w-[min(100%,480px)] text-right leading-snug">
+              No notification? In Firebase Console → Functions → Logs, open{" "}
+              <code className="bg-gray-100 px-0.5 rounded">onReportIssueCreatedPush</code>: expect{" "}
+              <code className="bg-gray-100 px-0.5 rounded">tokens=N</code> (N≥1) and a non‑zero success
+              count. If{" "}
+              <code className="bg-gray-100 px-0.5 rounded">tokens=0</code>, enable push here first. Test
+              background: leave this site open in a tab but switch to another tab before submitting a report
+              elsewhere.
+            </p>
           </div>
         </div>
 
