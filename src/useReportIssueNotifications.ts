@@ -47,39 +47,75 @@ function writeWatermarkMax(ts: number): void {
   }
 }
 
+const REPORT_NOTIFY_TITLE = "New pattern issue report";
+
 function previewBody(input: string): string {
   return (input ?? "").replace(/\s+/g, " ").trim().slice(0, 140) || "(no input preview)";
+}
+
+/**
+ * Real browser / OS notifications use the service worker path (same as Web Push).
+ * `new Notification()` from the page is unreliable on mobile and when the tab is focused.
+ */
+async function showReportOsNotification(docId: string, body: string): Promise<boolean> {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return false;
+
+  const options: NotificationOptions = {
+    body,
+    tag: docId,
+    silent: false,
+  };
+
+  if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+    try {
+      let reg = await navigator.serviceWorker.getRegistration("/").catch(() => undefined);
+      if (!reg?.active) {
+        reg = await Promise.race([
+          navigator.serviceWorker.ready,
+          new Promise<undefined>((r) => setTimeout(() => r(undefined), 4000)),
+        ]);
+      }
+      if (reg?.active) {
+        await reg.showNotification(REPORT_NOTIFY_TITLE, options);
+        return true;
+      }
+    } catch (e) {
+      console.warn("[report notify] serviceWorker.showNotification failed:", e);
+    }
+  }
+
+  try {
+    new Notification(REPORT_NOTIFY_TITLE, options);
+    return true;
+  } catch (e) {
+    console.warn("[report notify] new Notification failed:", e);
+    return false;
+  }
 }
 
 function pingNewReport(docId: string, input: string, createdAt: number): void {
   writeWatermarkMax(createdAt);
   const body = previewBody(input);
 
-  try {
-    toast.info(`New pattern issue: ${body}`, {
-      toastId: `report-issue-${docId}`,
-      autoClose: 9000,
-      closeOnClick: true,
-    });
-  } catch {
-    /* ignore */
-  }
+  void (async () => {
+    const osOk = await showReportOsNotification(docId, body);
+    if (!osOk) {
+      try {
+        toast.info(`New pattern issue: ${body}`, {
+          toastId: `report-issue-${docId}`,
+          autoClose: 9000,
+          closeOnClick: true,
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+  })();
 
   try {
     if (typeof navigator !== "undefined" && navigator.vibrate) {
       navigator.vibrate(120);
     }
-  } catch {
-    /* ignore */
-  }
-
-  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-  try {
-    new Notification("New pattern issue report", {
-      body,
-      tag: docId,
-      silent: false,
-    });
   } catch {
     /* ignore */
   }
@@ -92,12 +128,20 @@ type ListenerState = { seenIds: Set<string>; primed: boolean };
  * Enable once from /admin; preference lives in localStorage on this browser.
  *
  * Mobile Chrome often throttles the Firestore socket while the tab is in the background, so we also
- * poll on visibility / online and show in-app toasts (more reliable than OS banners on phones).
+ * poll on visibility / online. OS banners use the messaging service worker; Toastify is only a fallback.
  */
 export function useReportIssueNotifications(): void {
   const [armed, setArmed] = useState(readNotifyArmed);
   const listenerStateRef = useRef<ListenerState | null>(null);
   const flushBusyRef = useRef(false);
+
+  /** So `registration.showNotification` works even before FCM token registration. */
+  useEffect(() => {
+    if (!armed || typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    void navigator.serviceWorker.register("/firebase-messaging-sw.js", { scope: "/" }).catch((e) => {
+      console.warn("[report notify] could not register messaging SW:", e);
+    });
+  }, [armed]);
 
   useEffect(() => {
     const sync = () => setArmed(readNotifyArmed());
