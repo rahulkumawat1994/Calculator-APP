@@ -346,10 +346,12 @@ export default function AdminPage() {
             )}
             {pushTokenCount != null && pushTokenCount >= 0 && (
               <p className="text-[11px] text-gray-600 max-w-[min(100%,440px)] text-right leading-snug">
-                FCM subscribers in Firestore: <strong>{pushTokenCount}</strong>
+                FCM subscriber rows in Firestore: <strong>{pushTokenCount}</strong>
                 {pushTokenCount === 0 && reportPushOn
                   ? " — token not stored yet; check console / VAPID / HTTPS."
-                  : ""}
+                  : pushTokenCount > 0
+                    ? " — new code uses one row per browser; extra rows from earlier tests can be removed in Firebase."
+                    : ""}
               </p>
             )}
             <p className="text-[11px] text-gray-500 max-w-[min(100%,440px)] text-right leading-snug">

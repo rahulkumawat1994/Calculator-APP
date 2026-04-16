@@ -1,15 +1,25 @@
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  getDocs,
-  limit,
-  query,
-  updateDoc,
-  where,
-} from "firebase/firestore";
+import { deleteDoc, doc, getDoc, setDoc } from "firebase/firestore";
 import { deleteToken, getToken } from "firebase/messaging";
 import { db, getFirebaseMessaging } from "./firebase";
+
+/** One Firestore row per browser profile (avoids count growing on every refresh / FCM token rotation). */
+const DEVICE_ID_STORAGE_KEY = "report_push_device_id";
+
+function getOrCreatePushDeviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_ID_STORAGE_KEY);
+    if (!id?.trim()) {
+      id =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `d_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+      localStorage.setItem(DEVICE_ID_STORAGE_KEY, id);
+    }
+    return id;
+  } catch {
+    return `d_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+  }
+}
 
 export type RegisterPushResult =
   | { ok: true }
@@ -64,26 +74,22 @@ function vapidPublicKeyLooksValid(base64Url: string): boolean {
 }
 
 async function saveTokenRow(token: string): Promise<void> {
-  const col = collection(db, "report_push_tokens");
-  const q = query(col, where("token", "==", token), limit(1));
-  const existing = await getDocs(q);
-  const payload = {
+  const deviceId = getOrCreatePushDeviceId();
+  const ref = doc(db, "report_push_tokens", deviceId);
+  const now = Date.now();
+  const base = {
+    deviceId,
     token,
-    updatedAt: Date.now(),
+    updatedAt: now,
     ua: typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 500) : "",
     origin: typeof location !== "undefined" ? location.origin.slice(0, 200) : "",
   };
-  if (!existing.empty) {
-    await updateDoc(existing.docs[0].ref, payload);
-  } else {
-    await addDoc(col, { ...payload, createdAt: Date.now() });
-  }
-}
-
-async function deleteTokenRows(token: string): Promise<void> {
-  const q = query(collection(db, "report_push_tokens"), where("token", "==", token), limit(20));
-  const snap = await getDocs(q);
-  await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+  const existing = await getDoc(ref);
+  await setDoc(
+    ref,
+    existing.exists() ? base : { ...base, createdAt: now },
+    { merge: true },
+  );
 }
 
 export async function registerReportPush(): Promise<RegisterPushResult> {
@@ -130,19 +136,12 @@ export async function registerReportPush(): Promise<RegisterPushResult> {
 }
 
 export async function unregisterReportPush(): Promise<void> {
-  const vk = vapidKey();
   const messaging = await getFirebaseMessaging();
   if (!messaging) return;
 
   try {
-    if (vk && "serviceWorker" in navigator) {
-      const reg = await navigator.serviceWorker.getRegistration("/").catch(() => null);
-      const token = await getToken(messaging, {
-        vapidKey: vk,
-        serviceWorkerRegistration: reg ?? undefined,
-      }).catch(() => null);
-      if (token) await deleteTokenRows(token);
-    }
+    const deviceId = getOrCreatePushDeviceId();
+    await deleteDoc(doc(db, "report_push_tokens", deviceId)).catch(() => {});
     await deleteToken(messaging);
   } catch (e) {
     console.warn("[report push] unregister failed:", e);
