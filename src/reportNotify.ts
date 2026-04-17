@@ -38,9 +38,9 @@ export async function notifyReportListenersAfterSubmit(logId: string): Promise<v
           "[report notify] 401 — VITE_REPORT_NOTIFY_SECRET must exactly match Vercel REPORT_NOTIFY_SECRET (no extra spaces; redeploy after changing env).",
           hint,
         );
-      } else if (res.status === 503) {
+      } else if (res.status === 501 || res.status === 503) {
         console.warn(
-          "[report notify] 503 — Vercel is missing REPORT_NOTIFY_SECRET. Push to admins will not run until it is set.",
+          "[report notify] Server has no REPORT_NOTIFY_SECRET (or legacy 503). Add it in Vercel env, match VITE_REPORT_NOTIFY_SECRET, redeploy.",
           hint,
         );
       } else {

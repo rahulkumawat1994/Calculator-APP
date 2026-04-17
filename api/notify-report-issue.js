@@ -4,6 +4,7 @@
  * Vercel project env (Settings → Environment Variables):
  *   FIREBASE_SERVICE_ACCOUNT_JSON — full JSON of a Firebase service account (single line or paste).
  *   REPORT_NOTIFY_SECRET — long random string; same value as VITE_REPORT_NOTIFY_SECRET in the app build.
+ *   If this is missing, the handler returns 501 (not a Vercel outage).
  *   APP_PUBLIC_URL — optional https origin for notification click (e.g. https://your-app.vercel.app).
  */
 
@@ -39,9 +40,10 @@ module.exports = async (req, res) => {
   const token = bearerPrefix.test(authRaw) ? authRaw.replace(bearerPrefix, "").trim() : "";
 
   if (!expected) {
-    return res.status(503).json({
+    return res.status(501).json({
       error: "server_not_configured",
-      message: "Set REPORT_NOTIFY_SECRET in the Vercel project environment and redeploy.",
+      message:
+        "Vercel is missing REPORT_NOTIFY_SECRET. In the project: Settings → Environment Variables → add REPORT_NOTIFY_SECRET (same value as VITE_REPORT_NOTIFY_SECRET), apply to Production, then redeploy.",
     });
   }
   if (token !== expected) {
