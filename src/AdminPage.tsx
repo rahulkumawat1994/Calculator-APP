@@ -101,12 +101,9 @@ export default function AdminPage() {
   useEffect(() => {
     if (!previewAudit) return;
     const prevOverflow = document.body.style.overflow;
-    const prevTouchAction = document.body.style.touchAction;
     document.body.style.overflow = "hidden";
-    document.body.style.touchAction = "none";
     return () => {
       document.body.style.overflow = prevOverflow;
-      document.body.style.touchAction = prevTouchAction;
     };
   }, [previewAudit]);
 
@@ -397,7 +394,7 @@ export default function AdminPage() {
             ) : auditRows.length === 0 ? (
               <div className="p-3 text-gray-500 sm:p-4">No audit logs found.</div>
             ) : (
-              <div className="touch-pan-x overflow-x-auto overscroll-x-contain">
+              <div className="overflow-x-auto overscroll-x-contain">
                 <table className="w-full min-w-[640px] text-left text-[11px] sm:text-[12px]">
                   <thead className="bg-[#f6f9fd] border-b border-[#e3edf7]">
                     <tr>
@@ -473,7 +470,7 @@ export default function AdminPage() {
             ) : reportRows.length === 0 ? (
               <div className="p-3 text-gray-500 sm:p-4">No report issues found.</div>
             ) : (
-              <div className="touch-pan-x overflow-x-auto overscroll-x-contain">
+              <div className="overflow-x-auto overscroll-x-contain">
                 <table className="w-full min-w-[720px] text-left text-[11px] sm:text-[12px]">
                   <thead className="bg-[#f6f9fd] border-b border-[#e3edf7]">
                     <tr>
@@ -551,7 +548,7 @@ export default function AdminPage() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="audit-preview-title"
-            className="max-h-[88vh] w-full max-w-3xl overflow-hidden rounded-[16px] border-2 border-[#dbe8f3] bg-white shadow-2xl"
+            className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-[16px] border-2 border-[#dbe8f3] bg-white shadow-2xl"
           >
             <div className="flex items-start justify-between gap-3 border-b border-[#e7eef7] bg-[#f6f9fd] px-4 py-3 sm:px-5">
               <div>
@@ -571,7 +568,7 @@ export default function AdminPage() {
               </button>
             </div>
 
-            <div className="space-y-4 p-4 sm:p-5">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
               <div className="grid gap-2 rounded-[12px] border border-[#e4edf8] bg-[#f8fbff] p-3 text-[12px] sm:grid-cols-2">
                 <p>
                   <span className="font-semibold text-gray-500">Time:</span> {fmtTs(previewAudit.createdAt)}
