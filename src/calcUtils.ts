@@ -189,7 +189,7 @@ export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segm
   //   (rate/suffix   (rate\suffix   (rate|suffix   (rate.suffix
   //   (rate suffix)  (ratesuffix)   ( rate )       (rate        ← missing close
   const trimmed = normalizeTrailingDashRate(
-    normalizeTypoTolerantInput(stripLeadingGameLabels(line)).replace(/\s*in\s*to\s*/gi, "x"),
+    normalizeIntoRateMarker(normalizeTypoTolerantInput(stripLeadingGameLabels(line))),
   )
     // After merges, stray leading ". " from skipped separator lines
     .replace(/^[\s.]+/, "")
@@ -372,6 +372,58 @@ function normalizeTrailingDashRate(s: string): string {
   return s.replace(/\s+[-–—]\s+(\d+)\s*$/g, " x$1");
 }
 
+/** Levenshtein distance — small strings only (typo detection for "into"). */
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const row = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) row[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = row[j];
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + cost);
+      prev = tmp;
+    }
+  }
+  return row[n];
+}
+
+/**
+ * Letter run before trailing rate digits is meant as "into" (×rate) but mis-typed
+ * (e.g. ilto, olto, iltu, nlto). Covers many combinations via edit distance, not a fixed list.
+ */
+function looksLikeIntoTypo(letters: string): boolean {
+  const t = letters.toLowerCase();
+  // "into" is 4 chars; shorter runs (e.g. "int") are too ambiguous vs real words
+  if (t.length < 4 || t.length > 9) return false;
+  // Do not treat known bet flags as "into"
+  if (/^(wp|ab|palat|palatel)$/i.test(t)) return false;
+  const targets = ["into", "intu"];
+  return targets.some((target) => levenshtein(t, target) <= 2);
+}
+
+/**
+ * Hindi-style "into" (often written "in to") means ×rate. Tolerate common phone typos
+ * ("intu", "ijto", "ilto", "olto", …) via explicit patterns + fuzzy end-of-line match.
+ * Require a digit immediately before the letter run so we don't rewrite e.g. "in town 10".
+ */
+function normalizeIntoRateMarker(s: string): string {
+  let out = s
+    .replace(/\s*ij\s*to(?=\s*\d)/gi, "x")
+    .replace(/\s*in\s*t[ou](?=\s*\d)/gi, "x");
+  // After a digit: [letters typo "into"] [rate] at end of string → xrate
+  out = out.replace(
+    /(?<=\d)([a-zA-Z]{2,})\s*(\d{1,5})\s*$/gi,
+    (full, letters: string, rate: string) => (looksLikeIntoTypo(letters) ? `x${rate}` : full),
+  );
+  return out;
+}
+
 export function calculateTotal(text: string): CalculationResult {
   const cleaned = preprocessText(text);
   const rawLines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
@@ -389,7 +441,7 @@ export function calculateTotal(text: string): CalculationResult {
   for (const rawLine of rawLines) {
     const labelStripped = stripLeadingGameLabels(rawLine);
     const line = normalizeTrailingDashRate(
-      normalizeTypoTolerantInput(labelStripped).replace(/\s*in\s*to\s*/gi, "x"),
+      normalizeIntoRateMarker(normalizeTypoTolerantInput(labelStripped)),
     );
 
     if (isSeparatorOnlyLine(line)) continue;
@@ -691,16 +743,29 @@ export function getCurrentSlot(slots: GameSlot[]): GameSlot {
   return (next ?? sorted[0]);
 }
 
-const SLOTS_KEY    = 'calc_slots_v1';
-const SETTINGS_KEY = 'calc_settings_v1';
-const PAYMENTS_KEY = 'calc_payments_v1';
+/** localStorage key for game slots (migrate / reconcile with Firestore). */
+export const GAME_SLOTS_LS_KEY = "calc_slots_v1";
+const SETTINGS_KEY = "calc_settings_v1";
+const PAYMENTS_KEY = "calc_payments_v1";
 
 export function loadGameSlots(): GameSlot[] {
-  try { return JSON.parse(localStorage.getItem(SLOTS_KEY) ?? 'null') ?? DEFAULT_GAME_SLOTS; }
-  catch { return DEFAULT_GAME_SLOTS; }
+  try {
+    return JSON.parse(localStorage.getItem(GAME_SLOTS_LS_KEY) ?? "null") ?? DEFAULT_GAME_SLOTS;
+  } catch {
+    return DEFAULT_GAME_SLOTS;
+  }
 }
 export function saveGameSlots(slots: GameSlot[]): void {
-  try { localStorage.setItem(SLOTS_KEY, JSON.stringify(slots)); } catch { /* quota exceeded – ignore */ }
+  try {
+    localStorage.setItem(GAME_SLOTS_LS_KEY, JSON.stringify(slots));
+  } catch {
+    /* quota exceeded – ignore */
+  }
+}
+
+/** True if saved slots are not the built-in default list (used for LS ↔ DB migration). */
+export function slotsDifferFromDefault(slots: GameSlot[]): boolean {
+  return JSON.stringify(slots) !== JSON.stringify(DEFAULT_GAME_SLOTS);
 }
 
 export const DEFAULT_SETTINGS: AppSettings = { commissionPct: 5 };

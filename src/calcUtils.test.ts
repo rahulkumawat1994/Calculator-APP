@@ -39,12 +39,43 @@ describe("calculateTotal regression scenarios", () => {
     { id: "typo-separators", input: "12;34|56,10", expectedTotal: 30 },
     { id: "typo-fullwidth", input: "２０　３７x10", expectedTotal: 20 },
     { id: "typo-wp", input: "56 74 50 w.p\n13 31 15 palatel\n22 33 10 w p", expectedTotal: 250 },
+    // WhatsApp-style "into" rate with common typos (intu / ijto)
+    { id: "into-typo-intu", input: "75-57intu10", expectedTotal: 20 },
+    { id: "into-typo-ijto", input: "48-84-16-61ijto10", expectedTotal: 40 },
+    // Fuzzy "into" (Levenshtein ≤2): ilto / olto / iltu and similar phone typos → xrate; 3 pairs ×10 = 30
+    { id: "into-typo-ilto", input: "11-13-31ilto10", expectedTotal: 30 },
+    { id: "into-typo-olto", input: "11-13-31olto10", expectedTotal: 30 },
+    { id: "into-typo-iltu", input: "11-13-31iltu10", expectedTotal: 30 },
+    { id: "into-typo-spaced", input: "11-13-31ilto 10", expectedTotal: 30 },
   ] as const;
 
   it.each(rows)("$id -> total $expectedTotal", (row) => {
     const result = calculateTotal(row.input);
     expect(result.total).toBe(row.expectedTotal);
     expect(result.failedLines ?? []).toEqual([]);
+  });
+
+  it("WhatsApp sample: into / intu / ijto lines all parse (markers Sg/Fd/Gb may fail)", () => {
+    const raw = `[16/04, 3:27 pm] GC MALHOTRA PLAYER: 15-51into10
+13-31-32-23-05-50into5
+75-57intu10
+08-80into10
+16-61into10
+19-91into5
+Sg
+[16/04, 3:27 pm] GC MALHOTRA PLAYER: 66into10
+99-44into5
+Sg
+[16/04, 4:47 pm] GC MALHOTRA PLAYER: 48-84-16-61ijto10
+Fd
+[16/04, 6:24 pm] GC MALHOTRA PLAYER: 48-84-16-61ijto10
+Gb
+[16/04, 8:33 pm] GC MALHOTRA PLAYER: 11-13-31into10
+66-99into5
+Gb`;
+    const r = calculateTotal(raw);
+    expect(r.total).toBe(260);
+    expect(r.failedLines?.sort()).toEqual(["Fd", "Gb", "Gb", "Sg", "Sg"]);
   });
 });
 

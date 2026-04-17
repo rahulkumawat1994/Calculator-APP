@@ -13,13 +13,28 @@
  */
 
 import {
-  collection, doc,
-  getDoc, setDoc, deleteDoc, getDocs, addDoc, updateDoc,
-  query, where, orderBy, limit, writeBatch,
+  collection,
+  doc,
+  getDoc,
+  setDoc,
+  deleteDoc,
+  getDocs,
+  addDoc,
+  updateDoc,
+  query,
+  where,
+  orderBy,
+  limit,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { toastApiError } from "./apiToast";
-import type { SavedSession, GameSlot, AppSettings, PaymentRecord } from "./types";
+import type {
+  SavedSession,
+  GameSlot,
+  AppSettings,
+  PaymentRecord,
+} from "./types";
 import { DEFAULT_GAME_SLOTS, DEFAULT_SETTINGS, toDateISO } from "./calcUtils";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -44,7 +59,9 @@ export async function loadSlotsDB(): Promise<GameSlot[]> {
     }
     return DEFAULT_GAME_SLOTS;
   } catch (e) {
-    toastApiError(e, "Could not load game slots from the database.", { toastId: "load-config-db" });
+    toastApiError(e, "Could not load game slots from the database.", {
+      toastId: "load-config-db",
+    });
     return DEFAULT_GAME_SLOTS;
   }
 }
@@ -52,7 +69,10 @@ export async function loadSlotsDB(): Promise<GameSlot[]> {
 export async function saveSlotsDB(slots: GameSlot[]): Promise<void> {
   try {
     await setDoc(configRef("slots"), { slots });
-  } catch (e) { console.error("saveSlotsDB failed:", e); throw e; }
+  } catch (e) {
+    console.error("saveSlotsDB failed:", e);
+    throw e;
+  }
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
@@ -65,7 +85,9 @@ export async function loadSettingsDB(): Promise<AppSettings> {
     }
     return DEFAULT_SETTINGS;
   } catch (e) {
-    toastApiError(e, "Could not load settings from the database.", { toastId: "load-config-db" });
+    toastApiError(e, "Could not load settings from the database.", {
+      toastId: "load-config-db",
+    });
     return DEFAULT_SETTINGS;
   }
 }
@@ -73,45 +95,64 @@ export async function loadSettingsDB(): Promise<AppSettings> {
 export async function saveSettingsDB(settings: AppSettings): Promise<void> {
   try {
     await setDoc(configRef("settings"), settings);
-  } catch (e) { console.error("saveSettingsDB failed:", e); throw e; }
+  } catch (e) {
+    console.error("saveSettingsDB failed:", e);
+    throw e;
+  }
 }
 
 // ─── Sessions ─────────────────────────────────────────────────────────────────
 
 export async function saveSessionDoc(session: SavedSession): Promise<void> {
   const dateISO = toDateISO(session.date);
-  const docId   = toDocId(session.id);
+  const docId = toDocId(session.id);
   try {
     await setDoc(doc(db, "sessions", docId), { ...session, dateISO });
-  } catch (e) { console.error("saveSessionDoc failed:", docId, e); throw e; }
+  } catch (e) {
+    console.error("saveSessionDoc failed:", docId, e);
+    throw e;
+  }
 }
 
 export async function deleteSessionDoc(id: string): Promise<void> {
   await deleteDoc(doc(db, "sessions", toDocId(id)));
 }
 
-export async function loadSessionsByDate(date: string): Promise<SavedSession[]> {
+export async function loadSessionsByDate(
+  date: string
+): Promise<SavedSession[]> {
   try {
-    const snap = await getDocs(query(collection(db, "sessions"), where("date", "==", date)));
-    return snap.docs.map(d => d.data() as SavedSession);
+    const snap = await getDocs(
+      query(collection(db, "sessions"), where("date", "==", date))
+    );
+    return snap.docs.map((d) => d.data() as SavedSession);
   } catch (e) {
     console.error("loadSessionsByDate failed:", e);
-    toastApiError(e, "Could not load sessions for this day.", { toastId: "load-day-ledger" });
+    toastApiError(e, "Could not load sessions for this day.", {
+      toastId: "load-day-ledger",
+    });
     return [];
   }
 }
 
-export async function loadSessionsByMonth(year: number, month: number): Promise<SavedSession[]> {
+export async function loadSessionsByMonth(
+  year: number,
+  month: number
+): Promise<SavedSession[]> {
   try {
     const pad = (n: number) => String(n).padStart(2, "0");
-    const snap = await getDocs(query(
-      collection(db, "sessions"),
-      where("dateISO", ">=", `${year}-${pad(month)}-01`),
-      where("dateISO", "<=", `${year}-${pad(month)}-31`),
-    ));
-    return snap.docs.map(d => d.data() as SavedSession);
+    const snap = await getDocs(
+      query(
+        collection(db, "sessions"),
+        where("dateISO", ">=", `${year}-${pad(month)}-01`),
+        where("dateISO", "<=", `${year}-${pad(month)}-31`)
+      )
+    );
+    return snap.docs.map((d) => d.data() as SavedSession);
   } catch (e) {
-    toastApiError(e, "Could not load sessions for this month.", { toastId: "load-month-ledger" });
+    toastApiError(e, "Could not load sessions for this month.", {
+      toastId: "load-month-ledger",
+    });
     return [];
   }
 }
@@ -120,10 +161,13 @@ export async function loadSessionsByMonth(year: number, month: number): Promise<
 
 export async function savePaymentDoc(payment: PaymentRecord): Promise<void> {
   const dateISO = toDateISO(payment.date);
-  const docId   = toDocId(payment.id);
+  const docId = toDocId(payment.id);
   try {
     await setDoc(doc(db, "payments", docId), { ...payment, dateISO });
-  } catch (e) { console.error("savePaymentDoc failed:", docId, e); throw e; }
+  } catch (e) {
+    console.error("savePaymentDoc failed:", docId, e);
+    throw e;
+  }
 }
 
 export async function deletePaymentDoc(id: string): Promise<void> {
@@ -131,55 +175,80 @@ export async function deletePaymentDoc(id: string): Promise<void> {
 }
 
 /** Delete all payments for a contact on a specific date. */
-export async function deletePaymentsByContactDate(contact: string, date: string): Promise<void> {
+export async function deletePaymentsByContactDate(
+  contact: string,
+  date: string
+): Promise<void> {
   try {
     // Query by date only (avoids composite index requirement), then filter by contact in memory
-    const snap = await getDocs(query(collection(db, "payments"), where("date", "==", date)));
-    const toDelete = snap.docs.filter(d => d.data().contact === contact);
-    await Promise.all(toDelete.map(d => deleteDoc(d.ref)));
+    const snap = await getDocs(
+      query(collection(db, "payments"), where("date", "==", date))
+    );
+    const toDelete = snap.docs.filter((d) => d.data().contact === contact);
+    await Promise.all(toDelete.map((d) => deleteDoc(d.ref)));
   } catch {
     /* Caller surfaces errors (e.g. History delete) */
   }
 }
 
-export async function loadPaymentsByDate(date: string): Promise<PaymentRecord[]> {
+export async function loadPaymentsByDate(
+  date: string
+): Promise<PaymentRecord[]> {
   try {
-    const snap = await getDocs(query(collection(db, "payments"), where("date", "==", date)));
-    return snap.docs.map(d => d.data() as PaymentRecord);
+    const snap = await getDocs(
+      query(collection(db, "payments"), where("date", "==", date))
+    );
+    return snap.docs.map((d) => d.data() as PaymentRecord);
   } catch (e) {
     console.error("loadPaymentsByDate failed:", e);
-    toastApiError(e, "Could not load payments for this day.", { toastId: "load-day-ledger" });
+    toastApiError(e, "Could not load payments for this day.", {
+      toastId: "load-day-ledger",
+    });
     return [];
   }
 }
 
 /** Returns all distinct dates (DD/MM/YYYY) that have sessions in the given month. */
-export async function loadSessionDatesForMonth(year: number, month: number): Promise<string[]> {
+export async function loadSessionDatesForMonth(
+  year: number,
+  month: number
+): Promise<string[]> {
   try {
     const pad = (n: number) => String(n).padStart(2, "0");
-    const snap = await getDocs(query(
-      collection(db, "sessions"),
-      where("dateISO", ">=", `${year}-${pad(month)}-01`),
-      where("dateISO", "<=", `${year}-${pad(month)}-31`),
-    ));
-    return [...new Set(snap.docs.map(d => d.data().date as string))];
+    const snap = await getDocs(
+      query(
+        collection(db, "sessions"),
+        where("dateISO", ">=", `${year}-${pad(month)}-01`),
+        where("dateISO", "<=", `${year}-${pad(month)}-31`)
+      )
+    );
+    return [...new Set(snap.docs.map((d) => d.data().date as string))];
   } catch (e) {
-    toastApiError(e, "Could not load calendar dates.", { toastId: "load-calendar-dates" });
+    toastApiError(e, "Could not load calendar dates.", {
+      toastId: "load-calendar-dates",
+    });
     return [];
   }
 }
 
-export async function loadPaymentsByMonth(year: number, month: number): Promise<PaymentRecord[]> {
+export async function loadPaymentsByMonth(
+  year: number,
+  month: number
+): Promise<PaymentRecord[]> {
   try {
     const pad = (n: number) => String(n).padStart(2, "0");
-    const snap = await getDocs(query(
-      collection(db, "payments"),
-      where("dateISO", ">=", `${year}-${pad(month)}-01`),
-      where("dateISO", "<=", `${year}-${pad(month)}-31`),
-    ));
-    return snap.docs.map(d => d.data() as PaymentRecord);
+    const snap = await getDocs(
+      query(
+        collection(db, "payments"),
+        where("dateISO", ">=", `${year}-${pad(month)}-01`),
+        where("dateISO", "<=", `${year}-${pad(month)}-31`)
+      )
+    );
+    return snap.docs.map((d) => d.data() as PaymentRecord);
   } catch (e) {
-    toastApiError(e, "Could not load payments for this month.", { toastId: "load-month-ledger" });
+    toastApiError(e, "Could not load payments for this month.", {
+      toastId: "load-month-ledger",
+    });
     return [];
   }
 }
@@ -221,7 +290,9 @@ export interface ReportIssueLog extends ReportIssuePayload {
  * Internal analytics log for calculate clicks.
  * Uses a dedicated collection so it never touches app business data.
  */
-export async function logCalculationAudit(payload: CalculationAuditPayload): Promise<void> {
+export async function logCalculationAudit(
+  payload: CalculationAuditPayload
+): Promise<void> {
   try {
     await addDoc(collection(db, "calc_audit_logs"), {
       ...payload,
@@ -231,18 +302,24 @@ export async function logCalculationAudit(payload: CalculationAuditPayload): Pro
     });
   } catch (e) {
     console.warn("logCalculationAudit failed:", e);
-    toastApiError(e, "Could not save calculation audit log.", { toastId: "calc-audit-log" });
+    toastApiError(e, "Could not save calculation audit log.", {
+      toastId: "calc-audit-log",
+    });
   }
 }
 
-export async function loadCalculationAuditLogs(maxRows = 300): Promise<CalculationAuditLog[]> {
+export async function loadCalculationAuditLogs(
+  maxRows = 300
+): Promise<CalculationAuditLog[]> {
   try {
-    const snap = await getDocs(query(
-      collection(db, "calc_audit_logs"),
-      orderBy("createdAt", "desc"),
-      limit(maxRows),
-    ));
-    return snap.docs.map(d => {
+    const snap = await getDocs(
+      query(
+        collection(db, "calc_audit_logs"),
+        orderBy("createdAt", "desc"),
+        limit(maxRows)
+      )
+    );
+    return snap.docs.map((d) => {
       const data = d.data() as Omit<CalculationAuditLog, "id">;
       return { id: d.id, ...data };
     });
@@ -263,14 +340,18 @@ function calculationAuditInputDedupeKey(input: string | undefined): string {
  * Rows with the **same input text** (after trim + CRLF→LF) are duplicates: **keep the newest**
  * `createdAt` and delete the rest. Empty inputs are skipped (never deduped together).
  */
-export async function pruneDuplicateCalculationAuditLogs(maxScan = 2000): Promise<number> {
+export async function pruneDuplicateCalculationAuditLogs(
+  maxScan = 2000
+): Promise<number> {
   try {
-    const snap = await getDocs(query(
-      collection(db, "calc_audit_logs"),
-      orderBy("createdAt", "desc"),
-      limit(maxScan),
-    ));
-    const rows: CalculationAuditLog[] = snap.docs.map(d => {
+    const snap = await getDocs(
+      query(
+        collection(db, "calc_audit_logs"),
+        orderBy("createdAt", "desc"),
+        limit(maxScan)
+      )
+    );
+    const rows: CalculationAuditLog[] = snap.docs.map((d) => {
       const data = d.data() as Omit<CalculationAuditLog, "id">;
       return { id: d.id, ...data };
     });
@@ -287,7 +368,7 @@ export async function pruneDuplicateCalculationAuditLogs(maxScan = 2000): Promis
     for (const group of byInput.values()) {
       if (group.length < 2) continue;
       const keep = group.reduce((a, b) =>
-        (a.createdAt ?? 0) >= (b.createdAt ?? 0) ? a : b,
+        (a.createdAt ?? 0) >= (b.createdAt ?? 0) ? a : b
       );
       for (const g of group) {
         if (g.id !== keep.id) toDelete.add(g.id);
@@ -329,15 +410,19 @@ export async function deleteCalculationAuditLog(id: string): Promise<void> {
  * Clears audit logs in the dedicated collection.
  * Returns deleted count (best effort).
  */
-export async function clearCalculationAuditLogs(maxRows = 2000): Promise<number> {
+export async function clearCalculationAuditLogs(
+  maxRows = 2000
+): Promise<number> {
   try {
-    const snap = await getDocs(query(
-      collection(db, "calc_audit_logs"),
-      orderBy("createdAt", "desc"),
-      limit(maxRows),
-    ));
+    const snap = await getDocs(
+      query(
+        collection(db, "calc_audit_logs"),
+        orderBy("createdAt", "desc"),
+        limit(maxRows)
+      )
+    );
     if (snap.empty) return 0;
-    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+    await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
     return snap.docs.length;
   } catch (e) {
     console.warn("clearCalculationAuditLogs failed:", e);
@@ -346,7 +431,9 @@ export async function clearCalculationAuditLogs(maxRows = 2000): Promise<number>
 }
 
 /** @returns new Firestore document id */
-export async function logReportIssue(payload: ReportIssuePayload): Promise<string> {
+export async function logReportIssue(
+  payload: ReportIssuePayload
+): Promise<string> {
   try {
     const ref = await addDoc(collection(db, "report_issue_logs"), {
       input: payload.input.slice(0, 12000),
@@ -362,14 +449,18 @@ export async function logReportIssue(payload: ReportIssuePayload): Promise<strin
   }
 }
 
-export async function loadReportIssueLogs(maxRows = 300): Promise<ReportIssueLog[]> {
+export async function loadReportIssueLogs(
+  maxRows = 300
+): Promise<ReportIssueLog[]> {
   try {
-    const snap = await getDocs(query(
-      collection(db, "report_issue_logs"),
-      orderBy("createdAt", "desc"),
-      limit(maxRows),
-    ));
-    return snap.docs.map(d => {
+    const snap = await getDocs(
+      query(
+        collection(db, "report_issue_logs"),
+        orderBy("createdAt", "desc"),
+        limit(maxRows)
+      )
+    );
+    return snap.docs.map((d) => {
       const data = d.data() as Omit<ReportIssueLog, "id">;
       return {
         id: d.id,
@@ -384,7 +475,10 @@ export async function loadReportIssueLogs(maxRows = 300): Promise<ReportIssueLog
   }
 }
 
-export async function updateReportIssueFixed(id: string, fixed: boolean): Promise<void> {
+export async function updateReportIssueFixed(
+  id: string,
+  fixed: boolean
+): Promise<void> {
   try {
     await updateDoc(doc(db, "report_issue_logs", id), { fixed });
   } catch (e) {
@@ -404,13 +498,15 @@ export async function deleteReportIssueLog(id: string): Promise<void> {
 
 export async function clearReportIssueLogs(maxRows = 2000): Promise<number> {
   try {
-    const snap = await getDocs(query(
-      collection(db, "report_issue_logs"),
-      orderBy("createdAt", "desc"),
-      limit(maxRows),
-    ));
+    const snap = await getDocs(
+      query(
+        collection(db, "report_issue_logs"),
+        orderBy("createdAt", "desc"),
+        limit(maxRows)
+      )
+    );
     if (snap.empty) return 0;
-    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+    await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
     return snap.docs.length;
   } catch (e) {
     console.warn("clearReportIssueLogs failed:", e);
@@ -429,15 +525,25 @@ export async function migrateOldFirestoreData(): Promise<void> {
     const jobs: Promise<void>[] = [];
     if (oldSessions.exists()) {
       const sessions = (oldSessions.data().sessions ?? []) as SavedSession[];
-      jobs.push(...sessions.map(s => saveSessionDoc({ ...s, dateISO: toDateISO(s.date) })));
+      jobs.push(
+        ...sessions.map((s) =>
+          saveSessionDoc({ ...s, dateISO: toDateISO(s.date) })
+        )
+      );
     }
     if (oldPayments.exists()) {
       const payments = (oldPayments.data().payments ?? []) as PaymentRecord[];
-      jobs.push(...payments.map(p => savePaymentDoc({ ...p, dateISO: toDateISO(p.date) })));
+      jobs.push(
+        ...payments.map((p) =>
+          savePaymentDoc({ ...p, dateISO: toDateISO(p.date) })
+        )
+      );
     }
     await Promise.all(jobs);
   } catch (e) {
     console.warn("Firestore migration error:", e);
-    toastApiError(e, "Firestore data migration had a problem.", { toastId: "migrate-firestore" });
+    toastApiError(e, "Firestore data migration had a problem.", {
+      toastId: "migrate-firestore",
+    });
   }
 }
