@@ -32,10 +32,24 @@ module.exports = async (req, res) => {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const expected = process.env.REPORT_NOTIFY_SECRET;
-  const auth = req.headers.authorization;
-  if (!expected || auth !== `Bearer ${expected}`) {
-    return res.status(401).json({ error: "Unauthorized" });
+  const expected = (process.env.REPORT_NOTIFY_SECRET || "").trim();
+  const authRaw =
+    typeof req.headers.authorization === "string" ? req.headers.authorization.trim() : "";
+  const bearerPrefix = /^bearer\s+/i;
+  const token = bearerPrefix.test(authRaw) ? authRaw.replace(bearerPrefix, "").trim() : "";
+
+  if (!expected) {
+    return res.status(503).json({
+      error: "server_not_configured",
+      message: "Set REPORT_NOTIFY_SECRET in the Vercel project environment and redeploy.",
+    });
+  }
+  if (token !== expected) {
+    return res.status(401).json({
+      error: "unauthorized",
+      message:
+        "Authorization does not match REPORT_NOTIFY_SECRET. Use the same value as VITE_REPORT_NOTIFY_SECRET in your frontend build.",
+    });
   }
 
   const logId = req.body && typeof req.body.logId === "string" ? req.body.logId : null;

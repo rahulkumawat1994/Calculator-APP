@@ -25,7 +25,27 @@ export async function notifyReportListenersAfterSubmit(logId: string): Promise<v
     });
     if (!res.ok) {
       const t = await res.text().catch(() => "");
-      console.warn("[report notify] API", res.status, t);
+      let hint = t;
+      try {
+        const j = JSON.parse(t) as { message?: string; error?: string };
+        if (j.message) hint = j.message;
+        else if (j.error) hint = j.error;
+      } catch {
+        /* plain text body */
+      }
+      if (res.status === 401) {
+        console.warn(
+          "[report notify] 401 — VITE_REPORT_NOTIFY_SECRET must exactly match Vercel REPORT_NOTIFY_SECRET (no extra spaces; redeploy after changing env).",
+          hint,
+        );
+      } else if (res.status === 503) {
+        console.warn(
+          "[report notify] 503 — Vercel is missing REPORT_NOTIFY_SECRET. Push to admins will not run until it is set.",
+          hint,
+        );
+      } else {
+        console.warn("[report notify] API", res.status, hint);
+      }
     }
   } catch (e) {
     console.warn("[report notify] fetch failed:", e);
