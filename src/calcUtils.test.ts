@@ -77,6 +77,14 @@ Gb`;
     expect(r.total).toBe(260);
     expect(r.failedLines?.sort()).toEqual(["Fd", "Gb", "Gb", "Sg", "Sg"]);
   });
+
+  it("solid run with trailing bbb note remains B-only (not AB double)", () => {
+    const raw = `[17/04, 3:44 pm] RESHMA SHINGH: 222bbb=50 it is "b" only
+[17/04, 3:44 pm] RESHMA SHINGH: 999bbb=50 it is "b" only`;
+    const r = calculateTotal(raw);
+    expect(r.total).toBe(100);
+    expect(r.failedLines ?? []).toEqual([]);
+  });
 });
 
 describe("parser structure checks", () => {

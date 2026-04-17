@@ -355,6 +355,10 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/[\uFF10-\uFF19]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30));
   // Between digits: `;` `|` `/` `\` or tabs often used instead of space (keep `,` for comma-rate lines)
   t = t.replace(/(?<=\d)[\t]*[;|/\\]+[\t]*(?=\d)/g, " ");
+  // Some users type A/B marker letters directly before rate marker:
+  //   222bbb=50  /  999abx10
+  // Insert a separator so rate parsing still recognizes =/x/* markers.
+  t = t.replace(/(?<=\d)\s*([ab]+)\s*(?=(?:x|=+|\*)\s*\d)/gi, " $1 ");
   // Middle dot · between digits
   t = t.replace(/(?<=\d)\s*\u00B7\s*(?=\d)/g, " ");
   // Collapse runs of spaces

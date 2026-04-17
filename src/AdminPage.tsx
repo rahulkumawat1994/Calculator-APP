@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { toastApiError } from "./apiToast";
+import { calculateTotal } from "./calcUtils";
 import {
   clearCalculationAuditLogs,
   clearReportIssueLogs,
@@ -14,6 +15,7 @@ import {
   type ReportIssueLog,
 } from "./firestoreDb";
 import { registerReportPush, unregisterReportPush } from "./reportPush";
+import type { CalculationResult } from "./types";
 import {
   REPORT_PUSH_CHANGED_EVENT,
   REPORT_PUSH_ENABLED_KEY,
@@ -50,6 +52,8 @@ export default function AdminPage() {
   const [clearingAudit, setClearingAudit] = useState(false);
   const [clearingReport, setClearingReport] = useState(false);
   const [pruningAuditDupes, setPruningAuditDupes] = useState(false);
+  const [previewAudit, setPreviewAudit] = useState<CalculationAuditLog | null>(null);
+  const [previewResult, setPreviewResult] = useState<CalculationResult | null>(null);
   const [reportPushOn, setReportPushOn] = useState(() => {
     try {
       return localStorage.getItem(REPORT_PUSH_ENABLED_KEY) === "1";
@@ -93,6 +97,18 @@ export default function AdminPage() {
     window.addEventListener(REPORT_PUSH_CHANGED_EVENT, sync);
     return () => window.removeEventListener(REPORT_PUSH_CHANGED_EVENT, sync);
   }, []);
+
+  useEffect(() => {
+    if (!previewAudit) return;
+    const prevOverflow = document.body.style.overflow;
+    const prevTouchAction = document.body.style.touchAction;
+    document.body.style.overflow = "hidden";
+    document.body.style.touchAction = "none";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.body.style.touchAction = prevTouchAction;
+    };
+  }, [previewAudit]);
 
   useEffect(() => {
     if (typeof Notification === "undefined") return;
@@ -267,6 +283,16 @@ export default function AdminPage() {
     }
   };
 
+  const openAuditPreview = (row: CalculationAuditLog) => {
+    setPreviewAudit(row);
+    setPreviewResult(calculateTotal(row.input));
+  };
+
+  const closeAuditPreview = () => {
+    setPreviewAudit(null);
+    setPreviewResult(null);
+  };
+
   return (
     <div className="min-h-screen bg-[#eef2f7] font-sans">
       <div className="mx-auto w-full max-w-[1300px] px-3 py-4 sm:px-4 sm:py-5">
@@ -380,6 +406,7 @@ export default function AdminPage() {
                       <th className="px-3 py-2 font-bold">Total</th>
                       <th className="px-3 py-2 font-bold">Slot</th>
                       <th className="px-3 py-2 font-bold min-w-[300px]">Input</th>
+                      <th className="px-3 py-2 font-bold">View</th>
                       <th className="px-3 py-2 font-bold">Delete</th>
                     </tr>
                   </thead>
@@ -396,6 +423,15 @@ export default function AdminPage() {
                         </td>
                         <td className="px-3 py-2">
                           <pre className="whitespace-pre-wrap wrap-break-word bg-[#f8fbff] border border-[#e4edf8] rounded-[10px] p-2 max-h-[120px] overflow-auto font-mono text-[11px]">{r.input}</pre>
+                        </td>
+                        <td className="px-2 py-2 sm:px-3">
+                          <button
+                            type="button"
+                            onClick={() => openAuditPreview(r)}
+                            className="min-h-[40px] min-w-[72px] rounded-[10px] border border-[#c8dbef] bg-[#eef6ff] px-2.5 py-2 text-[11px] font-bold text-[#1d6fb8] sm:min-h-0 sm:min-w-0 sm:py-1.5"
+                          >
+                            View calc
+                          </button>
                         </td>
                         <td className="px-2 py-2 sm:px-3">
                           <button
@@ -502,6 +538,129 @@ export default function AdminPage() {
           )}
         </div>
       </div>
+
+      {previewAudit && previewResult && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 overscroll-contain sm:p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeAuditPreview();
+          }}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="audit-preview-title"
+            className="max-h-[88vh] w-full max-w-3xl overflow-hidden rounded-[16px] border-2 border-[#dbe8f3] bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-[#e7eef7] bg-[#f6f9fd] px-4 py-3 sm:px-5">
+              <div>
+                <h3 id="audit-preview-title" className="text-[17px] font-extrabold text-[#1a1a1a]">
+                  Calculation Preview
+                </h3>
+                <p className="mt-1 text-[12px] text-gray-600">
+                  Parsed with the same calculator logic users use
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeAuditPreview}
+                className="rounded-[10px] border border-[#d5e4f5] bg-white px-3 py-1.5 text-[12px] font-bold text-[#4a6685]"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-4 p-4 sm:p-5">
+              <div className="grid gap-2 rounded-[12px] border border-[#e4edf8] bg-[#f8fbff] p-3 text-[12px] sm:grid-cols-2">
+                <p>
+                  <span className="font-semibold text-gray-500">Time:</span> {fmtTs(previewAudit.createdAt)}
+                </p>
+                <p>
+                  <span className="font-semibold text-gray-500">Mode:</span> {previewAudit.mode}
+                </p>
+                <p>
+                  <span className="font-semibold text-gray-500">Saved total:</span> ₹{previewAudit.total}
+                </p>
+                <p>
+                  <span className="font-semibold text-gray-500">Parsed total:</span> ₹{previewResult.total}
+                  {previewResult.total !== previewAudit.total && (
+                    <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
+                      differs
+                    </span>
+                  )}
+                </p>
+                <p>
+                  <span className="font-semibold text-gray-500">Parsed lines:</span> {previewResult.results.length}
+                </p>
+                <p>
+                  <span className="font-semibold text-gray-500">Failed lines:</span>{" "}
+                  {previewResult.failedLines?.length ?? 0}
+                </p>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-[12px] border border-[#e4edf8] bg-[#f8fbff] p-3">
+                  <p className="mb-2 text-[12px] font-semibold text-gray-600">Original input</p>
+                  <pre className="max-h-[52vh] overflow-y-auto overscroll-contain rounded-[10px] border border-[#e4edf8] bg-white p-3 font-mono text-[11px] whitespace-pre-wrap wrap-break-word">
+                    {previewAudit.input}
+                  </pre>
+                </div>
+
+                <div className="rounded-[12px] border border-[#e4edf8] bg-[#f8fbff] p-3">
+                  <p className="mb-2 text-[12px] font-semibold text-gray-600">Line-by-line result</p>
+                  <div className="max-h-[52vh] space-y-3 overflow-y-auto overscroll-contain pr-1">
+                    {previewResult.results.length === 0 ? (
+                      <div className="rounded-[10px] border border-[#e4edf8] bg-white p-3 text-[12px] text-gray-500">
+                        No parsed line items for this input.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {previewResult.results.map((seg, idx) => (
+                          <div
+                            key={`${idx}-${seg.line}-${seg.rate}`}
+                            className="rounded-[10px] border border-[#e4edf8] bg-white p-3"
+                          >
+                            <div className="mb-1 flex items-center gap-2 text-[12px] font-bold text-[#1d6fb8]">
+                              <span>#{idx + 1}</span>
+                              {seg.isWP && (
+                                <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] text-blue-700">WP</span>
+                              )}
+                              {seg.isDouble && (
+                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700">AB</span>
+                              )}
+                            </div>
+                            <p className="font-mono text-[12px] text-[#222] whitespace-pre-wrap wrap-break-word">{seg.line}</p>
+                            <p className="mt-1 text-[12px] text-gray-600">
+                              {seg.count} × {seg.rate} = <span className="font-extrabold text-[#1d6fb8]">{seg.lineTotal}</span>
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {(previewResult.failedLines?.length ?? 0) > 0 && (
+                      <div>
+                        <p className="mb-2 text-[12px] font-semibold text-red-700">Failed lines</p>
+                        <div className="space-y-1.5">
+                          {(previewResult.failedLines ?? []).map((line, idx) => (
+                            <pre
+                              key={`${idx}-${line}`}
+                              className="rounded-[8px] border border-red-200 bg-red-50 p-2 font-mono text-[11px] text-red-700 whitespace-pre-wrap wrap-break-word"
+                            >
+                              {line}
+                            </pre>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
