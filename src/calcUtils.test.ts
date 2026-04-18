@@ -85,6 +85,32 @@ Gb`;
     expect(r.total).toBe(100);
     expect(r.failedLines ?? []).toEqual([]);
   });
+
+  it("DS paste: tail row ending with . + next dot-pair row merge under previous ×rate; no-dot row merges to next line ×rate", () => {
+    const text = `DS.65.59…33.x15 49.53.35.96.95.47.69.97.39.52.28.82.02.
+56.18.72.92.94.x10
+74.44.55.19.91.81.50.67.20.37.73.83
+24.79.03.30.70.x5`;
+    const r = calculateTotal(text);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(400);
+    expect(r.results).toHaveLength(3);
+    expect(r.results[0]).toMatchObject({ count: 3, rate: 15, lineTotal: 45 });
+    expect(r.results[1]).toMatchObject({ count: 18, rate: 15, lineTotal: 270 });
+    expect(r.results[2]).toMatchObject({ count: 17, rate: 5, lineTotal: 85 });
+  });
+
+  it("WhatsApp: GB lines + Harf.AxB. same-digit run keeps AB multiplier", () => {
+    const raw = `[17/04, 9:06 pm] Ramesh Ji P: GB. 70.x30
+86.68.90.18.20.72.92.65.9420.06..47.66.x10
+07.08.44.56.74.78.13.55.28.82.02.x5
+[17/04, 9:06 pm] Ramesh Ji P: Harf.AxB. 6666x50`;
+    const r = calculateTotal(raw);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(315);
+    const harfSeg = r.results.find(x => x.line.includes("6666"));
+    expect(harfSeg).toMatchObject({ isDouble: true, count: 2, rate: 50, lineTotal: 100 });
+  });
 });
 
 describe("parser structure checks", () => {

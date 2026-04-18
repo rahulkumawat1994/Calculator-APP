@@ -165,7 +165,7 @@ function tryParseMultiXSameDigitChain(trimmed: string, parseOne: (s: string) => 
 
 /**
  * Strip chained market/game prefixes like `Harf.` `GB.` `usa.` (any case).
- * Never removes betting modifiers `A.` `B.` `AB.` at the current start of the line.
+ * Never removes betting modifiers `A.` `B.` `AB.` or `AxB.` / `AxB ` at the current start of the line.
  */
 function stripLeadingGameLabels(s: string): string {
   let t = s.trim();
@@ -176,6 +176,8 @@ function stripLeadingGameLabels(s: string): string {
     if (!m) break;
     const word = m[1];
     if (/^AB$/i.test(word) || /^A$/i.test(word) || /^B$/i.test(word)) break;
+    // Same-digit AB marker written as AxB (often after a game label, e.g. Harf.AxB. 6666x50)
+    if (/^axb$/i.test(word)) break;
     t = t.slice(m[0].length);
   }
   return t;
@@ -428,28 +430,121 @@ function normalizeIntoRateMarker(s: string): string {
   return out;
 }
 
+/**
+ * After the last x/=/\* rate on a line, users sometimes paste another number row without its own rate
+ * (e.g. `DS.65..x15 49.53..02.`). Split so merge / inherit-rate logic can attach the right ×rate.
+ */
+function splitTrailingNumberRunAfterLastRate(line: string): string[] {
+  const t = line.trim();
+  if (!t) return [];
+  const matches = [...t.matchAll(SEP_RATE_RE)];
+  if (matches.length === 0) return [t];
+  const lastM = matches[matches.length - 1];
+  const end = (lastM.index ?? 0) + lastM[0].length;
+  const tail = t.slice(end).trim();
+  if (!tail) return [t];
+  if (!/^\d/.test(tail)) return [t];
+  if (!/^[\d\s._|:/\\-]+$/.test(tail)) return [t];
+  // At least two XX groups (avoid splitting `32x5 10` into orphan `10`)
+  if (!/(?<!\d)\d{2}(?:[\s._]+\d{2})+/.test(tail)) return [t];
+  const head = t.slice(0, end).trim();
+  if (!head) return [tail];
+  return [head, tail];
+}
+
+/** Last explicit ×rate (or last (rate)) in a merged line — used to repeat rate for continuation rows. */
+function lastExplicitRateInLine(line: string): number | null {
+  const ms = [...line.matchAll(SEP_RATE_RE)];
+  if (ms.length) {
+    const n = parseInt(ms[ms.length - 1][1], 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  const ps = [...line.matchAll(/\(\s*(\d+)\s*\)/g)];
+  if (ps.length) {
+    const n = parseInt(ps[ps.length - 1][1], 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  return null;
+}
+
+/**
+ * Row that begins with digits and has its own ×rate — usually do not glue prior `pending` into it.
+ * Exceptions:
+ * - `pending` digits-only and **no** trailing `.` → merge into this line; keep this line’s ×rate (`74…` + `24…x5`).
+ * - `pending` ends with `.` and next row is `NN.NN…` pairs → merge with **previous** clause’s ×rate (ignore this line’s ×10; e.g. `49…02.` + `56…x10` → 18×15).
+ */
+function isSelfContainedDigitRowWithRate(line: string, pendingTrimmed: string): boolean {
+  const t = line.trim();
+  if (!/^\d/.test(t)) return false;
+  const hasExplicitRate =
+    /\(\d+\)/.test(t) || X_RATE_RE.test(t) || /=+\s*\d+/.test(t) || /\*\s*\d+/.test(t);
+  if (!hasExplicitRate) return false;
+  if (/^\s*(?:wp|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(t)) return false;
+  const p = pendingTrimmed.trim();
+  const purePending = p && /^[\d\s\-_.,:|\/\\]+$/.test(p) && /\d/.test(p);
+  if (purePending && !/\.\s*$/.test(p)) return false;
+  return true;
+}
+
+/** Remove trailing × / = / * rate (and optional letter flags) for merge helpers only. */
+function stripTrailingSeparatorRateTail(line: string): string {
+  return line.replace(/\s*(?:x|=+|\*)\s*\d+\s*[a-zA-Z]*$/i, "").trim();
+}
+
+/** Next row looks like `56.18…94` (dot-separated pairs), not `10 20` style. */
+function looksLikeDotSeparatedPairContinuation(s: string): boolean {
+  return /\d{2}\.\d{2}/.test(s);
+}
+
+function mergePendingBodyWithInheritedRate(pending: string, continuationBody: string, rate: number): string {
+  const p = pending.trim();
+  const b = continuationBody.trim();
+  const sep = /(?<!\d)\d$/.test(p) ? "" : " ";
+  return `${p}${sep}${b} x${rate}`;
+}
+
 export function calculateTotal(text: string): CalculationResult {
   const cleaned = preprocessText(text);
   const rawLines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
-  const mergedLines: string[] = [];
-  let pending = '';
 
-  const flushPending = () => {
-    if (!pending) return;
-    if (!(isSeparatorOnlyLine(pending) || (/^[\d\s\-_.,:|\/\\]*$/.test(pending) && !/\d/.test(pending)))) {
-      mergedLines.push(pending);
-    }
-    pending = '';
-  };
-
+  const logicalLines: string[] = [];
   for (const rawLine of rawLines) {
     const labelStripped = stripLeadingGameLabels(rawLine);
     const line = normalizeTrailingDashRate(
       normalizeIntoRateMarker(normalizeTypoTolerantInput(labelStripped)),
     );
-
     if (isSeparatorOnlyLine(line)) continue;
+    logicalLines.push(...splitTrailingNumberRunAfterLastRate(line));
+  }
 
+  const mergedLines: string[] = [];
+  let pending = '';
+  let lastInheritedRate: number | null = null;
+
+  const pushMerged = (s: string) => {
+    const t = s.trim();
+    if (!t) return;
+    mergedLines.push(t);
+    const r = lastExplicitRateInLine(t);
+    if (r != null) lastInheritedRate = r;
+  };
+
+  const flushPending = () => {
+    if (!pending) return;
+    let toPush = pending;
+    const isPurePending = /^[\d\s\-_.,:|\/\\]+$/.test(pending) && /\d/.test(pending);
+    if (isPurePending && lastInheritedRate != null) {
+      const endsWithPartialPair = /(?<!\d)\d$/.test(pending);
+      const sep = endsWithPartialPair ? "" : " ";
+      toPush = `${pending}${sep}x${lastInheritedRate}`;
+    }
+    if (!(isSeparatorOnlyLine(toPush) || (/^[\d\s\-_.,:|\/\\]*$/.test(toPush) && !/\d/.test(toPush)))) {
+      pushMerged(toPush);
+    }
+    pending = "";
+  };
+
+  for (const line of logicalLines) {
     const hasExplicitRate =
       /\(\d+\)/.test(line) || X_RATE_RE.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
@@ -463,29 +558,41 @@ export function calculateTotal(text: string): CalculationResult {
       const isPureNumbers = /^[\d\s\-_.,:|\/\\]+$/.test(line) && /\d/.test(line);
       if (hasKnownFlag) {
         flushPending();
-        mergedLines.push(line);
+        pushMerged(line);
       } else if (isPureNumbers) {
         pending = pending ? `${pending} ${line}` : line;
       } else {
         flushPending();
-        mergedLines.push(line);
+        pushMerged(line);
       }
     } else {
       if (pending) {
         if (isSelfContainedMultiX) {
           flushPending();
-          mergedLines.push(line);
+          pushMerged(line);
         } else if (!/\d/.test(pending)) {
           flushPending();
-          mergedLines.push(line);
+          pushMerged(line);
+        } else if (isSelfContainedDigitRowWithRate(line, pending)) {
+          const p = pending.trim();
+          const pureP = /^[\d\s\-_.,:|\/\\]+$/.test(p) && /\d/.test(p);
+          const endsWithDot = /\.\s*$/.test(p);
+          const body = stripTrailingSeparatorRateTail(line);
+          if (pureP && endsWithDot && lastInheritedRate != null && looksLikeDotSeparatedPairContinuation(body)) {
+            pushMerged(mergePendingBodyWithInheritedRate(p, body, lastInheritedRate));
+            pending = "";
+          } else {
+            flushPending();
+            pushMerged(line);
+          }
         } else {
           const endsWithPartialPair = /(?<!\d)\d$/.test(pending);
           const sep = endsWithPartialPair ? "" : " ";
-          mergedLines.push(pending + sep + line);
+          pushMerged(pending + sep + line);
           pending = "";
         }
       } else {
-        mergedLines.push(line);
+        pushMerged(line);
       }
     }
   }
