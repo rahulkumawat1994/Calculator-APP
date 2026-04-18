@@ -29,7 +29,10 @@ export interface SavedSession {
   dateISO: string;   // "YYYY-MM-DD" — used for Firestore range queries
   messages: SavedMessage[];
   createdAt: number;
+  /** Whole-session override (legacy); prefer slotOverrides for History edits */
   overrideResult?: CalculationResult;
+  /** Per-slot merged breakdown overrides (History edits when a contact has slot-tagged messages) */
+  slotOverrides?: Record<string, CalculationResult>;
 }
 
 export interface GameSlot {

@@ -805,6 +805,84 @@ export function mergeIntoSessions(
   return updated;
 }
 
+/** Firestore / History "Other entries" bucket — same key as History `openSlotIds` for unslotted. */
+export const SESSION_SLOT_KEY_UNSLOTTED = "__unslotted__" as const;
+
+function slotKeyForSavedMessage(m: SavedMessage): string {
+  return m.slotId ?? SESSION_SLOT_KEY_UNSLOTTED;
+}
+
+export function mergeSavedMessages(msgs: SavedMessage[]): CalculationResult {
+  return {
+    results: msgs.flatMap(m => (m.overrideResult ?? m.result).results),
+    total:   msgs.reduce((s, m) => s + (m.overrideResult ?? m.result).total, 0),
+  };
+}
+
+function sessionSingleSlotKey(session: SavedSession): string | null {
+  const keys = new Set(session.messages.map(slotKeyForSavedMessage));
+  if (keys.size !== 1) return null;
+  return session.messages.length ? slotKeyForSavedMessage(session.messages[0]) : null;
+}
+
+/** One slot (or unslotted bucket) totals for a saved session — used by History & GamesView. */
+export function sessionLedgerForSlotKey(
+  session: SavedSession,
+  slotKey: string,
+): CalculationResult | null {
+  const msgs =
+    slotKey === SESSION_SLOT_KEY_UNSLOTTED
+      ? session.messages.filter(m => !m.slotId)
+      : session.messages.filter(m => m.slotId === slotKey);
+  if (!msgs.length) return null;
+  const merged = mergeSavedMessages(msgs);
+  const only = sessionSingleSlotKey(session);
+  return (
+    session.slotOverrides?.[slotKey]
+    ?? (session.overrideResult && only === slotKey ? session.overrideResult : undefined)
+    ?? merged
+  );
+}
+
+/** Whole-session day totals (all slots + overrides) for History day row & GamesView aggregates. */
+export function mergeSessionLedgerResult(session: SavedSession): CalculationResult {
+  const so = session.slotOverrides;
+  if (so && Object.keys(so).length > 0) {
+    const orderedKeys: string[] = [];
+    const seen = new Set<string>();
+    for (const m of session.messages) {
+      const k = slotKeyForSavedMessage(m);
+      if (!seen.has(k)) {
+        seen.add(k);
+        orderedKeys.push(k);
+      }
+    }
+    for (const k of Object.keys(so)) {
+      if (!seen.has(k)) {
+        seen.add(k);
+        orderedKeys.push(k);
+      }
+    }
+    const results: Segment[] = [];
+    let total = 0;
+    for (const k of orderedKeys) {
+      const slotOv = so[k];
+      if (slotOv) {
+        results.push(...slotOv.results);
+        total += slotOv.total;
+        continue;
+      }
+      const msgs = session.messages.filter(m => slotKeyForSavedMessage(m) === k);
+      const merged = mergeSavedMessages(msgs);
+      results.push(...merged.results);
+      total += merged.total;
+    }
+    return { results, total };
+  }
+  if (session.overrideResult) return session.overrideResult;
+  return mergeSavedMessages(session.messages);
+}
+
 const STORAGE_KEY = 'calc_sessions_v1';
 
 export function loadSessions(): SavedSession[] {
@@ -818,6 +896,7 @@ export function saveSessions(sessions: SavedSession[]): void {
 
 // ─── Game slots ────────────────────────────────────────────────────────────────
 
+/** Example games only — not loaded automatically; users add games in Settings. */
 export const DEFAULT_GAME_SLOTS: GameSlot[] = [
   { id: 'usa',     name: 'USA',     emoji: '🇺🇸', time: '10:00', enabled: true },
   { id: 'india',   name: 'India',   emoji: '🇮🇳', time: '14:00', enabled: true },
@@ -825,6 +904,20 @@ export const DEFAULT_GAME_SLOTS: GameSlot[] = [
   { id: 'italy',   name: 'Italy',   emoji: '🇮🇹', time: '22:00', enabled: true },
   { id: 'vietnam', name: 'Vietnam', emoji: '🇻🇳', time: '02:00', enabled: true },
 ];
+
+/**
+ * When no games exist yet, Calculator uses this only for in-memory UI / audit metadata.
+ * Never persist this id to sessions or payments.
+ */
+export const NO_CONFIGURED_SLOTS_PLACEHOLDER_ID = "__no_slots_configured__";
+
+const NO_CONFIGURED_SLOTS_PLACEHOLDER: GameSlot = {
+  id:   NO_CONFIGURED_SLOTS_PLACEHOLDER_ID,
+  name: "Add games in Settings",
+  emoji: "⚙️",
+  time: "12:00",
+  enabled: true,
+};
 
 /** Returns minutes since midnight for a "HH:MM" string. */
 export function slotMinutes(time: string): number {
@@ -846,7 +939,10 @@ export function formatSlotTime(time: string): string {
  */
 export function getCurrentSlot(slots: GameSlot[]): GameSlot {
   const enabled = slots.filter(s => s.enabled);
-  if (!enabled.length) return DEFAULT_GAME_SLOTS[1]; // fallback India (index 1)
+  if (!enabled.length) {
+    if (slots.length > 0) return slots[0];
+    return NO_CONFIGURED_SLOTS_PLACEHOLDER;
+  }
   const now = new Date();
   const cur = now.getHours() * 60 + now.getMinutes();
   const sorted = [...enabled].sort((a, b) => slotMinutes(a.time) - slotMinutes(b.time));
@@ -861,9 +957,10 @@ const PAYMENTS_KEY = "calc_payments_v1";
 
 export function loadGameSlots(): GameSlot[] {
   try {
-    return JSON.parse(localStorage.getItem(GAME_SLOTS_LS_KEY) ?? "null") ?? DEFAULT_GAME_SLOTS;
+    const raw = JSON.parse(localStorage.getItem(GAME_SLOTS_LS_KEY) ?? "null");
+    return Array.isArray(raw) ? raw : [];
   } catch {
-    return DEFAULT_GAME_SLOTS;
+    return [];
   }
 }
 export function saveGameSlots(slots: GameSlot[]): void {
@@ -874,9 +971,9 @@ export function saveGameSlots(slots: GameSlot[]): void {
   }
 }
 
-/** True if saved slots are not the built-in default list (used for LS ↔ DB migration). */
+/** True if the user has any saved games (non-empty list). */
 export function slotsDifferFromDefault(slots: GameSlot[]): boolean {
-  return JSON.stringify(slots) !== JSON.stringify(DEFAULT_GAME_SLOTS);
+  return slots.length > 0;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = { commissionPct: 5 };

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { SavedSession } from "./types";
 import {
   calculateTotal,
   processLine,
   splitWhatsAppInputByContact,
   computePatternAccuracy,
+  sessionLedgerForSlotKey,
+  mergeSessionLedgerResult,
 } from "./calcUtils";
 
 describe("calculateTotal regression scenarios", () => {
@@ -198,6 +201,65 @@ describe("splitWhatsAppInputByContact", () => {
     expect(out![1].contact).toBe("Bob");
     expect(out![1].text).toContain("Bob:");
     expect(out![1].text).toContain("30 x10");
+  });
+});
+
+describe("session ledger (History / GamesView)", () => {
+  it("sessionLedgerForSlotKey uses slotOverrides instead of raw message totals", () => {
+    const baseResult = calculateTotal("10 20 30 40 50 60 x10");
+    const session: SavedSession = {
+      id: "c|01/01/2026",
+      contact: "c",
+      date: "01/01/2026",
+      dateISO: "2026-01-01",
+      createdAt: 1,
+      messages: [
+        {
+          id: "m1",
+          timestamp: "t",
+          text: "x",
+          slotId: "usa",
+          result: baseResult,
+        },
+      ],
+      slotOverrides: {
+        usa: { results: [{ line: "99", rate: 1, isWP: false, isDouble: false, count: 1, lineTotal: 42 }], total: 42 },
+      },
+    };
+    expect(sessionLedgerForSlotKey(session, "usa")?.total).toBe(42);
+  });
+
+  it("mergeSessionLedgerResult uses slotOverrides without double-counting messages", () => {
+    const baseResult = calculateTotal("10 20 x10");
+    const session: SavedSession = {
+      id: "c|01/01/2026",
+      contact: "c",
+      date: "01/01/2026",
+      dateISO: "2026-01-01",
+      createdAt: 1,
+      messages: [
+        {
+          id: "m1",
+          timestamp: "t",
+          text: "x",
+          slotId: "usa",
+          result: baseResult,
+        },
+        {
+          id: "m2",
+          timestamp: "t2",
+          text: "y",
+          slotId: "india",
+          result: calculateTotal("11 22 x5"),
+        },
+      ],
+      slotOverrides: {
+        usa: { results: [{ line: "1", rate: 1, isWP: false, isDouble: false, count: 1, lineTotal: 7 }], total: 7 },
+      },
+    };
+    const indiaTotal = calculateTotal("11 22 x5").total;
+    const merged = mergeSessionLedgerResult(session);
+    expect(merged.total).toBe(7 + indiaTotal);
   });
 });
 

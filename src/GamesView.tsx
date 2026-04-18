@@ -4,6 +4,8 @@ import {
   slotMinutes,
   formatSlotTime,
   getCurrentSlot,
+  mergeSessionLedgerResult,
+  sessionLedgerForSlotKey,
   upsertPayment,
 } from "./calcUtils";
 import type {
@@ -113,12 +115,9 @@ function buildSlotUsers(
   const rows: UserRow[] = [];
   for (const session of sessions) {
     if (session.date !== date) continue;
-    const msgs = session.messages.filter((m) => m.slotId === slotId);
-    if (!msgs.length) continue;
-    const betTotal = msgs.reduce(
-      (s, m) => s + (m.overrideResult ?? m.result).total,
-      0
-    );
+    const ledger = sessionLedgerForSlotKey(session, slotId);
+    if (!ledger) continue;
+    const betTotal = ledger.total;
     const pid = `${session.contact}|${slotId}|${date}`;
     const pr = payments.find((p) => p.id === pid);
     rows.push({
@@ -167,15 +166,7 @@ function buildMonthData(
   for (const date of allDates) {
     const totalBets = sessions
       .filter((s) => s.date === date)
-      .reduce(
-        (sum, s) =>
-          sum +
-          s.messages.reduce(
-            (ms, m) => ms + (m.overrideResult ?? m.result).total,
-            0
-          ),
-        0
-      );
+      .reduce((sum, s) => sum + mergeSessionLedgerResult(s).total, 0);
     const dayPayments = payments.filter(
       (p) => p.date === date && p.amountPaid !== null
     );

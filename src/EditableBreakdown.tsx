@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import type { CalculationResult, Segment } from "./types";
 import { processLine } from "./calcUtils";
 
@@ -6,6 +7,13 @@ interface Props {
   result: CalculationResult;
   onChange: (updated: CalculationResult) => void;
   compact?: boolean;
+  /** When true, row 🗑 opens a confirm dialog (e.g. History) instead of deleting immediately. */
+  confirmRowDelete?: boolean;
+  /** When set, row numbers are toggles (blue / red) for multi-select bulk delete from the parent. */
+  rowSelection?: {
+    selectedIndices: ReadonlySet<number>;
+    onToggleRowSelect: (rowIndex: number) => void;
+  };
 }
 
 function rebuild(results: Segment[], failedLines?: string[]): CalculationResult {
@@ -89,7 +97,13 @@ function EditForm({
   );
 }
 
-export default function EditableBreakdown({ result, onChange, compact }: Props) {
+export default function EditableBreakdown({
+  result,
+  onChange,
+  compact,
+  confirmRowDelete,
+  rowSelection,
+}: Props) {
   // Editing existing rows
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editLine, setEditLine] = useState("");
@@ -103,6 +117,8 @@ export default function EditableBreakdown({ result, onChange, compact }: Props) 
   const [fixRate, setFixRate] = useState("");
   const [fixWP, setFixWP] = useState(false);
   const [fixAB, setFixAB] = useState(false);
+
+  const [pendingRowDeleteIdx, setPendingRowDeleteIdx] = useState<number | null>(null);
 
   const failedLines = result.failedLines ?? [];
 
@@ -130,9 +146,19 @@ export default function EditableBreakdown({ result, onChange, compact }: Props) 
     setEditingIdx(null);
   };
 
-  const deleteRow = (i: number) => {
+  const runDeleteRow = (i: number) => {
     onChange(rebuild(result.results.filter((_, idx) => idx !== i), failedLines));
     if (editingIdx === i) setEditingIdx(null);
+  };
+
+  const requestDeleteRow = (i: number) => {
+    if (confirmRowDelete) setPendingRowDeleteIdx(i);
+    else runDeleteRow(i);
+  };
+
+  const confirmPendingRowDelete = () => {
+    if (pendingRowDeleteIdx !== null) runDeleteRow(pendingRowDeleteIdx);
+    setPendingRowDeleteIdx(null);
   };
 
   // ── Failed line fix ──────────────────────────────────────────────────────────
@@ -166,6 +192,54 @@ export default function EditableBreakdown({ result, onChange, compact }: Props) 
   const numSize = compact ? "text-sm" : "text-[17px]";
   const totalSize = compact ? "text-base" : "text-[28px]";
   const circleSize = compact ? "w-5 h-5 text-[11px]" : "min-w-[28px] h-7 text-sm";
+
+  const rowDeleteModal =
+    confirmRowDelete &&
+    pendingRowDeleteIdx !== null &&
+    typeof document !== "undefined"
+      ? createPortal(
+          <div
+            className="fixed inset-0 z-[20000] flex items-center justify-center p-4"
+            style={{ background: "rgba(0,0,0,0.45)" }}
+            onClick={e => {
+              if (e.target === e.currentTarget) setPendingRowDeleteIdx(null);
+            }}
+          >
+            <div
+              className="bg-white rounded-[20px] shadow-2xl w-full max-w-[400px] overflow-hidden border-2 border-[#dde8f0]"
+              role="dialog"
+              aria-labelledby="eb-delete-row-title"
+              aria-modal="true"
+            >
+              <div className="px-5 py-4 border-b border-[#e7eef7]">
+                <h2 id="eb-delete-row-title" className="text-[18px] font-extrabold text-red-700">
+                  Delete this line?
+                </h2>
+                <p className="text-[13px] text-gray-600 mt-2 leading-snug">
+                  This removes one betting row from the breakdown and updates the total.
+                </p>
+              </div>
+              <div className="p-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={confirmPendingRowDelete}
+                  className="flex-1 py-3 rounded-[12px] text-[15px] font-bold bg-red-600 text-white active:opacity-90"
+                >
+                  Yes, Delete
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingRowDeleteIdx(null)}
+                  className="flex-1 py-3 rounded-[12px] text-[15px] font-semibold bg-gray-100 text-gray-700 active:opacity-90"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )
+      : null;
 
   return (
     <div className="space-y-2">
@@ -239,9 +313,28 @@ export default function EditableBreakdown({ result, onChange, compact }: Props) 
             />
           ) : (
             <div className="flex items-start gap-2 p-3">
-              <span className={`${circleSize} rounded-full bg-[#1d6fb8] text-white font-bold flex items-center justify-center shrink-0 mt-0.5`}>
-                {i + 1}
-              </span>
+              {rowSelection ? (
+                <button
+                  type="button"
+                  title="Tap to select or deselect for bulk delete"
+                  aria-pressed={rowSelection.selectedIndices.has(i)}
+                  onClick={e => {
+                    e.stopPropagation();
+                    rowSelection.onToggleRowSelect(i);
+                  }}
+                  className={`${circleSize} rounded-full font-bold flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                    rowSelection.selectedIndices.has(i)
+                      ? "bg-red-600 text-white ring-2 ring-red-800 shadow-sm"
+                      : "bg-[#1d6fb8] text-white hover:bg-[#165fa3]"
+                  }`}
+                >
+                  {i + 1}
+                </button>
+              ) : (
+                <span className={`${circleSize} rounded-full bg-[#1d6fb8] text-white font-bold flex items-center justify-center shrink-0 mt-0.5`}>
+                  {i + 1}
+                </span>
+              )}
               <div className="flex-1 min-w-0">
                 <div className={`${numSize} font-mono text-[#333] mb-1 break-all leading-relaxed`}>
                   {(r.line.match(/(?<!\d)\d{2}(?!\d)/g) ?? [r.line]).join(", ")}
@@ -255,7 +348,7 @@ export default function EditableBreakdown({ result, onChange, compact }: Props) 
               </div>
               <div className="flex flex-col gap-1 shrink-0">
                 <button onClick={() => startEdit(i, r)} title="Edit" className="text-[12px] text-[#1d6fb8] border border-[#c5cfe0] rounded-lg px-2 py-1 hover:bg-blue-50 transition-colors">✏️</button>
-                <button onClick={() => deleteRow(i)} title="Delete" className="text-[12px] text-gray-400 border border-gray-200 rounded-lg px-2 py-1 hover:text-red-400 hover:border-red-200 transition-colors">🗑</button>
+                <button onClick={() => requestDeleteRow(i)} title="Delete" className="text-[12px] text-gray-400 border border-gray-200 rounded-lg px-2 py-1 hover:text-red-400 hover:border-red-200 transition-colors">🗑</button>
               </div>
             </div>
           )}
@@ -268,6 +361,7 @@ export default function EditableBreakdown({ result, onChange, compact }: Props) 
         <span className={`${totalSize} font-extrabold text-white`}>{result.total}</span>
       </div>
 
+      {rowDeleteModal}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import {
-  DEFAULT_GAME_SLOTS, DEFAULT_SETTINGS,
+  DEFAULT_SETTINGS,
   loadGameSlots, saveGameSlots,
   loadSettings,  saveSettings,
 } from "./calcUtils";
@@ -13,6 +13,7 @@ import {
   loadPaymentsByDate, loadPaymentsByMonth,
   migrateOldFirestoreData,
   logCalculationAudit,
+  syncPaymentSlotNamesToMatchSlots,
 } from "./firestoreDb";
 import type { GameSlot, AppSettings } from "./types";
 import { toastApiError } from "./apiToast";
@@ -30,7 +31,7 @@ export function useAppData() {
   const [loading,    setLoading]    = useState(true);
   const [dbError,    setDbError]    = useState(false);
   const [writeError, setWriteError] = useState(false);
-  const [slots,      setSlots]      = useState<GameSlot[]>(DEFAULT_GAME_SLOTS);
+  const [slots,      setSlots]      = useState<GameSlot[]>([]);
   const [settings,   setSettings]   = useState<AppSettings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
@@ -81,6 +82,17 @@ export function useAppData() {
     saveGameSlots(u);
     try {
       await saveSlotsDB(u);
+      try {
+        await syncPaymentSlotNamesToMatchSlots(u);
+      } catch (syncErr) {
+        console.warn("syncPaymentSlotNamesToMatchSlots failed:", syncErr);
+        toastApiError(
+          syncErr,
+          "Game list saved, but payment records could not all be relabeled. Try again or edit a payment to refresh.",
+        );
+        setWriteError(true);
+        return;
+      }
       setWriteError(false);
     } catch (err) {
       toastApiError(err, "Could not save game list to the database.");

@@ -26,6 +26,7 @@ import {
   orderBy,
   limit,
   writeBatch,
+  type DocumentData,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { toastApiError } from "./apiToast";
@@ -35,7 +36,7 @@ import type {
   AppSettings,
   PaymentRecord,
 } from "./types";
-import { DEFAULT_GAME_SLOTS, DEFAULT_SETTINGS, toDateISO } from "./calcUtils";
+import { DEFAULT_SETTINGS, toDateISO } from "./calcUtils";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,6 +47,35 @@ import { DEFAULT_GAME_SLOTS, DEFAULT_SETTINGS, toDateISO } from "./calcUtils";
  */
 const toDocId = (id: string) => id.replace(/\//g, "__SL__");
 
+/** Reverse {@link toDocId} — restores `/` in ids read from Firestore document paths. */
+const fromDocId = (docId: string) => docId.replace(/__SL__/g, "/");
+
+/**
+ * Firestore rejects `undefined` at any depth. Optional fields must be omitted, not set to undefined.
+ */
+function stripUndefinedDeep(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(stripUndefinedDeep);
+  const obj = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(obj)) {
+    const v = obj[key];
+    if (v === undefined) continue;
+    out[key] = stripUndefinedDeep(v);
+  }
+  return out;
+}
+
+function hydrateSavedSession(
+  docSnap: { id: string; data: () => unknown },
+): SavedSession {
+  const data = docSnap.data() as SavedSession;
+  const id =
+    typeof data.id === "string" && data.id.length > 0 ? data.id : fromDocId(docSnap.id);
+  return { ...data, id };
+}
+
 const configRef = (id: string) => doc(db, "config", id);
 
 // ─── Slots ────────────────────────────────────────────────────────────────────
@@ -55,14 +85,17 @@ export async function loadSlotsDB(): Promise<GameSlot[]> {
     // Try new location first, then legacy location
     for (const ref of [configRef("slots"), doc(db, "data", "slots")]) {
       const snap = await getDoc(ref);
-      if (snap.exists()) return snap.data().slots as GameSlot[];
+      if (snap.exists()) {
+        const raw = snap.data().slots;
+        return Array.isArray(raw) ? (raw as GameSlot[]) : [];
+      }
     }
-    return DEFAULT_GAME_SLOTS;
+    return [];
   } catch (e) {
     toastApiError(e, "Could not load game slots from the database.", {
       toastId: "load-config-db",
     });
-    return DEFAULT_GAME_SLOTS;
+    return [];
   }
 }
 
@@ -73,6 +106,41 @@ export async function saveSlotsDB(slots: GameSlot[]): Promise<void> {
     console.error("saveSlotsDB failed:", e);
     throw e;
   }
+}
+
+/**
+ * After renaming a game in settings, payment docs may still hold the old `slotName`.
+ * Sessions only store `slotId` on messages, so they already follow the live slot list.
+ * Returns how many payment documents were updated.
+ */
+export async function syncPaymentSlotNamesToMatchSlots(slots: GameSlot[]): Promise<number> {
+  const nameById = new Map(slots.map(s => [s.id, s.name]));
+  const uniqIds = [...new Set(slots.map(s => s.id))];
+  let touched = 0;
+  const CHUNK = 400;
+
+  for (const slotId of uniqIds) {
+    const desiredName = nameById.get(slotId);
+    if (desiredName == null) continue;
+
+    const snap = await getDocs(query(collection(db, "payments"), where("slotId", "==", slotId)));
+    const toUpdate = snap.docs.filter(
+      d => (d.data().slotName as string | undefined) !== desiredName,
+    );
+
+    for (let i = 0; i < toUpdate.length; i += CHUNK) {
+      const slice = toUpdate.slice(i, i + CHUNK);
+      const batch = writeBatch(db);
+      const now = Date.now();
+      for (const d of slice) {
+        batch.update(d.ref, { slotName: desiredName, updatedAt: now });
+      }
+      if (slice.length > 0) await batch.commit();
+      touched += slice.length;
+    }
+  }
+
+  return touched;
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
@@ -107,7 +175,8 @@ export async function saveSessionDoc(session: SavedSession): Promise<void> {
   const dateISO = toDateISO(session.date);
   const docId = toDocId(session.id);
   try {
-    await setDoc(doc(db, "sessions", docId), { ...session, dateISO });
+    const payload = stripUndefinedDeep({ ...session, dateISO }) as DocumentData;
+    await setDoc(doc(db, "sessions", docId), payload);
   } catch (e) {
     console.error("saveSessionDoc failed:", docId, e);
     throw e;
@@ -125,7 +194,7 @@ export async function loadSessionsByDate(
     const snap = await getDocs(
       query(collection(db, "sessions"), where("date", "==", date))
     );
-    return snap.docs.map((d) => d.data() as SavedSession);
+    return snap.docs.map((d) => hydrateSavedSession(d));
   } catch (e) {
     console.error("loadSessionsByDate failed:", e);
     toastApiError(e, "Could not load sessions for this day.", {
@@ -148,7 +217,7 @@ export async function loadSessionsByMonth(
         where("dateISO", "<=", `${year}-${pad(month)}-31`)
       )
     );
-    return snap.docs.map((d) => d.data() as SavedSession);
+    return snap.docs.map((d) => hydrateSavedSession(d));
   } catch (e) {
     toastApiError(e, "Could not load sessions for this month.", {
       toastId: "load-month-ledger",
@@ -163,7 +232,8 @@ export async function savePaymentDoc(payment: PaymentRecord): Promise<void> {
   const dateISO = toDateISO(payment.date);
   const docId = toDocId(payment.id);
   try {
-    await setDoc(doc(db, "payments", docId), { ...payment, dateISO });
+    const payload = stripUndefinedDeep({ ...payment, dateISO }) as DocumentData;
+    await setDoc(doc(db, "payments", docId), payload);
   } catch (e) {
     console.error("savePaymentDoc failed:", docId, e);
     throw e;
@@ -406,6 +476,25 @@ export async function deleteCalculationAuditLog(id: string): Promise<void> {
   }
 }
 
+/** Deletes many audit docs in batches (Firestore write batch limit). */
+export async function deleteCalculationAuditLogsByIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  try {
+    const CHUNK = 450;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const slice = ids.slice(i, i + CHUNK);
+      const batch = writeBatch(db);
+      for (const id of slice) {
+        batch.delete(doc(db, "calc_audit_logs", id));
+      }
+      await batch.commit();
+    }
+  } catch (e) {
+    console.warn("deleteCalculationAuditLogsByIds failed:", e);
+    throw e;
+  }
+}
+
 /**
  * Clears audit logs in the dedicated collection.
  * Returns deleted count (best effort).
@@ -492,6 +581,25 @@ export async function deleteReportIssueLog(id: string): Promise<void> {
     await deleteDoc(doc(db, "report_issue_logs", id));
   } catch (e) {
     console.warn("deleteReportIssueLog failed:", e);
+    throw e;
+  }
+}
+
+/** Deletes many report-issue docs in batches (Firestore write batch limit). */
+export async function deleteReportIssueLogsByIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  try {
+    const CHUNK = 450;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const slice = ids.slice(i, i + CHUNK);
+      const batch = writeBatch(db);
+      for (const id of slice) {
+        batch.delete(doc(db, "report_issue_logs", id));
+      }
+      await batch.commit();
+    }
+  } catch (e) {
+    console.warn("deleteReportIssueLogsByIds failed:", e);
     throw e;
   }
 }

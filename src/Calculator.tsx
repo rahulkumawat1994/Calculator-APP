@@ -10,6 +10,7 @@ import {
   getCurrentSlot,
   formatSlotTime,
   slotMinutes,
+  NO_CONFIGURED_SLOTS_PLACEHOLDER_ID,
   upsertPaymentStubs,
   type ParsedMessage,
 } from "./calcUtils";
@@ -252,6 +253,8 @@ export default function Calculator({
   const selectedSlot =
     enabledSlots.find((s) => s.id === selectedSlotId) ?? autoSlot;
 
+  const canPersistToHistory = slots.some((s) => s.enabled);
+
   const updateBlockText = (id: string, text: string) => {
     const split = splitWhatsAppInputByContact(text.trim());
     if (split && split.length > 1) {
@@ -323,6 +326,16 @@ export default function Calculator({
     setCopied(false);
     setIsSaved(false);
     setSavedInfo(null);
+
+    const hasEnabledSlot = slots.some(s => s.enabled);
+    const hasWaBlock = blocks.some(b => {
+      const wa = parseWhatsAppMessages(b.text);
+      return Boolean(wa && wa.length > 0);
+    });
+    if (hasWaBlock && !hasEnabledSlot) {
+      toast.error("Add and enable at least one game in Settings before calculating WhatsApp chats.");
+      return;
+    }
 
     const next: PerUserCalc[] = [];
     for (let idx = 0; idx < blocks.length; idx++) {
@@ -407,6 +420,10 @@ export default function Calculator({
 
   const handleSave = async (): Promise<boolean> => {
     if (!userResults?.length) return false;
+    if (!canPersistToHistory || selectedSlot.id === NO_CONFIGURED_SLOTS_PLACEHOLDER_ID) {
+      toast.error("Add and enable at least one game in Settings before saving to History.");
+      return false;
+    }
     setSaving(true);
     try {
       const allTagged: TaggedMessages[] = [];
@@ -648,20 +665,26 @@ export default function Calculator({
           <div className="text-[13px] font-bold text-gray-400 uppercase tracking-widest mb-2">
             📌 These numbers are for (fallback if no timestamp detected):
           </div>
-          <select
-            value={selectedSlotId}
-            onChange={(e) => {
-              setSelectedSlotId(e.target.value);
-              setSlotOverridden(true);
-            }}
-            className="w-full text-[18px] font-extrabold text-[#1d6fb8] bg-[#f0f6ff] border-2 border-[#c5d8f0] rounded-[12px] px-4 py-3 outline-none cursor-pointer"
-          >
-            {enabledSlots.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.emoji} {s.name} Game — {formatSlotTime(s.time)}
-              </option>
-            ))}
-          </select>
+          {enabledSlots.length === 0 ? (
+            <div className="rounded-[12px] border-2 border-amber-200 bg-amber-50 px-4 py-3 text-left text-[14px] font-semibold text-amber-900">
+              No games yet. Open <strong>Settings</strong>, tap <strong>Add game</strong>, then save — then return here to pick a game for manual entries.
+            </div>
+          ) : (
+            <select
+              value={selectedSlotId}
+              onChange={(e) => {
+                setSelectedSlotId(e.target.value);
+                setSlotOverridden(true);
+              }}
+              className="w-full text-[18px] font-extrabold text-[#1d6fb8] bg-[#f0f6ff] border-2 border-[#c5d8f0] rounded-[12px] px-4 py-3 outline-none cursor-pointer"
+            >
+              {enabledSlots.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.emoji} {s.name} Game — {formatSlotTime(s.time)}
+                </option>
+              ))}
+            </select>
+          )}
           {showDetectedBadge ? (
             <div className="mt-2 space-y-1">
               <p className="text-[12px] text-green-700 font-semibold">
@@ -874,7 +897,7 @@ export default function Calculator({
               {canSaveBeforeClear && (
                 <button
                   type="button"
-                  disabled={saving}
+                  disabled={saving || !canPersistToHistory}
                   onClick={() => void saveThenClear()}
                   className="w-full py-3 rounded-[12px] text-[15px] font-bold bg-green-600 text-white disabled:opacity-50 active:opacity-90"
                 >
@@ -1065,7 +1088,7 @@ export default function Calculator({
               <button
                 type="button"
                 onClick={() => void handleSave()}
-                disabled={saving}
+                disabled={saving || !canPersistToHistory}
                 className={`w-full py-4 text-[17px] font-bold rounded-[16px] border-2 transition-all active:opacity-80 disabled:opacity-50 ${
                   anyWAMode
                     ? "bg-green-600 text-white border-green-600 shadow-sm"

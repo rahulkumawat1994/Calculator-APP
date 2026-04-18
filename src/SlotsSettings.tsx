@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { DEFAULT_GAME_SLOTS, formatSlotTime } from "./calcUtils";
+import { formatSlotTime } from "./calcUtils";
 import type { GameSlot, AppSettings } from "./types";
 
 interface Props {
@@ -80,7 +80,7 @@ export default function SlotsSettings({ slots, settings, onSaveSlots, onSaveSett
   };
 
   const handleReset = () => {
-    setLocalSlots(DEFAULT_GAME_SLOTS);
+    setLocalSlots([]);
     setLocalSettings({ commissionPct: 5 });
     setPctRaw("5");
     setDirty(true);
@@ -162,6 +162,12 @@ export default function SlotsSettings({ slots, settings, onSaveSlots, onSaveSett
         <p className="text-[14px] text-gray-500 mb-4">
           Edit name and result time. Toggle on/off. Add or remove games.
         </p>
+
+        {localSlots.length === 0 ? (
+          <p className="text-[14px] text-[#1d6fb8] font-semibold mb-4 rounded-[12px] border border-[#d5e6f7] bg-[#f4f8ff] px-3 py-2.5">
+            No games yet — tap <strong>+ Add Game</strong> to create your first one, then <strong>Save Changes</strong>.
+          </p>
+        ) : null}
 
         <div className="space-y-4">
           {localSlots.map(slot => (
@@ -286,7 +292,7 @@ export default function SlotsSettings({ slots, settings, onSaveSlots, onSaveSett
           onClick={handleReset}
           className="flex-1 py-4 text-[16px] font-semibold text-gray-600 bg-white border-2 border-gray-200 rounded-[16px] active:opacity-80 transition-opacity"
         >
-          Reset to Default
+          Clear games list
         </button>
         <button
           onClick={handleSave}
