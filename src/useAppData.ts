@@ -40,28 +40,45 @@ export function useAppData() {
 
     async function loadAll() {
       try {
-        // ── One-time localStorage → Firestore migration ──────────────────────
-        if (!localStorage.getItem(LS_MIGRATED)) {
-          const lsSlots = loadGameSlots();
-          const lsSet   = loadSettings();
-          await saveSlotsDB(lsSlots);
-          await saveSettingsDB(lsSet);
-          localStorage.setItem(LS_MIGRATED, "1");
-        }
-
         // ── One-time bulk-doc → per-doc Firestore migration ──────────────────
         if (!localStorage.getItem(DB_MIGRATED_KEY)) {
           await migrateOldFirestoreData();
           localStorage.setItem(DB_MIGRATED_KEY, "1");
         }
 
-        // ── Load slots + settings (small, always needed upfront) ─────────────
-        const [sl, se] = await withTimeout(
+        // ── Load slots + settings from Firestore (source of truth when online) ─
+        const [remoteSlots, remoteSettings] = await withTimeout(
           Promise.all([loadSlotsDB(), loadSettingsDB()]),
           6000
         );
+
+        let sl = remoteSlots;
+        let se = remoteSettings;
+
+        // One-time localStorage → Firestore migration. If the user later clears
+        // localStorage, `fb_migrated_v1` is missing again — we must NOT push
+        // empty LS over existing Firestore data.
+        if (!localStorage.getItem(LS_MIGRATED)) {
+          const lsSlots = loadGameSlots();
+          const lsSet = loadSettings();
+
+          if (lsSlots.length > 0) {
+            await saveSlotsDB(lsSlots);
+            sl = lsSlots;
+          }
+
+          if (lsSet.commissionPct !== DEFAULT_SETTINGS.commissionPct) {
+            await saveSettingsDB(lsSet);
+            se = lsSet;
+          }
+
+          localStorage.setItem(LS_MIGRATED, "1");
+        }
+
         setSlots(sl);
         setSettings(se);
+        saveGameSlots(sl);
+        saveSettings(se);
       } catch (err) {
         console.warn("Firebase unavailable, using localStorage:", err);
         toastApiError(err, "Could not connect to the database. Using offline data.");

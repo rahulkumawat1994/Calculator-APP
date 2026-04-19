@@ -482,23 +482,21 @@ export default function Calculator({
       }
 
       const date = todayDate();
-      const timeStr = new Date()
-        .toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-        })
-        .toLowerCase();
-
-      for (const u of userResults) {
-        if (u.isWAMode) continue;
-        const uniqueId = `manual|${date.replace(/\//g, "-")}|${
-          u.blockId
-        }|${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        const existing = await loadSessionsByDate(date);
-        const contact = u.label.trim() || "Manual Entry";
-        const updated = mergeIntoSessions(existing, [
-          {
+      const manualBlocks = userResults.filter((u) => !u.isWAMode);
+      if (manualBlocks.length > 0) {
+        const manualMessages: ParsedMessage[] = manualBlocks.map((u) => {
+          const timeStr = new Date()
+            .toLocaleTimeString("en-US", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true,
+            })
+            .toLowerCase();
+          const uniqueId = `manual|${date.replace(/\//g, "-")}|${
+            u.blockId
+          }|${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          const contact = u.label.trim() || "Manual Entry";
+          return {
             id: uniqueId,
             contact,
             date,
@@ -506,14 +504,18 @@ export default function Calculator({
             text: u.text.trim(),
             result: u.result,
             slotId: selectedSlot.id,
-          },
-        ]);
+          };
+        });
+
+        const existing = await loadSessionsByDate(date);
+        const updated = mergeIntoSessions(existing, manualMessages);
         await Promise.all(updated.map((s) => saveSessionDoc(s)));
 
         const existingPayments = await loadPaymentsByDate(date);
+        const contacts = [...new Set(manualMessages.map((m) => m.contact))];
         const newPayments = upsertPaymentStubs(
           existingPayments,
-          [contact],
+          contacts,
           selectedSlot,
           date,
           settings.commissionPct
@@ -528,7 +530,7 @@ export default function Calculator({
         slotNames.add(selectedSlot.name);
       }
 
-      const manualDates = userResults.some((u) => !u.isWAMode) ? [date] : [];
+      const manualDates = manualBlocks.length > 0 ? [date] : [];
       const parts = [dateSummary, ...manualDates].filter(Boolean);
       const mergedDates = [
         ...new Set(
