@@ -540,6 +540,39 @@ export default function GamesView({
     }
   };
 
+  /** Clear received amount for a single user in one game row. */
+  const clearUserReceivedAmount = async (
+    paymentId: string,
+    contact: string,
+    slot: GameSlot,
+    currentPct?: number
+  ) => {
+    setEditState(null);
+    const commissionPct = currentPct ?? settings.commissionPct;
+    const updatedPayments = upsertPayment(dayPayments, {
+      id: paymentId,
+      contact,
+      slotId: slot.id,
+      slotName: slot.name,
+      date: selectedDate,
+      amountPaid: null,
+      commissionPct,
+    });
+    const saved = updatedPayments.find((p) => p.id === paymentId);
+    if (!saved) return;
+    try {
+      await savePaymentDoc(saved);
+      setDayPayments(updatedPayments);
+      putDayDataCache(selectedDate, daySessions, updatedPayments);
+      toast.success(`Removed received amount for ${contact}.`);
+    } catch (err) {
+      toastApiError(
+        err,
+        "Save failed. Please check your internet connection and try again."
+      );
+    }
+  };
+
   /** Set amount paid = game total for every player in this slot (selected day). */
   const markAllFullyPaidForSlot = async (slot: GameSlot) => {
     const users = buildSlotUsers(daySessions, dayPayments, slot.id, selectedDate);
@@ -899,11 +932,11 @@ export default function GamesView({
                                             },
                                           })
                                         }
-                                        className="w-full py-3 rounded-[14px] text-[14px] font-bold border-2 border-green-600 text-green-800 bg-green-50 active:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        className="w-full py-2.5 rounded-[12px] text-[13px] font-bold border-2 border-green-600 text-green-800 bg-green-50 active:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
                                       >
                                         {bulkSavingSlotId === slot.id
                                           ? "Saving…"
-                                          : "✓ Mark all fully paid"}
+                                          : "✓ Mark all full paid"}
                                       </button>
                                     )}
                                     {users.some((u) => u.amountPaid !== null) && (
@@ -925,22 +958,18 @@ export default function GamesView({
                                             },
                                           })
                                         }
-                                        className="w-full py-3 rounded-[14px] text-[14px] font-bold border-2 border-rose-300 text-rose-800 bg-rose-50 active:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        className="w-full py-2.5 rounded-[12px] text-[13px] font-bold border-2 border-rose-300 text-rose-800 bg-rose-50 active:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
                                       >
                                         {bulkSavingSlotId === slot.id
                                           ? "Saving…"
-                                          : "↺ Reset payments"}
+                                          : "↺ Clear all received"}
                                       </button>
                                     )}
                                   </div>
-                                  <div className="text-[11px] text-gray-400 mt-1.5 text-center leading-snug">
-                                    Mark all fills each person to full total. Reset clears
-                                    recorded amounts back to blank for this game/day.
-                                  </div>
                                 </div>
                               )}
-                              <div className="divide-y-2 divide-[#f0f4f8]">
-                                {users.map((user) => {
+                              <div className="space-y-3 px-3 pb-3">
+                                {users.map((user, userIdx) => {
                                   const effectivePct =
                                     user.commissionPct ??
                                     settings.commissionPct;
@@ -953,14 +982,44 @@ export default function GamesView({
                                     !notRecorded && pending === 0;
                                   const hasDebt = !notRecorded && pending > 0;
                                   const overpaid = !notRecorded && pending < 0;
+                                  const status = notRecorded
+                                    ? {
+                                        label: "Not recorded",
+                                        cls: "bg-gray-100 text-gray-600 border-gray-200",
+                                      }
+                                    : fullyPaid
+                                    ? {
+                                        label: "Fully paid",
+                                        cls: "bg-green-100 text-green-700 border-green-200",
+                                      }
+                                    : hasDebt
+                                    ? {
+                                        label: `Pending ₹${pending}`,
+                                        cls: "bg-orange-100 text-orange-700 border-orange-200",
+                                      }
+                                    : {
+                                        label: `Overpaid ₹${Math.abs(pending)}`,
+                                        cls: "bg-blue-100 text-blue-700 border-blue-200",
+                                      };
 
                                   return (
                                     <div
                                       key={user.contact}
-                                      className="px-5 py-4"
+                                      className={`rounded-[16px] border px-4 py-4 shadow-[0_1px_0_rgba(29,111,184,0.04)] ${
+                                        userIdx % 2 === 0
+                                          ? "border-[#dfe8f6] bg-white"
+                                          : "border-[#d7e3f5] bg-[#f9fbff]"
+                                      }`}
                                     >
-                                      <div className="text-[17px] font-extrabold text-[#1a1a1a] mb-1">
-                                        👤 {user.contact}
+                                      <div className="mb-1 flex items-center justify-between gap-3">
+                                        <div className="text-[17px] font-extrabold text-[#1a1a1a]">
+                                          👤 {user.contact}
+                                        </div>
+                                        <span
+                                          className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-bold ${status.cls}`}
+                                        >
+                                          {status.label}
+                                        </span>
                                       </div>
                                       <div className="text-[15px] text-gray-500 mb-3">
                                         Game total:{" "}
@@ -1065,46 +1124,48 @@ export default function GamesView({
                                                   slot.name
                                                 )
                                               }
-                                              className="flex-1 py-3 bg-green-600 text-white text-[16px] font-bold rounded-[12px] active:opacity-80"
+                                              className="flex-1 py-2.5 bg-green-600 text-white text-[14px] font-bold rounded-[10px] active:opacity-80"
                                             >
                                               ✓ Save
                                             </button>
                                             <button
                                               onClick={() => setEditState(null)}
-                                              className="px-5 py-3 bg-gray-100 text-gray-500 text-[16px] font-semibold rounded-[12px] active:opacity-80"
+                                              className="px-4 py-2.5 bg-gray-100 text-gray-500 text-[14px] font-semibold rounded-[10px] active:opacity-80"
                                             >
                                               Cancel
                                             </button>
                                           </div>
                                         </div>
                                       ) : notRecorded ? (
-                                        <div className="grid grid-cols-2 gap-2">
-                                          <button
-                                            onClick={() =>
-                                              startEdit(
-                                                user.paymentId,
-                                                null,
-                                                user.commissionPct
-                                              )
-                                            }
-                                            className="py-4 bg-[#1d6fb8] text-white text-[15px] font-bold rounded-[14px] flex items-center justify-center gap-2 active:opacity-80 shadow-sm"
-                                          >
-                                            👆 Enter amount
-                                          </button>
-                                          <button
-                                            onClick={() =>
-                                              void markUserFullyPaid(
-                                                user.paymentId,
-                                                user.contact,
-                                                slot,
-                                                user.betTotal,
-                                                user.commissionPct
-                                              )
-                                            }
-                                            className="py-4 bg-indigo-600 text-white text-[15px] font-bold rounded-[14px] flex items-center justify-center gap-2 active:opacity-80 shadow-sm"
-                                          >
-                                            ✓ Paid fully
-                                          </button>
+                                        <div className="rounded-[14px] border-2 border-[#dfe8f8] bg-[#f8fbff] p-3">
+                                          <div className="grid grid-cols-2 gap-2">
+                                            <button
+                                              onClick={() =>
+                                                startEdit(
+                                                  user.paymentId,
+                                                  null,
+                                                  user.commissionPct
+                                                )
+                                              }
+                                              className="py-2.5 bg-[#1d6fb8] text-white text-[13px] font-bold rounded-[10px] flex items-center justify-center gap-2 active:opacity-80 shadow-sm"
+                                            >
+                                              Enter amount
+                                            </button>
+                                            <button
+                                              onClick={() =>
+                                                void markUserFullyPaid(
+                                                  user.paymentId,
+                                                  user.contact,
+                                                  slot,
+                                                  user.betTotal,
+                                                  user.commissionPct
+                                                )
+                                              }
+                                              className="py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-[10px] flex items-center justify-center gap-2 active:opacity-80 shadow-sm"
+                                            >
+                                              Paid fully
+                                            </button>
+                                          </div>
                                         </div>
                                       ) : fullyPaid ? (
                                         <div className="flex items-center justify-between bg-green-50 border-2 border-green-200 rounded-[14px] px-4 py-3">
@@ -1123,18 +1184,33 @@ export default function GamesView({
                                             <span className="text-[13px] font-bold text-green-700 bg-green-100 px-3 py-1 rounded-full">
                                               ✅ Fully Paid
                                             </span>
-                                            <button
-                                              onClick={() =>
-                                                startEdit(
-                                                  user.paymentId,
-                                                  user.amountPaid,
-                                                  user.commissionPct
-                                                )
-                                              }
-                                              className="text-[12px] text-gray-400 underline"
-                                            >
-                                              Edit
-                                            </button>
+                                            <div className="flex items-center gap-2">
+                                              <button
+                                                onClick={() =>
+                                                  startEdit(
+                                                    user.paymentId,
+                                                    user.amountPaid,
+                                                    user.commissionPct
+                                                  )
+                                                }
+                                                className="text-[12px] text-gray-400 underline"
+                                              >
+                                                Edit
+                                              </button>
+                                              <button
+                                                onClick={() =>
+                                                  void clearUserReceivedAmount(
+                                                    user.paymentId,
+                                                    user.contact,
+                                                    slot,
+                                                    user.commissionPct
+                                                  )
+                                                }
+                                                className="text-[12px] text-rose-600 underline"
+                                              >
+                                                Remove
+                                              </button>
+                                            </div>
                                           </div>
                                         </div>
                                       ) : hasDebt ? (
@@ -1151,18 +1227,33 @@ export default function GamesView({
                                                 Commission: {effectivePct}%
                                               </div>
                                             </div>
-                                            <button
-                                              onClick={() =>
-                                                startEdit(
-                                                  user.paymentId,
-                                                  user.amountPaid,
-                                                  user.commissionPct
-                                                )
-                                              }
-                                              className="text-[13px] text-gray-400 underline"
-                                            >
-                                              Edit
-                                            </button>
+                                            <div className="flex flex-col items-end gap-1.5">
+                                              <button
+                                                onClick={() =>
+                                                  startEdit(
+                                                    user.paymentId,
+                                                    user.amountPaid,
+                                                    user.commissionPct
+                                                  )
+                                                }
+                                                className="text-[13px] text-gray-400 underline"
+                                              >
+                                                Edit
+                                              </button>
+                                              <button
+                                                onClick={() =>
+                                                  void clearUserReceivedAmount(
+                                                    user.paymentId,
+                                                    user.contact,
+                                                    slot,
+                                                    user.commissionPct
+                                                  )
+                                                }
+                                                className="text-[12px] text-rose-600 underline"
+                                              >
+                                                Remove
+                                              </button>
+                                            </div>
                                           </div>
                                           <div className="bg-orange-100 px-4 py-2.5 text-center">
                                             <span className="text-[15px] font-extrabold text-orange-700">
@@ -1187,18 +1278,33 @@ export default function GamesView({
                                             <span className="text-[13px] font-bold text-blue-700 bg-blue-100 px-3 py-1 rounded-full">
                                               Extra: ₹{Math.abs(pending)}
                                             </span>
-                                            <button
-                                              onClick={() =>
-                                                startEdit(
-                                                  user.paymentId,
-                                                  user.amountPaid,
-                                                  user.commissionPct
-                                                )
-                                              }
-                                              className="text-[12px] text-gray-400 underline"
-                                            >
-                                              Edit
-                                            </button>
+                                            <div className="flex items-center gap-2">
+                                              <button
+                                                onClick={() =>
+                                                  startEdit(
+                                                    user.paymentId,
+                                                    user.amountPaid,
+                                                    user.commissionPct
+                                                  )
+                                                }
+                                                className="text-[12px] text-gray-400 underline"
+                                              >
+                                                Edit
+                                              </button>
+                                              <button
+                                                onClick={() =>
+                                                  void clearUserReceivedAmount(
+                                                    user.paymentId,
+                                                    user.contact,
+                                                    slot,
+                                                    user.commissionPct
+                                                  )
+                                                }
+                                                className="text-[12px] text-rose-600 underline"
+                                              >
+                                                Remove
+                                              </button>
+                                            </div>
                                           </div>
                                         </div>
                                       ) : null}
