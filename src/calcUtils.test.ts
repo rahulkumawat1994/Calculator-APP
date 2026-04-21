@@ -171,6 +171,33 @@ describe("parser structure checks", () => {
     expect(out.total).toBe(30);
     expect(out.results[0]).toMatchObject({ count: 3, rate: 10, lineTotal: 30 });
   });
+
+  it("parses same-digit run + AB/A/B glued before rate (000B100 / 000A100 / 000AB100)", () => {
+    expect(processLine("000B100")[0]).toMatchObject({
+      line: "000",
+      rate: 100,
+      count: 1,
+      isDouble: false,
+      lineTotal: 100,
+    });
+    expect(processLine("000A100")[0]).toMatchObject({
+      line: "000",
+      rate: 100,
+      count: 1,
+      isDouble: false,
+      lineTotal: 100,
+    });
+    expect(processLine("000AB100")[0]).toMatchObject({
+      line: "000",
+      rate: 100,
+      count: 2,
+      isDouble: true,
+      lineTotal: 200,
+    });
+    const r = calculateTotal("000B100\n000A100");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(200);
+  });
 });
 
 describe("splitWhatsAppInputByContact", () => {

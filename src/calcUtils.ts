@@ -357,6 +357,10 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/[\uFF10-\uFF19]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30));
   // Between digits: `;` `|` `/` `\` or tabs often used instead of space (keep `,` for comma-rate lines)
   t = t.replace(/(?<=\d)[\t]*[;|/\\]+[\t]*(?=\d)/g, " ");
+  // Same-digit run (3+ identical digits) then AB / A / B then rate, with no x/=/*
+  // (common paste: "000B100", "000A100", "000AB100"). Rewrites so SEP_RATE_RE applies;
+  // suffix letter is preserved for solidRunAbMultiplier (A/B = 1×, AB = 2×).
+  t = t.replace(/\b((\d)\2{2,})\s*(AB|A|B)\s*(\d+)\b/gi, (_, run, _d, mark, rate) => `${run}x${rate}${mark}`);
   // Some users type A/B marker letters directly before rate marker:
   //   222bbb=50  /  999abx10
   // Insert a separator so rate parsing still recognizes =/x/* markers.
