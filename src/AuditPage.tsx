@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import { toastApiError } from "./apiToast";
+import ConfirmDialog from "./ConfirmDialog";
 import {
   clearCalculationAuditLogs,
   deleteCalculationAuditLog,
@@ -28,6 +29,14 @@ function fmtTs(ts?: number): string {
   }
 }
 
+interface ConfirmState {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  danger?: boolean;
+  run: () => void;
+}
+
 export default function AuditPage() {
   const [rows, setRows] = useState<CalculationAuditLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,6 +47,7 @@ export default function AuditPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [confirmBulkIds, setConfirmBulkIds] = useState<string[] | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -92,9 +102,19 @@ export default function AuditPage() {
     }
   };
 
-  const handleDeleteOne = async (id: string) => {
-    const ok = window.confirm("Delete this audit log?");
-    if (!ok) return;
+  const handleDeleteOne = async (id: string, skipConfirm = false) => {
+    if (!skipConfirm) {
+      setConfirmState({
+        title: "Delete this audit log?",
+        message: "This row will be permanently removed.",
+        confirmLabel: "Yes, Delete",
+        danger: true,
+        run: () => {
+          void handleDeleteOne(id, true);
+        },
+      });
+      return;
+    }
     setBusyId(id);
     setError(null);
     try {
@@ -115,11 +135,20 @@ export default function AuditPage() {
     }
   };
 
-  const handlePruneDuplicates = async () => {
-    const ok = window.confirm(
-      "Delete duplicate inputs from Firestore? For each identical pasted input (newest 2000 logs), only the newest row is kept and older copies are removed. This cannot be undone.",
-    );
-    if (!ok) return;
+  const handlePruneDuplicates = async (skipConfirm = false) => {
+    if (!skipConfirm) {
+      setConfirmState({
+        title: "Delete duplicate inputs?",
+        message:
+          "For identical pasted inputs (newest 2000 logs), only the newest row is kept and older copies are removed.\n\nThis cannot be undone.",
+        confirmLabel: "Yes, Delete Duplicates",
+        danger: true,
+        run: () => {
+          void handlePruneDuplicates(true);
+        },
+      });
+      return;
+    }
     setPruningDupes(true);
     setError(null);
     try {
@@ -139,9 +168,19 @@ export default function AuditPage() {
     }
   };
 
-  const handleClearAll = async () => {
-    const ok = window.confirm("Delete all audit logs? This cannot be undone.");
-    if (!ok) return;
+  const handleClearAll = async (skipConfirm = false) => {
+    if (!skipConfirm) {
+      setConfirmState({
+        title: "Delete all audit logs?",
+        message: "This cannot be undone.",
+        confirmLabel: "Yes, Delete All",
+        danger: true,
+        run: () => {
+          void handleClearAll(true);
+        },
+      });
+      return;
+    }
     setClearing(true);
     setError(null);
     try {
@@ -284,10 +323,25 @@ export default function AuditPage() {
         )}
       </div>
 
+      <ConfirmDialog
+        open={confirmState !== null}
+        title={confirmState?.title ?? ""}
+        message={confirmState?.message ?? ""}
+        confirmLabel={confirmState?.confirmLabel ?? "Confirm"}
+        danger={confirmState?.danger ?? false}
+        onCancel={() => setConfirmState(null)}
+        onConfirm={() => {
+          const cfg = confirmState;
+          if (!cfg) return;
+          setConfirmState(null);
+          cfg.run();
+        }}
+      />
+
       {typeof document !== "undefined" && confirmBulkIds && confirmBulkIds.length > 0
         ? createPortal(
             <div
-              className="fixed inset-0 z-[20000] flex items-center justify-center p-4"
+              className="fixed inset-0 z-20000 flex items-center justify-center p-4"
               style={{ background: "rgba(0,0,0,0.45)" }}
               onClick={e => { if (e.target === e.currentTarget) setConfirmBulkIds(null); }}
             >

@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
+import { toast } from "react-toastify";
 import { toastApiError } from "./apiToast";
+import ConfirmDialog from "./ConfirmDialog";
 import {
   slotMinutes,
   formatSlotTime,
@@ -226,6 +228,14 @@ interface EditState {
   showPct: boolean; // whether the % editor is expanded
 }
 
+interface ConfirmState {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  danger?: boolean;
+  run: () => void;
+}
+
 function SkeletonSlotCards() {
   return (
     <div className="space-y-4 animate-pulse">
@@ -265,6 +275,9 @@ export default function GamesView({
   const [selectedDate, setSelectedDate] = useState(today);
   const [openSlots, setOpenSlots] = useState<Set<string>>(new Set());
   const [editState, setEditState] = useState<EditState | null>(null);
+  /** Slot id currently running “mark all paid” Firestore writes */
+  const [bulkSavingSlotId, setBulkSavingSlotId] = useState<string | null>(null);
+  const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const [monthYear, setMonthYear] = useState({
     year: nowDate.getFullYear(),
     month: nowDate.getMonth() + 1,
@@ -491,6 +504,114 @@ export default function GamesView({
       }
     }
     setEditState(null);
+  };
+
+  /** One-tap: set a single user's received amount equal to this game's total. */
+  const markUserFullyPaid = async (
+    paymentId: string,
+    contact: string,
+    slot: GameSlot,
+    betTotal: number,
+    currentPct?: number
+  ) => {
+    setEditState(null);
+    const commissionPct = currentPct ?? settings.commissionPct;
+    const updatedPayments = upsertPayment(dayPayments, {
+      id: paymentId,
+      contact,
+      slotId: slot.id,
+      slotName: slot.name,
+      date: selectedDate,
+      amountPaid: betTotal,
+      commissionPct,
+    });
+    const saved = updatedPayments.find((p) => p.id === paymentId);
+    if (!saved) return;
+    try {
+      await savePaymentDoc(saved);
+      setDayPayments(updatedPayments);
+      putDayDataCache(selectedDate, daySessions, updatedPayments);
+      toast.success(`Marked fully paid for ${contact}.`);
+    } catch (err) {
+      toastApiError(
+        err,
+        "Save failed. Please check your internet connection and try again."
+      );
+    }
+  };
+
+  /** Set amount paid = game total for every player in this slot (selected day). */
+  const markAllFullyPaidForSlot = async (slot: GameSlot) => {
+    const users = buildSlotUsers(daySessions, dayPayments, slot.id, selectedDate);
+    const targets = users.filter((u) => u.amountPaid !== u.betTotal);
+    if (targets.length === 0) return;
+    setEditState(null);
+    setBulkSavingSlotId(slot.id);
+    inc();
+    try {
+      let updated = [...dayPayments];
+      for (const u of targets) {
+        const commissionPct = u.commissionPct ?? settings.commissionPct;
+        updated = upsertPayment(updated, {
+          id: u.paymentId,
+          contact: u.contact,
+          slotId: slot.id,
+          slotName: slot.name,
+          date: selectedDate,
+          amountPaid: u.betTotal,
+          commissionPct,
+        });
+      }
+      const saves = targets.map((u) => updated.find((p) => p.id === u.paymentId)!);
+      await Promise.all(saves.map((p) => savePaymentDoc(p)));
+      setDayPayments(updated);
+      putDayDataCache(selectedDate, daySessions, updated);
+      toast.success(
+        `Saved ${targets.length} payment${targets.length === 1 ? "" : "s"} — ${slot.name} fully settled for this day.`
+      );
+    } catch (err) {
+      toastApiError(err, "Could not save all payments. Try again.");
+    } finally {
+      dec();
+      setBulkSavingSlotId(null);
+    }
+  };
+
+  /** Reset recorded paid amounts to blank for every player in this slot/day. */
+  const resetPaymentsForSlot = async (slot: GameSlot) => {
+    const users = buildSlotUsers(daySessions, dayPayments, slot.id, selectedDate);
+    const targets = users.filter((u) => u.amountPaid !== null);
+    if (targets.length === 0) return;
+    setEditState(null);
+    setBulkSavingSlotId(slot.id);
+    inc();
+    try {
+      let updated = [...dayPayments];
+      for (const u of targets) {
+        const commissionPct = u.commissionPct ?? settings.commissionPct;
+        updated = upsertPayment(updated, {
+          id: u.paymentId,
+          contact: u.contact,
+          slotId: slot.id,
+          slotName: slot.name,
+          date: selectedDate,
+          amountPaid: null,
+          commissionPct,
+        });
+      }
+      const saves = targets.map((u) => updated.find((p) => p.id === u.paymentId)!);
+      await Promise.all(saves.map((p) => savePaymentDoc(p)));
+      setDayPayments(updated);
+      putDayDataCache(selectedDate, daySessions, updated);
+      toast.success(
+        `Reset ${targets.length} payment${targets.length === 1 ? "" : "s"} — ${slot.name} cleared for this day.`
+      );
+    } catch (err) {
+      toastApiError(err, "Could not reset payments. Try again.");
+    } finally {
+      dec();
+      setBulkSavingSlotId(null);
+    }
   };
 
   const toggleSlot = (id: string) =>
@@ -749,6 +870,75 @@ export default function GamesView({
                             </div>
                           ) : (
                             <>
+                              {(summary.pending !== 0 ||
+                                users.some((u) => u.amountPaid !== null)) && (
+                                <div className="px-5 pt-4 pb-2">
+                                  <div
+                                    className={`grid gap-2 ${
+                                      summary.pending !== 0 &&
+                                      users.some((u) => u.amountPaid !== null)
+                                        ? "grid-cols-2"
+                                        : "grid-cols-1"
+                                    }`}
+                                  >
+                                    {summary.pending !== 0 && (
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          bulkSavingSlotId === slot.id || dayLoading
+                                        }
+                                        onClick={() =>
+                                          setConfirmState({
+                                            title: `Mark all fully paid — ${slot.name}`,
+                                            message:
+                                              `Date: ${selectedDate}\n\n` +
+                                              `“Received” will be set to each person’s game total.`,
+                                            confirmLabel: "Yes, Mark Fully Paid",
+                                            run: () => {
+                                              void markAllFullyPaidForSlot(slot);
+                                            },
+                                          })
+                                        }
+                                        className="w-full py-3 rounded-[14px] text-[14px] font-bold border-2 border-green-600 text-green-800 bg-green-50 active:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        {bulkSavingSlotId === slot.id
+                                          ? "Saving…"
+                                          : "✓ Mark all fully paid"}
+                                      </button>
+                                    )}
+                                    {users.some((u) => u.amountPaid !== null) && (
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          bulkSavingSlotId === slot.id || dayLoading
+                                        }
+                                        onClick={() =>
+                                          setConfirmState({
+                                            title: `Reset payments — ${slot.name}`,
+                                            message:
+                                              `Date: ${selectedDate}\n\n` +
+                                              `All recorded received amounts for this game will be cleared back to blank.`,
+                                            confirmLabel: "Yes, Reset",
+                                            danger: true,
+                                            run: () => {
+                                              void resetPaymentsForSlot(slot);
+                                            },
+                                          })
+                                        }
+                                        className="w-full py-3 rounded-[14px] text-[14px] font-bold border-2 border-rose-300 text-rose-800 bg-rose-50 active:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        {bulkSavingSlotId === slot.id
+                                          ? "Saving…"
+                                          : "↺ Reset payments"}
+                                      </button>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-gray-400 mt-1.5 text-center leading-snug">
+                                    Mark all fills each person to full total. Reset clears
+                                    recorded amounts back to blank for this game/day.
+                                  </div>
+                                </div>
+                              )}
                               <div className="divide-y-2 divide-[#f0f4f8]">
                                 {users.map((user) => {
                                   const effectivePct =
@@ -888,18 +1078,34 @@ export default function GamesView({
                                           </div>
                                         </div>
                                       ) : notRecorded ? (
-                                        <button
-                                          onClick={() =>
-                                            startEdit(
-                                              user.paymentId,
-                                              null,
-                                              user.commissionPct
-                                            )
-                                          }
-                                          className="w-full py-4 bg-[#1d6fb8] text-white text-[16px] font-bold rounded-[14px] flex items-center justify-center gap-2 active:opacity-80 shadow-sm"
-                                        >
-                                          👆 Tap to enter amount received
-                                        </button>
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <button
+                                            onClick={() =>
+                                              startEdit(
+                                                user.paymentId,
+                                                null,
+                                                user.commissionPct
+                                              )
+                                            }
+                                            className="py-4 bg-[#1d6fb8] text-white text-[15px] font-bold rounded-[14px] flex items-center justify-center gap-2 active:opacity-80 shadow-sm"
+                                          >
+                                            👆 Enter amount
+                                          </button>
+                                          <button
+                                            onClick={() =>
+                                              void markUserFullyPaid(
+                                                user.paymentId,
+                                                user.contact,
+                                                slot,
+                                                user.betTotal,
+                                                user.commissionPct
+                                              )
+                                            }
+                                            className="py-4 bg-indigo-600 text-white text-[15px] font-bold rounded-[14px] flex items-center justify-center gap-2 active:opacity-80 shadow-sm"
+                                          >
+                                            ✓ Paid fully
+                                          </button>
+                                        </div>
                                       ) : fullyPaid ? (
                                         <div className="flex items-center justify-between bg-green-50 border-2 border-green-200 rounded-[14px] px-4 py-3">
                                           <div>
@@ -1297,6 +1503,20 @@ export default function GamesView({
           )}
         </>
       )}
+      <ConfirmDialog
+        open={confirmState !== null}
+        title={confirmState?.title ?? ""}
+        message={confirmState?.message ?? ""}
+        confirmLabel={confirmState?.confirmLabel ?? "Confirm"}
+        danger={confirmState?.danger ?? false}
+        onCancel={() => setConfirmState(null)}
+        onConfirm={() => {
+          const cfg = confirmState;
+          if (!cfg) return;
+          setConfirmState(null);
+          cfg.run();
+        }}
+      />
     </div>
   );
 }

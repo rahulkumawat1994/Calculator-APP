@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import { toastApiError } from "./apiToast";
+import ConfirmDialog from "./ConfirmDialog";
 import { calculateTotal } from "./calcUtils";
 import {
   clearCalculationAuditLogs,
@@ -26,6 +27,14 @@ import {
 
 const REPORT_PUSH_TOOLTIP =
   "Notify this browser when someone submits a pattern issue from the calculator.";
+
+interface ConfirmState {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  danger?: boolean;
+  run: () => void;
+}
 
 function fmtTs(ts?: number): string {
   if (!ts) return "-";
@@ -70,6 +79,7 @@ export default function AdminPage() {
   const [confirmBulkReportIds, setConfirmBulkReportIds] = useState<
     string[] | null
   >(null);
+  const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const [bulkAuditDeleting, setBulkAuditDeleting] = useState(false);
   const [bulkReportDeleting, setBulkReportDeleting] = useState(false);
   const [previewAudit, setPreviewAudit] = useState<CalculationAuditLog | null>(
@@ -282,9 +292,19 @@ export default function AdminPage() {
     }
   };
 
-  const deleteAudit = async (id: string) => {
-    const ok = window.confirm("Delete this audit log?");
-    if (!ok) return;
+  const deleteAudit = async (id: string, skipConfirm = false) => {
+    if (!skipConfirm) {
+      setConfirmState({
+        title: "Delete this audit log?",
+        message: "This row will be permanently removed.",
+        confirmLabel: "Yes, Delete",
+        danger: true,
+        run: () => {
+          void deleteAudit(id, true);
+        },
+      });
+      return;
+    }
     setBusyAuditId(id);
     setError(null);
     try {
@@ -306,9 +326,19 @@ export default function AdminPage() {
     }
   };
 
-  const clearAudits = async () => {
-    const ok = window.confirm("Delete all audit logs? This cannot be undone.");
-    if (!ok) return;
+  const clearAudits = async (skipConfirm = false) => {
+    if (!skipConfirm) {
+      setConfirmState({
+        title: "Delete all audit logs?",
+        message: "This cannot be undone.",
+        confirmLabel: "Yes, Delete All",
+        danger: true,
+        run: () => {
+          void clearAudits(true);
+        },
+      });
+      return;
+    }
     setClearingAudit(true);
     setError(null);
     try {
@@ -325,11 +355,20 @@ export default function AdminPage() {
     }
   };
 
-  const pruneAuditDupes = async () => {
-    const ok = window.confirm(
-      "Delete duplicate inputs from Firestore? For each identical pasted input (newest 2000 logs), only the newest row is kept. This cannot be undone."
-    );
-    if (!ok) return;
+  const pruneAuditDupes = async (skipConfirm = false) => {
+    if (!skipConfirm) {
+      setConfirmState({
+        title: "Delete duplicate inputs?",
+        message:
+          "For identical pasted inputs (newest 2000 logs), only the newest row is kept and older copies are removed.\n\nThis cannot be undone.",
+        confirmLabel: "Yes, Delete Duplicates",
+        danger: true,
+        run: () => {
+          void pruneAuditDupes(true);
+        },
+      });
+      return;
+    }
     setPruningAuditDupes(true);
     setError(null);
     try {
@@ -350,9 +389,19 @@ export default function AdminPage() {
     }
   };
 
-  const deleteReport = async (id: string) => {
-    const ok = window.confirm("Delete this report issue?");
-    if (!ok) return;
+  const deleteReport = async (id: string, skipConfirm = false) => {
+    if (!skipConfirm) {
+      setConfirmState({
+        title: "Delete this report issue?",
+        message: "This row will be permanently removed.",
+        confirmLabel: "Yes, Delete",
+        danger: true,
+        run: () => {
+          void deleteReport(id, true);
+        },
+      });
+      return;
+    }
     setBusyReportId(id);
     setError(null);
     try {
@@ -374,11 +423,19 @@ export default function AdminPage() {
     }
   };
 
-  const clearReports = async () => {
-    const ok = window.confirm(
-      "Delete all report issues? This cannot be undone."
-    );
-    if (!ok) return;
+  const clearReports = async (skipConfirm = false) => {
+    if (!skipConfirm) {
+      setConfirmState({
+        title: "Delete all report issues?",
+        message: "This cannot be undone.",
+        confirmLabel: "Yes, Delete All",
+        danger: true,
+        run: () => {
+          void clearReports(true);
+        },
+      });
+      return;
+    }
     setClearingReport(true);
     setError(null);
     try {
@@ -990,13 +1047,27 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={confirmState !== null}
+        title={confirmState?.title ?? ""}
+        message={confirmState?.message ?? ""}
+        confirmLabel={confirmState?.confirmLabel ?? "Confirm"}
+        danger={confirmState?.danger ?? false}
+        onCancel={() => setConfirmState(null)}
+        onConfirm={() => {
+          const cfg = confirmState;
+          if (!cfg) return;
+          setConfirmState(null);
+          cfg.run();
+        }}
+      />
 
       {typeof document !== "undefined" &&
       confirmBulkAuditIds &&
       confirmBulkAuditIds.length > 0
         ? createPortal(
             <div
-              className="fixed inset-0 z-[20000] flex items-center justify-center p-4"
+              className="fixed inset-0 z-20000 flex items-center justify-center p-4"
               style={{ background: "rgba(0,0,0,0.45)" }}
               onClick={(e) => {
                 if (e.target === e.currentTarget) setConfirmBulkAuditIds(null);
@@ -1050,7 +1121,7 @@ export default function AdminPage() {
       confirmBulkReportIds.length > 0
         ? createPortal(
             <div
-              className="fixed inset-0 z-[20000] flex items-center justify-center p-4"
+              className="fixed inset-0 z-20000 flex items-center justify-center p-4"
               style={{ background: "rgba(0,0,0,0.45)" }}
               onClick={(e) => {
                 if (e.target === e.currentTarget) setConfirmBulkReportIds(null);
