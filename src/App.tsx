@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import Calculator from "./Calculator";
-import History from "./History";
-import GamesView from "./GamesView";
-import SlotsSettings from "./SlotsSettings";
 import { useAppData } from "./useAppData";
 import { LoadingProvider } from "./TopProgressBar";
+
+const History = lazy(() => import("./History"));
+const GamesView = lazy(() => import("./GamesView"));
+const SlotsSettings = lazy(() => import("./SlotsSettings"));
 
 type Tab = "calculator" | "history" | "games" | "settings";
 
@@ -103,38 +104,48 @@ export default function App() {
           />
         </div>
 
-        {tab === "history" && (
-          <History
-            slots={slots}
-            loadSessionsByDate={loadSessionsByDate}
-            loadPaymentsByDate={loadPaymentsByDate}
-            loadSessionDatesForMonth={loadSessionDatesForMonth}
-            saveSessionDoc={saveSessionDoc}
-            deleteSessionDoc={deleteSessionDoc}
-            deletePaymentsByContactDate={deletePaymentsByContactDate}
-          />
-        )}
+        {tab !== "calculator" && (
+          <Suspense
+            fallback={
+              <div className="py-12 text-center text-[15px] font-semibold text-[#1d6fb8]">
+                Loading…
+              </div>
+            }
+          >
+            {tab === "history" && (
+              <History
+                slots={slots}
+                loadSessionsByDate={loadSessionsByDate}
+                loadPaymentsByDate={loadPaymentsByDate}
+                loadSessionDatesForMonth={loadSessionDatesForMonth}
+                saveSessionDoc={saveSessionDoc}
+                deleteSessionDoc={deleteSessionDoc}
+                deletePaymentsByContactDate={deletePaymentsByContactDate}
+              />
+            )}
 
-        {tab === "games" && (
-          <GamesView
-            slots={slots}
-            settings={settings}
-            loadSessionsByDate={loadSessionsByDate}
-            loadSessionsByMonth={loadSessionsByMonth}
-            loadSessionDatesForMonth={loadSessionDatesForMonth}
-            loadPaymentsByDate={loadPaymentsByDate}
-            loadPaymentsByMonth={loadPaymentsByMonth}
-            savePaymentDoc={savePaymentDoc}
-          />
-        )}
+            {tab === "games" && (
+              <GamesView
+                slots={slots}
+                settings={settings}
+                loadSessionsByDate={loadSessionsByDate}
+                loadSessionsByMonth={loadSessionsByMonth}
+                loadSessionDatesForMonth={loadSessionDatesForMonth}
+                loadPaymentsByDate={loadPaymentsByDate}
+                loadPaymentsByMonth={loadPaymentsByMonth}
+                savePaymentDoc={savePaymentDoc}
+              />
+            )}
 
-        {tab === "settings" && (
-          <SlotsSettings
-            slots={slots}
-            settings={settings}
-            onSaveSlots={handleSaveSlots}
-            onSaveSettings={handleSaveSettings}
-          />
+            {tab === "settings" && (
+              <SlotsSettings
+                slots={slots}
+                settings={settings}
+                onSaveSlots={handleSaveSlots}
+                onSaveSettings={handleSaveSettings}
+              />
+            )}
+          </Suspense>
         )}
       </div>
     </div>
