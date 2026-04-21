@@ -349,6 +349,8 @@ export function preprocessText(text: string): string {
  */
 export function normalizeTypoTolerantInput(s: string): string {
   let t = s.normalize("NFKC");
+  // Multiplication sign from WhatsApp/keyboards -> ASCII x for rate parsing.
+  t = t.replace(/×/g, "x");
   // Fancy spaces → ASCII space
   t = t.replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, " ");
   // Zero-width / BOM

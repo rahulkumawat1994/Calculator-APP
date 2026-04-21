@@ -198,6 +198,15 @@ describe("parser structure checks", () => {
     expect(r.failedLines ?? []).toEqual([]);
     expect(r.total).toBe(200);
   });
+
+  it("accepts unicode multiply sign in rate marker (×) including single pair", () => {
+    const text = `GL 08,09,73,54,57×10
+GL 17,71,23,32×10
+GL 83×10`;
+    const out = calculateTotal(text);
+    expect(out.failedLines ?? []).toEqual([]);
+    expect(out.total).toBe(100);
+  });
 });
 
 describe("splitWhatsAppInputByContact", () => {
