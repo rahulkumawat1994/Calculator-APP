@@ -12,6 +12,9 @@ import {
   slotMinutes,
   NO_CONFIGURED_SLOTS_PLACEHOLDER_ID,
   upsertPaymentStubs,
+  detectSlotFromMarketLine,
+  splitPlainTextByMarketSlots,
+  ledgerDateStringForSlot,
   type ParsedMessage,
 } from "./calcUtils";
 import EditableBreakdown from "./EditableBreakdown";
@@ -55,13 +58,6 @@ function detectSlotFromTimestamp(
   return (
     sorted.find((s) => slotMinutes(s.time) > msgMinutes) ?? sorted[0] ?? null
   );
-}
-
-function todayDate(): string {
-  const now = new Date();
-  return `${String(now.getDate()).padStart(2, "0")}/${String(
-    now.getMonth() + 1
-  ).padStart(2, "0")}/${now.getFullYear()}`;
 }
 
 function newBlockId(): string {
@@ -137,6 +133,33 @@ function collectAllParsedWaMessages(blocks: CalcBlock[]): ParsedMessage[] {
   return out;
 }
 
+/**
+ * Plain-text slot ids for the auto-detect banner (non‑WhatsApp blocks only).
+ * Only counts blocks where at least one market label was recognized — plain
+ * numbers without a tag must not look "auto-detected".
+ */
+function collectPlainMarketSlotIds(
+  blocks: CalcBlock[],
+  slots: GameSlot[],
+  fallback: GameSlot
+): string[] {
+  const ids: string[] = [];
+  for (const b of blocks) {
+    const t = normPasteText(b.text);
+    if (!t) continue;
+    if (parseWhatsAppMessages(b.text)) continue;
+    const parts = splitPlainTextByMarketSlots(t, slots, fallback);
+    const labeled = parts.filter(
+      (p) => p.text.trim().length > 0 && p.touchedByMarketLabel
+    );
+    if (labeled.length === 0) continue;
+    for (const p of parts) {
+      if (p.text.trim().length > 0) ids.push(p.slotId);
+    }
+  }
+  return ids;
+}
+
 type PerUserCalc = {
   blockId: string;
   label: string;
@@ -190,6 +213,8 @@ export default function Calculator({
   const [waSingleFallbackSlotId, setWaSingleFallbackSlotId] = useState<
     string | null
   >(null);
+  /** Plain paste used market lines (GL / DB / …) — not WhatsApp timestamps. */
+  const [detectedViaMarket, setDetectedViaMarket] = useState(false);
   const [slotOverridden, setSlotOverridden] = useState(false);
 
   const enabledSlots = slots.filter((s) => s.enabled);
@@ -224,10 +249,21 @@ export default function Calculator({
       enabledSlots.find((s) => s.id === selectedSlotId) ?? autoSlot;
 
     if (allMsgs.length > 0) {
-      const tagged = allMsgs.map((msg) => ({
-        slotId: (detectSlotFromTimestamp(msg.timestamp, slots) ?? fallbackSlot)
-          .id,
-      }));
+      setDetectedViaMarket(false);
+      const tagged = allMsgs.map((msg) => {
+        const firstLine =
+          msg.text
+            .replace(/\r\n/g, "\n")
+            .split("\n")
+            .map((x) => x.trim())
+            .find((x) => x.length > 0) ?? "";
+        const fromMarket = firstLine
+          ? detectSlotFromMarketLine(firstLine, slots)
+          : null;
+        const fromTime = detectSlotFromTimestamp(msg.timestamp, slots);
+        const slot = fromMarket ?? fromTime ?? fallbackSlot;
+        return { slotId: slot.id };
+      });
       const summary = summarizeWaSlots(tagged, slots);
       const uniqueIds = [...new Set(tagged.map((t) => t.slotId))];
 
@@ -239,10 +275,29 @@ export default function Calculator({
         setSelectedSlotId(uniqueIds[0]);
       }
     } else {
-      setDetectedSlotsSummary(null);
-      setDetectedMultiSlots(false);
-      setWaSingleFallbackSlotId(null);
-      if (!slotOverridden) setSelectedSlotId(autoSlot.id);
+      const plainIds = collectPlainMarketSlotIds(
+        blocks,
+        slots,
+        fallbackSlot
+      );
+      if (plainIds.length > 0) {
+        setDetectedViaMarket(true);
+        const tagged = plainIds.map((id) => ({ slotId: id }));
+        const summary = summarizeWaSlots(tagged, slots);
+        const uniqueIds = [...new Set(plainIds)];
+        setDetectedSlotsSummary(summary || null);
+        setDetectedMultiSlots(uniqueIds.length > 1);
+        setWaSingleFallbackSlotId(uniqueIds.length === 1 ? uniqueIds[0] : null);
+        if (!slotOverridden && uniqueIds.length === 1) {
+          setSelectedSlotId(uniqueIds[0]);
+        }
+      } else {
+        setDetectedViaMarket(false);
+        setDetectedSlotsSummary(null);
+        setDetectedMultiSlots(false);
+        setWaSingleFallbackSlotId(null);
+        if (!slotOverridden) setSelectedSlotId(autoSlot.id);
+      }
     }
     setUserResults(null);
     setIsSaved(false);
@@ -337,6 +392,7 @@ export default function Calculator({
       return;
     }
 
+    const ledgerOpDay = new Date();
     const next: PerUserCalc[] = [];
     for (let idx = 0; idx < blocks.length; idx++) {
       const b = blocks[idx];
@@ -352,9 +408,20 @@ export default function Calculator({
       if (waMessages && waMessages.length > 0) {
         let waSlotFallbackCount = 0;
         const tagged = waMessages.map((m) => {
-          const auto = detectSlotFromTimestamp(m.timestamp, slots);
-          if (!auto) waSlotFallbackCount++;
-          return { ...m, slotId: (auto ?? selectedSlot).id };
+          const firstLine =
+            m.text
+              .replace(/\r\n/g, "\n")
+              .split("\n")
+              .map((x) => x.trim())
+              .find((x) => x.length > 0) ?? "";
+          const fromMarket = firstLine
+            ? detectSlotFromMarketLine(firstLine, slots)
+            : null;
+          const fromTime = detectSlotFromTimestamp(m.timestamp, slots);
+          if (!fromMarket && !fromTime) waSlotFallbackCount++;
+          const slot = fromMarket ?? fromTime ?? selectedSlot;
+          // Keep chat header date + id from the parser — ledger rules apply to manual only.
+          return { ...m, slotId: slot.id };
         }) as TaggedMessages[];
         const allFailed = tagged.flatMap((m) => m.result.failedLines ?? []);
         const nextResult: CalculationResult = {
@@ -383,25 +450,92 @@ export default function Calculator({
           waMessageCount: tagged.length,
         });
       } else {
-        const nextResult = calculateTotal(b.text);
-        next.push({
-          blockId: b.id,
-          label: displayLabel,
-          text: b.text,
-          result: nextResult,
-          pendingTagged: null,
-          isWAMode: false,
-          waSlotFallbackCount: 0,
-        });
-        void logCalculationAudit({
-          input: b.text,
-          mode: "manual",
-          total: nextResult.total,
-          resultCount: nextResult.results.length,
-          failedCount: nextResult.failedLines?.length ?? 0,
-          selectedSlotId: selectedSlot.id,
-          selectedSlotName: selectedSlot.name,
-        });
+        const normalized = normPasteText(b.text);
+        const parts = splitPlainTextByMarketSlots(
+          normalized,
+          slots,
+          selectedSlot
+        );
+        const useMarketSplit =
+          parts.length > 1 ||
+          (parts.length === 1 && parts[0].touchedByMarketLabel);
+
+        if (useMarketSplit) {
+          const timeStr = new Date()
+            .toLocaleTimeString("en-US", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true,
+            })
+            .toLowerCase();
+          const contact = displayLabel;
+          const tagged = parts
+            .filter((p) => p.text.trim().length > 0)
+            .map((p, j) => {
+              const body = p.text.trim();
+              const slotObj =
+                slots.find((s) => s.id === p.slotId) ?? selectedSlot;
+              const date = ledgerDateStringForSlot(slotObj, ledgerOpDay);
+              return {
+                id: `manual|${b.id}|${j}|${Date.now()}-${Math.random()
+                  .toString(36)
+                  .slice(2, 7)}`,
+                contact,
+                date,
+                timestamp: timeStr,
+                text: body,
+                result: calculateTotal(body),
+                slotId: p.slotId,
+              };
+            }) as TaggedMessages[];
+
+          if (tagged.length === 0) continue;
+
+          const allFailed = tagged.flatMap((m) => m.result.failedLines ?? []);
+          const nextResult: CalculationResult = {
+            results: tagged.flatMap((m) => m.result.results),
+            total: tagged.reduce((s, m) => s + m.result.total, 0),
+            ...(allFailed.length > 0 ? { failedLines: allFailed } : {}),
+          };
+          next.push({
+            blockId: b.id,
+            label: displayLabel,
+            text: b.text,
+            result: nextResult,
+            pendingTagged: tagged,
+            isWAMode: false,
+            waSlotFallbackCount: 0,
+          });
+          void logCalculationAudit({
+            input: b.text,
+            mode: "manual",
+            total: nextResult.total,
+            resultCount: nextResult.results.length,
+            failedCount: allFailed.length,
+            selectedSlotId: selectedSlot.id,
+            selectedSlotName: selectedSlot.name,
+          });
+        } else {
+          const nextResult = calculateTotal(b.text);
+          next.push({
+            blockId: b.id,
+            label: displayLabel,
+            text: b.text,
+            result: nextResult,
+            pendingTagged: null,
+            isWAMode: false,
+            waSlotFallbackCount: 0,
+          });
+          void logCalculationAudit({
+            input: b.text,
+            mode: "manual",
+            total: nextResult.total,
+            resultCount: nextResult.results.length,
+            failedCount: nextResult.failedLines?.length ?? 0,
+            selectedSlotId: selectedSlot.id,
+            selectedSlotName: selectedSlot.name,
+          });
+        }
       }
     }
 
@@ -426,10 +560,19 @@ export default function Calculator({
     }
     setSaving(true);
     try {
+      const saveOpDay = new Date();
       const allTagged: TaggedMessages[] = [];
       for (const u of userResults) {
-        if (u.isWAMode && u.pendingTagged?.length)
-          allTagged.push(...u.pendingTagged);
+        if (!u.pendingTagged?.length) continue;
+        u.pendingTagged.forEach((m) => {
+          const slotObj = slots.find((s) => s.id === m.slotId) ?? selectedSlot;
+          const date = ledgerDateStringForSlot(slotObj, saveOpDay);
+          if (u.isWAMode) {
+            allTagged.push({ ...m } as TaggedMessages);
+          } else {
+            allTagged.push({ ...m, date } as TaggedMessages);
+          }
+        });
       }
 
       const slotNames = new Set<string>();
@@ -481,9 +624,11 @@ export default function Calculator({
         });
       }
 
-      const date = todayDate();
-      const manualBlocks = userResults.filter((u) => !u.isWAMode);
+      const manualBlocks = userResults.filter(
+        (u) => !u.isWAMode && !u.pendingTagged?.length
+      );
       if (manualBlocks.length > 0) {
+        const manualDate = ledgerDateStringForSlot(selectedSlot, saveOpDay);
         const manualMessages: ParsedMessage[] = manualBlocks.map((u) => {
           const timeStr = new Date()
             .toLocaleTimeString("en-US", {
@@ -492,14 +637,14 @@ export default function Calculator({
               hour12: true,
             })
             .toLowerCase();
-          const uniqueId = `manual|${date.replace(/\//g, "-")}|${
+          const uniqueId = `manual|${manualDate.replace(/\//g, "-")}|${
             u.blockId
           }|${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
           const contact = u.label.trim() || "Manual Entry";
           return {
             id: uniqueId,
             contact,
-            date,
+            date: manualDate,
             timestamp: timeStr,
             text: u.text.trim(),
             result: u.result,
@@ -507,17 +652,17 @@ export default function Calculator({
           };
         });
 
-        const existing = await loadSessionsByDate(date);
+        const existing = await loadSessionsByDate(manualDate);
         const updated = mergeIntoSessions(existing, manualMessages);
         await Promise.all(updated.map((s) => saveSessionDoc(s)));
 
-        const existingPayments = await loadPaymentsByDate(date);
+        const existingPayments = await loadPaymentsByDate(manualDate);
         const contacts = [...new Set(manualMessages.map((m) => m.contact))];
         const newPayments = upsertPaymentStubs(
           existingPayments,
           contacts,
           selectedSlot,
-          date,
+          manualDate,
           settings.commissionPct
         );
         const existingIds = new Set(existingPayments.map((p) => p.id));
@@ -530,7 +675,10 @@ export default function Calculator({
         slotNames.add(selectedSlot.name);
       }
 
-      const manualDates = manualBlocks.length > 0 ? [date] : [];
+      const manualDates =
+        manualBlocks.length > 0
+          ? [ledgerDateStringForSlot(selectedSlot, saveOpDay)]
+          : [];
       const parts = [dateSummary, ...manualDates].filter(Boolean);
       const mergedDates = [
         ...new Set(
@@ -543,7 +691,9 @@ export default function Calculator({
       ].join(", ");
 
       setSavedInfo({
-        date: mergedDates || date,
+        date:
+          mergedDates ||
+          ledgerDateStringForSlot(selectedSlot, saveOpDay),
         slots: [...slotNames],
       });
       setIsSaved(true);
@@ -574,6 +724,7 @@ export default function Calculator({
     setDetectedSlotsSummary(null);
     setDetectedMultiSlots(false);
     setWaSingleFallbackSlotId(null);
+    setDetectedViaMarket(false);
     setSlotOverridden(false);
   };
 
@@ -691,14 +842,19 @@ export default function Calculator({
             <div className="mt-2 space-y-1">
               <p className="text-[12px] text-green-700 font-semibold">
                 🔍{" "}
-                {detectedMultiSlots
-                  ? `Auto-detected from message times (${detectedSlotsSummary})`
-                  : `Auto-detected from message time (${detectedSlotsSummary} Game)`}
+                {detectedViaMarket
+                  ? detectedMultiSlots
+                    ? `Auto-detected from market lines (${detectedSlotsSummary})`
+                    : `Auto-detected from market line (${detectedSlotsSummary} Game)`
+                  : detectedMultiSlots
+                    ? `Auto-detected from message times (${detectedSlotsSummary})`
+                    : `Auto-detected from message time (${detectedSlotsSummary} Game)`}
               </p>
               {detectedMultiSlots && (
                 <p className="text-[11px] text-green-700/90 leading-snug">
-                  Each line uses the game for its timestamp. The menu above is
-                  only a fallback when a time cannot be read.
+                  {detectedViaMarket
+                    ? "Each section uses the game named on its market tag. The menu above is only a fallback when no tag matches."
+                    : "Each line uses the game for its timestamp. The menu above is only a fallback when a time cannot be read."}
                 </p>
               )}
             </div>

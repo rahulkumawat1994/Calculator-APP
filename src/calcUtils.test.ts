@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SavedSession } from "./types";
+import type { GameSlot, SavedSession } from "./types";
 import {
   calculateTotal,
   processLine,
@@ -7,7 +7,23 @@ import {
   computePatternAccuracy,
   sessionLedgerForSlotKey,
   mergeSessionLedgerResult,
+  stripLeadingMarketPrefix,
+  splitPlainTextByMarketSlots,
+  detectSlotFromMarketLine,
+  ledgerDateStringForSlot,
+  slotUsesSameCalendarDayLedger,
 } from "./calcUtils";
+
+const marketTestSlots: GameSlot[] = [
+  { id: "db", name: "Delhi DB", time: "10:00", emoji: "1", enabled: true },
+  { id: "sg", name: "Shri Ganesh SG", time: "11:00", emoji: "2", enabled: true },
+  { id: "fb", name: "Faridabad", time: "12:00", emoji: "3", enabled: true },
+  { id: "gl", name: "Gali GL", time: "13:00", emoji: "4", enabled: true },
+  { id: "gb", name: "Ghaziabad GB", time: "14:00", emoji: "5", enabled: true },
+  { id: "ds", name: "Disawar DS", time: "15:00", emoji: "6", enabled: true },
+];
+
+const fallbackGl = marketTestSlots.find((s) => s.id === "gl")!;
 
 describe("calculateTotal regression scenarios", () => {
   const rows = [
@@ -296,6 +312,62 @@ describe("session ledger (History / GamesView)", () => {
     const indiaTotal = calculateTotal("11 22 x5").total;
     const merged = mergeSessionLedgerResult(session);
     expect(merged.total).toBe(7 + indiaTotal);
+  });
+});
+
+describe("market slot hints (plain paste)", () => {
+  it("stripLeadingMarketPrefix removes DB / दिल्ली style tags", () => {
+    const { slot, rest } = stripLeadingMarketPrefix(
+      "DB/दिल्ली बजार 12 34 x10",
+      marketTestSlots
+    );
+    expect(slot?.id).toBe("db");
+    expect(rest).toBe("12 34 x10");
+  });
+
+  it("detectSlotFromMarketLine maps Sg / श्री गणेश line", () => {
+    const s = detectSlotFromMarketLine("Sg 11 22 x5", marketTestSlots);
+    expect(s?.id).toBe("sg");
+  });
+
+  it("splitPlainTextByMarketSlots assigns chunks by labels", () => {
+    const raw = "10 20 x5\nFB\n30 40 x10\nGL\n50 x2";
+    const chunks = splitPlainTextByMarketSlots(
+      raw,
+      marketTestSlots,
+      fallbackGl
+    );
+    expect(chunks.map((c) => c.slotId)).toEqual([
+      "gl",
+      "fb",
+      "gl",
+    ]);
+    expect(chunks[0].touchedByMarketLabel).toBe(false);
+    expect(chunks[1].touchedByMarketLabel).toBe(true);
+    expect(chunks[1].text).toContain("30");
+    expect(chunks[2].touchedByMarketLabel).toBe(true);
+  });
+});
+
+describe("ledgerDateStringForSlot (day markets vs Disawar)", () => {
+  const op = new Date(2026, 3, 21); // 21 Apr 2026 local
+
+  it("uses previous calendar day for Gali / Faridabad-style slots", () => {
+    expect(ledgerDateStringForSlot(marketTestSlots[3], op)).toBe("20/04/2026");
+    expect(ledgerDateStringForSlot(marketTestSlots[2], op)).toBe("20/04/2026");
+  });
+
+  it("uses the same calendar day for Disawar / DS (and common spellings)", () => {
+    expect(ledgerDateStringForSlot(marketTestSlots[5], op)).toBe("21/04/2026");
+    expect(
+      slotUsesSameCalendarDayLedger({
+        id: "x",
+        name: "Deasawer Night",
+        time: "03:00",
+        emoji: "🌙",
+        enabled: true,
+      })
+    ).toBe(true);
   });
 });
 
