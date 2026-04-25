@@ -97,6 +97,20 @@ Gb`;
     expect(r.failedLines?.sort()).toEqual(["Fd", "Gb", "Gb", "Sg", "Sg"]);
   });
 
+  it("comma list with rate on next line (…30,….. then ,20)", () => {
+    const raw = `777,,,,,170ab
+33,11,99,,,,,30
+03,01,10,30,.....
+,20
+99,,,,,,90`;
+    const r = calculateTotal(raw);
+    expect(r.total).toBe(600);
+    expect(r.failedLines ?? []).toEqual([]);
+    const fourPair = r.results.find((x) => x.line === "03,01,10,30");
+    expect(fourPair?.rate).toBe(20);
+    expect(fourPair?.lineTotal).toBe(80);
+  });
+
   it("solid run with trailing bbb note remains B-only (not AB double)", () => {
     const raw = `[17/04, 3:44 pm] RESHMA SHINGH: 222bbb=50 it is "b" only
 [17/04, 3:44 pm] RESHMA SHINGH: 999bbb=50 it is "b" only`;

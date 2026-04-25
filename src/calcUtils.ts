@@ -458,6 +458,36 @@ function splitTrailingNumberRunAfterLastRate(line: string): string[] {
   return [head, tail];
 }
 
+/**
+ * Pasted lists like
+ *   `03,01,10,30,.....`
+ *   `,20`
+ * put the only rate on the line after the number row. Merging into `03,01,10,30,20`
+ * makes "last number = rate" unambiguous. Safe when `prev` is already a comma list with
+ * **≥3** two-digit tokens; `,rate` is digits only (optionally more commas).
+ */
+function mergeCommaOnlyRateContinuationLine(lines: string[]): string[] {
+  const out: string[] = [];
+  for (const line of lines) {
+    const rateOnly = /^\s*,+\s*(\d{1,5})\s*$/.exec(line);
+    if (rateOnly && out.length) {
+      const rate = rateOnly[1]!;
+      const prev = out[out.length - 1]!;
+      const core = prev.replace(/[.,\s]+$/g, "").replace(/^[\s,]+/, "");
+      const twoDigitFieldCount = core
+        .split(/,+/)
+        .map((s) => s.replace(/[^\d]/g, ""))
+        .filter((s) => s.length === 2).length;
+      if (/,/.test(prev) && twoDigitFieldCount >= 3) {
+        out[out.length - 1] = `${core},${rate}`;
+        continue;
+      }
+    }
+    out.push(line);
+  }
+  return out;
+}
+
 /** Last explicit ×rate (or last (rate)) in a merged line — used to repeat rate for continuation rows. */
 function lastExplicitRateInLine(line: string): number | null {
   const ms = [...line.matchAll(SEP_RATE_RE)];
@@ -523,6 +553,8 @@ export function calculateTotal(text: string): CalculationResult {
     logicalLines.push(...splitTrailingNumberRunAfterLastRate(line));
   }
 
+  const withCommaCont = mergeCommaOnlyRateContinuationLine(logicalLines);
+
   const mergedLines: string[] = [];
   let pending = '';
   let lastInheritedRate: number | null = null;
@@ -550,7 +582,7 @@ export function calculateTotal(text: string): CalculationResult {
     pending = "";
   };
 
-  for (const line of logicalLines) {
+  for (const line of withCommaCont) {
     const hasExplicitRate =
       /\(\d+\)/.test(line) || X_RATE_RE.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
