@@ -351,6 +351,8 @@ export function normalizeTypoTolerantInput(s: string): string {
   let t = s.normalize("NFKC");
   // Multiplication sign from WhatsApp/keyboards -> ASCII x for rate parsing.
   t = t.replace(/×/g, "x");
+  // "Rs" / "rs" (rupees) as rate, common in market lines: "55 rs10", "20.02.rs5"
+  t = t.replace(/(?<![A-Za-z])rs\s*(\d{1,5})/gi, "x$1");
   // Fancy spaces → ASCII space
   t = t.replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, " ");
   // Zero-width / BOM

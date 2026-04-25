@@ -97,6 +97,16 @@ Gb`;
     expect(r.failedLines?.sort()).toEqual(["Fd", "Gb", "Gb", "Sg", "Sg"]);
   });
 
+  it("Indian rs rate: Fb/Gb labels, space rsN and .rsN", () => {
+    const raw = `[16/04, 5:31 pm] Mahinder Singh: Fb. 55 rs10
+24.42.rs5
+[16/04, 9:01 pm] Mahinder Singh: Gb. 20.02.46.64.rs5`;
+    const r = calculateTotal(raw);
+    expect(r.total).toBe(40);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.results).toHaveLength(3);
+  });
+
   it("comma list with rate on next line (…30,….. then ,20)", () => {
     const raw = `777,,,,,170ab
 33,11,99,,,,,30

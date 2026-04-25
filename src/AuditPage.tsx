@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import { toastApiError } from "./apiToast";
@@ -48,6 +48,18 @@ export default function AuditPage() {
   const [confirmBulkIds, setConfirmBulkIds] = useState<string[] | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
+  const [failedSort, setFailedSort] = useState<"off" | "asc" | "desc">("off");
+
+  const displayRows = useMemo(() => {
+    if (failedSort === "off") return rows;
+    const fc = (r: CalculationAuditLog) => r.failedCount ?? 0;
+    return [...rows].sort((a, b) => {
+      const na = fc(a);
+      const nb = fc(b);
+      if (na !== nb) return failedSort === "asc" ? na - nb : nb - na;
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
+  }, [rows, failedSort]);
 
   const load = async () => {
     setLoading(true);
@@ -263,14 +275,52 @@ export default function AuditPage() {
                     <th className="px-3 py-2 font-bold">Slot</th>
                     <th className="px-3 py-2 font-bold">Total</th>
                     <th className="px-3 py-2 font-bold">Results</th>
-                    <th className="px-3 py-2 font-bold">Failed</th>
+                    <th className="px-3 py-2 font-bold">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFailedSort((s) =>
+                            s === "off" ? "desc" : s === "desc" ? "asc" : "off"
+                          )
+                        }
+                        className="inline-flex items-center gap-1 font-bold text-[#1a1a1a] hover:text-[#1d6fb8]"
+                        title="Sort: highest failed count → lowest → default order"
+                        aria-sort={
+                          failedSort === "off"
+                            ? "none"
+                            : failedSort === "asc"
+                              ? "ascending"
+                              : "descending"
+                        }
+                      >
+                        Failed
+                        {failedSort === "asc" && (
+                          <span className="text-[#1d6fb8]" aria-hidden>
+                            ▲
+                          </span>
+                        )}
+                        {failedSort === "desc" && (
+                          <span className="text-[#1d6fb8]" aria-hidden>
+                            ▼
+                          </span>
+                        )}
+                        {failedSort === "off" && (
+                          <span
+                            className="text-gray-300 font-normal"
+                            aria-hidden
+                          >
+                            ↕
+                          </span>
+                        )}
+                      </button>
+                    </th>
                     <th className="px-3 py-2 font-bold">WA Msg</th>
                     <th className="px-3 py-2 font-bold min-w-[340px]">Input</th>
                     <th className="px-3 py-2 font-bold">Delete</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, rowIdx) => (
+                  {displayRows.map((r, rowIdx) => (
                     <tr key={r.id} className="border-b border-[#eef2f7] align-top">
                       <td className="px-2 py-2 align-middle text-center">
                         <button

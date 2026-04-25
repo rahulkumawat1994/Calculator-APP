@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import { toastApiError } from "./apiToast";
@@ -96,6 +96,22 @@ export default function AdminPage() {
     }
   });
   const [pushError, setPushError] = useState<string | null>(null);
+  /** off = Firestore order (newest first); desc = most failed lines first; asc = fewest/OK first */
+  const [auditStatusSort, setAuditStatusSort] = useState<
+    "off" | "asc" | "desc"
+  >("off");
+
+  const displayAuditRows = useMemo(() => {
+    if (auditStatusSort === "off") return auditRows;
+    const fc = (r: CalculationAuditLog) => r.failedCount ?? 0;
+    return [...auditRows].sort((a, b) => {
+      const na = fc(a);
+      const nb = fc(b);
+      if (na !== nb)
+        return auditStatusSort === "asc" ? na - nb : nb - na;
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
+  }, [auditRows, auditStatusSort]);
 
   const load = async () => {
     setLoading(true);
@@ -637,7 +653,7 @@ export default function AdminPage() {
                 </div>
               ) : (
                 <div className="overflow-x-auto overscroll-x-contain">
-                  <table className="w-full min-w-[640px] text-left text-[11px] sm:text-[12px]">
+                  <table className="w-full min-w-[720px] text-left text-[11px] sm:text-[12px]">
                     <thead className="bg-[#f6f9fd] border-b border-[#e3edf7]">
                       <tr>
                         <th className="w-12 px-2 py-2 font-bold text-center">
@@ -646,6 +662,45 @@ export default function AdminPage() {
                         <th className="px-3 py-2 font-bold">Time</th>
                         <th className="px-3 py-2 font-bold">Mode</th>
                         <th className="px-3 py-2 font-bold">Total</th>
+                        <th className="w-[100px] px-3 py-2 font-bold">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAuditStatusSort((s) =>
+                                s === "off" ? "desc" : s === "desc" ? "asc" : "off"
+                              )
+                            }
+                            className="inline-flex items-center gap-1 font-bold text-[#1a1a1a] hover:text-[#1d6fb8]"
+                            title="Sort: failed first → OK first → default order"
+                            aria-sort={
+                              auditStatusSort === "off"
+                                ? "none"
+                                : auditStatusSort === "asc"
+                                  ? "ascending"
+                                  : "descending"
+                            }
+                          >
+                            Status
+                            {auditStatusSort === "asc" && (
+                              <span className="text-[#1d6fb8]" aria-hidden>
+                                ▲
+                              </span>
+                            )}
+                            {auditStatusSort === "desc" && (
+                              <span className="text-[#1d6fb8]" aria-hidden>
+                                ▼
+                              </span>
+                            )}
+                            {auditStatusSort === "off" && (
+                              <span
+                                className="text-gray-300 font-normal"
+                                aria-hidden
+                              >
+                                ↕
+                              </span>
+                            )}
+                          </button>
+                        </th>
                         <th className="px-3 py-2 font-bold">Slot</th>
                         <th className="px-3 py-2 font-bold min-w-[300px]">
                           Input
@@ -655,7 +710,7 @@ export default function AdminPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {auditRows.map((r, rowIdx) => (
+                      {displayAuditRows.map((r, rowIdx) => (
                         <tr
                           key={r.id}
                           className="border-b border-[#eef2f7] align-top"
@@ -687,6 +742,23 @@ export default function AdminPage() {
                           </td>
                           <td className="px-3 py-2 font-semibold">{r.mode}</td>
                           <td className="px-3 py-2 font-bold">₹{r.total}</td>
+                          <td className="px-3 py-2">
+                            {(() => {
+                              const n = r.failedCount ?? 0;
+                              return n > 0 ? (
+                                <span
+                                  className="inline-block rounded-lg bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900"
+                                  title="Lines the parser could not match"
+                                >
+                                  Failed ({n})
+                                </span>
+                              ) : (
+                                <span className="font-semibold text-emerald-700">
+                                  OK
+                                </span>
+                              );
+                            })()}
+                          </td>
                           <td className="px-3 py-2">
                             {r.mode === "wa" && r.waSlotsSummary
                               ? r.waSlotsSummary

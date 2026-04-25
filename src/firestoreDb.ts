@@ -330,7 +330,8 @@ export interface CalculationAuditPayload {
   mode: "manual" | "wa";
   total: number;
   resultCount: number;
-  failedCount: number;
+  /** Unparsed line count from `failedLines` at calculate time. Omitted on very old logs. */
+  failedCount?: number;
   selectedSlotId?: string;
   selectedSlotName?: string;
   /** WhatsApp: unique game names actually assigned per message time (not only the UI fallback). */
