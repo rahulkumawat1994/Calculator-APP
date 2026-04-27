@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { createPortal } from "react-dom";
+import { DangerActionDialog } from "./ui";
 import type { CalculationResult, Segment } from "./types";
 import {
   extractPairedNumbers,
@@ -217,53 +217,7 @@ export default function EditableBreakdown({
   const totalSize = compact ? "text-base" : "text-[28px]";
   const circleSize = compact ? "w-5 h-5 text-[11px]" : "min-w-[28px] h-7 text-sm";
 
-  const rowDeleteModal =
-    confirmRowDelete &&
-    pendingRowDeleteIdx !== null &&
-    typeof document !== "undefined"
-      ? createPortal(
-          <div
-            className="fixed inset-0 z-[20000] flex items-center justify-center p-4"
-            style={{ background: "rgba(0,0,0,0.45)" }}
-            onClick={e => {
-              if (e.target === e.currentTarget) setPendingRowDeleteIdx(null);
-            }}
-          >
-            <div
-              className="bg-white rounded-[20px] shadow-2xl w-full max-w-[400px] overflow-hidden border-2 border-[#dde8f0]"
-              role="dialog"
-              aria-labelledby="eb-delete-row-title"
-              aria-modal="true"
-            >
-              <div className="px-5 py-4 border-b border-[#e7eef7]">
-                <h2 id="eb-delete-row-title" className="text-[18px] font-extrabold text-red-700">
-                  Delete this line?
-                </h2>
-                <p className="text-[13px] text-gray-600 mt-2 leading-snug">
-                  This removes one betting row from the breakdown and updates the total.
-                </p>
-              </div>
-              <div className="p-4 flex gap-2">
-                <button
-                  type="button"
-                  onClick={confirmPendingRowDelete}
-                  className="flex-1 py-3 rounded-[12px] text-[15px] font-bold bg-red-600 text-white active:opacity-90"
-                >
-                  Yes, Delete
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPendingRowDeleteIdx(null)}
-                  className="flex-1 py-3 rounded-[12px] text-[15px] font-semibold bg-gray-100 text-gray-700 active:opacity-90"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body,
-        )
-      : null;
+  const rowDeleteDialogOpen = Boolean(confirmRowDelete && pendingRowDeleteIdx !== null);
 
   return (
     <div className="space-y-2">
@@ -387,7 +341,20 @@ export default function EditableBreakdown({
         <span className={`${totalSize} font-extrabold text-white`}>{result.total}</span>
       </div>
 
-      {rowDeleteModal}
+      <DangerActionDialog
+        open={rowDeleteDialogOpen}
+        onClose={() => setPendingRowDeleteIdx(null)}
+        onConfirm={confirmPendingRowDelete}
+        titleId="eb-delete-row-title"
+        title="Delete this line?"
+        message={
+          <p className="text-[13px] text-gray-600 leading-snug">
+            This removes one betting row from the breakdown and updates the
+            total.
+          </p>
+        }
+        confirmLabel="Yes, Delete"
+      />
     </div>
   );
 }

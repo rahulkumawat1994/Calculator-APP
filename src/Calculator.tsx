@@ -19,6 +19,8 @@ import {
 } from "./calcUtils";
 import EditableBreakdown from "./EditableBreakdown";
 import ReportIssue from "./ReportIssue";
+import { Button } from "./ui/Button";
+import { Modal } from "./ui/Modal";
 import {
   getSkipAuditOnCalculateAll,
   CALC_LOCAL_ONLY_CHANGED_EVENT,
@@ -1070,27 +1072,28 @@ export default function Calculator({
       )}
 
       {showClearConfirm && (
-        <div
-          className="fixed inset-0 z-60 flex items-center justify-center p-4"
-          style={{ background: "rgba(0,0,0,0.45)" }}
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowClearConfirm(false);
+        <Modal
+          open
+          onBackdropClick={() => {
+            if (!saving) setShowClearConfirm(false);
           }}
+          backdrop="dim"
+          overlayClassName="p-4"
         >
           <div
-            className="bg-white rounded-[20px] shadow-2xl w-full max-w-[400px] overflow-hidden border-2 border-[#dde8f0]"
+            className="w-full max-w-[400px] overflow-hidden rounded-[20px] border-2 border-[#dde8f0] bg-white shadow-2xl"
             role="dialog"
             aria-labelledby="clear-dialog-title"
             aria-modal="true"
           >
-            <div className="px-5 py-4 border-b border-[#e7eef7]">
+            <div className="border-b border-[#e7eef7] px-5 py-4">
               <h2
                 id="clear-dialog-title"
                 className="text-[18px] font-extrabold text-[#1a1a1a]"
               >
                 Clear everything?
               </h2>
-              <p className="text-[13px] text-gray-600 mt-2 leading-snug">
+              <p className="mt-2 text-[13px] leading-snug text-gray-600">
                 {canSaveBeforeClear
                   ? "You have calculated results that are not saved to History yet. Save them first, or clear without saving."
                   : Boolean(userResults?.length) && isSaved
@@ -1098,36 +1101,39 @@ export default function Calculator({
                   : "You have pasted text or extra user boxes. This will remove all of it."}
               </p>
             </div>
-            <div className="p-4 flex flex-col gap-2">
+            <div className="flex flex-col gap-2 p-4">
               {canSaveBeforeClear && (
-                <button
+                <Button
                   type="button"
+                  variant="success"
                   disabled={saving || !canPersistToHistory}
                   onClick={() => void saveThenClear()}
-                  className="w-full py-3 rounded-[12px] text-[15px] font-bold bg-green-600 text-white disabled:opacity-50 active:opacity-90"
+                  className="w-full py-3 text-[15px] font-bold"
                 >
                   {saving ? "⏳ Saving…" : "💾 Save to History & clear"}
-                </button>
+                </Button>
               )}
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 disabled={saving}
                 onClick={performClear}
-                className="w-full py-3 rounded-[12px] text-[15px] font-bold bg-red-50 text-red-700 border-2 border-red-200 disabled:opacity-50 active:opacity-90"
+                className="w-full !border-2 !border-red-200 !bg-red-50 py-3 !font-bold !text-red-700 hover:!bg-red-100"
               >
                 Clear without saving
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="outline"
                 disabled={saving}
                 onClick={() => setShowClearConfirm(false)}
-                className="w-full py-3 rounded-[12px] text-[15px] font-semibold text-gray-600 bg-white border-2 border-gray-200 disabled:opacity-50"
+                className="w-full py-3 text-[15px] font-semibold"
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {userResults && userResults.length > 0 && (

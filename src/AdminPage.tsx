@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import { toastApiError } from "./apiToast";
 import ConfirmDialog from "./ConfirmDialog";
@@ -30,6 +29,12 @@ import {
   getSkipAuditOnCalculateAll,
   setSkipAuditOnCalculateAll,
 } from "./calcLocalAuditPref";
+import {
+  filterRowsByLocalDateRange,
+  totalLabelForDateRange,
+} from "./auditDateFilter";
+import { formatAuditTimestamp } from "./formatDateTime";
+import { DangerActionDialog, Modal } from "./ui";
 
 const REPORT_PUSH_TOOLTIP =
   "Notify this browser when someone submits a pattern issue from the calculator.";
@@ -40,33 +45,6 @@ interface ConfirmState {
   confirmLabel: string;
   danger?: boolean;
   run: () => void;
-}
-
-/** `YYYY-MM-DD` in the browser’s local calendar (for date filter on `createdAt`). */
-function localDateKeyFromTimestamp(ts: number | undefined): string {
-  if (ts == null || !Number.isFinite(ts)) return "";
-  const d = new Date(ts);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function fmtTs(ts?: number): string {
-  if (!ts) return "-";
-  try {
-    return new Date(ts).toLocaleString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: true,
-    });
-  } catch {
-    return String(ts);
-  }
 }
 
 export default function AdminPage() {
@@ -143,15 +121,18 @@ export default function AdminPage() {
   const [auditStatusSort, setAuditStatusSort] = useState<
     "off" | "asc" | "desc"
   >("off");
-  /** Empty string = all dates. Otherwise `YYYY-MM-DD` (local) matching `createdAt`. */
-  const [auditDateFilter, setAuditDateFilter] = useState("");
+  /** Inclusive local date range on `createdAt` (`YYYY-MM-DD`); both empty = no filter. */
+  const [auditDateFrom, setAuditDateFrom] = useState("");
+  const [auditDateTo, setAuditDateTo] = useState("");
 
-  const dateFilteredAuditRows = useMemo(() => {
-    if (!auditDateFilter.trim()) return auditRows;
-    return auditRows.filter(
-      (r) => localDateKeyFromTimestamp(r.createdAt) === auditDateFilter
-    );
-  }, [auditRows, auditDateFilter]);
+  const hasDateRangeFilter = Boolean(
+    auditDateFrom.trim() || auditDateTo.trim()
+  );
+
+  const dateFilteredAuditRows = useMemo(
+    () => filterRowsByLocalDateRange(auditRows, auditDateFrom, auditDateTo),
+    [auditRows, auditDateFrom, auditDateTo]
+  );
 
   const displayAuditRows = useMemo(() => {
     if (auditStatusSort === "off") return dateFilteredAuditRows;
@@ -163,6 +144,20 @@ export default function AdminPage() {
       return (b.createdAt ?? 0) - (a.createdAt ?? 0);
     });
   }, [dateFilteredAuditRows, auditStatusSort]);
+
+  /** Sum of stored `total` (calculator grand total) for the current date filter. */
+  const dateFilteredTotalSum = useMemo(
+    () =>
+      dateFilteredAuditRows.reduce(
+        (s, r) => s + (Number.isFinite(r.total) ? r.total : 0),
+        0
+      ),
+    [dateFilteredAuditRows]
+  );
+  const dateFilteredProfit5Pct = useMemo(
+    () => Math.round(dateFilteredTotalSum * 0.05),
+    [dateFilteredTotalSum]
+  );
 
   const combinedAllAuditInputText = useMemo(
     () => displayAuditRows.map((r) => r.input ?? "").join("\n\n"),
@@ -557,50 +552,60 @@ export default function AdminPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#eef2f7] font-sans">
-      <div className="mx-auto w-full max-w-[1300px] px-3 py-4 sm:px-4 sm:py-5">
-        <div className="mb-4 flex flex-col gap-4 rounded-[16px] border-2 border-[#dde8f0] bg-white p-3 shadow-sm sm:flex-row sm:items-start sm:justify-between sm:p-4">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-xl font-black text-[#1a1a1a] sm:text-[22px]">
-              Admin Panel
-            </h1>
-            <p className="mt-1 text-xs text-gray-500 sm:text-[13px]">
-              <span className="hidden sm:inline">Combined view: </span>
-              Audits and user pattern reports
-            </p>
-            <div className="mt-3 inline-flex w-full max-w-[280px] rounded-[10px] border border-[#d9e6f5] bg-[#f3f7fc] p-1 sm:w-auto sm:max-w-none">
-              <button
-                type="button"
-                onClick={() => setActiveTab("audit")}
-                className={`min-h-[44px] flex-1 rounded-[8px] px-3 py-2 text-[12px] font-bold transition-colors sm:min-h-0 sm:flex-none sm:py-1.5 ${
-                  activeTab === "audit"
-                    ? "bg-[#1d6fb8] text-white"
-                    : "text-[#4a6685]"
-                }`}
+    <div className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-50 to-slate-100 font-sans text-slate-900 antialiased">
+      <div className="mx-auto w-full max-w-[1300px] px-4 py-6 sm:px-6 sm:py-8">
+        <div className="mb-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05),0_20px_25px_-5px_rgba(15,23,42,0.04)] sm:mb-8">
+          <div className="h-1 bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600" aria-hidden />
+          <div className="flex flex-col gap-5 p-5 sm:flex-row sm:items-start sm:justify-between sm:gap-6 sm:p-6">
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+                Internal
+              </p>
+              <h1 className="mt-0.5 text-2xl font-bold tracking-tight text-slate-900 sm:text-[26px]">
+                Admin
+              </h1>
+              <p className="mt-1 max-w-md text-[13px] leading-relaxed text-slate-500">
+                <span className="hidden sm:inline">Calculation audits and </span>
+                user pattern reports in one place
+              </p>
+              <div
+                className="mt-4 inline-flex w-full max-w-sm rounded-xl bg-slate-100/90 p-1 sm:w-auto sm:max-w-none"
+                role="tablist"
+                aria-label="Admin section"
               >
-                Audit
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("report")}
-                className={`min-h-[44px] flex-1 rounded-[8px] px-3 py-2 text-[12px] font-bold transition-colors sm:min-h-0 sm:flex-none sm:py-1.5 ${
-                  activeTab === "report"
-                    ? "bg-[#1d6fb8] text-white"
-                    : "text-[#4a6685]"
-                }`}
-              >
-                Report
-              </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === "audit"}
+                  onClick={() => setActiveTab("audit")}
+                  className={`min-h-[44px] flex-1 rounded-lg px-4 py-2.5 text-[13px] font-semibold transition-all sm:min-h-0 sm:flex-none sm:py-2 ${
+                    activeTab === "audit"
+                      ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/80"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  Audits
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === "report"}
+                  onClick={() => setActiveTab("report")}
+                  className={`min-h-[44px] flex-1 rounded-lg px-4 py-2.5 text-[13px] font-semibold transition-all sm:min-h-0 sm:flex-none sm:py-2 ${
+                    activeTab === "report"
+                      ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/80"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  Reports
+                </button>
+              </div>
             </div>
-          </div>
-          <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:shrink-0 sm:items-end">
-            <div className="flex w-full min-w-0 max-w-md flex-col gap-2 sm:max-w-none sm:items-stretch sm:justify-end">
-              <div className="flex items-center justify-between gap-3 rounded-[12px] border border-[#e0eaf5] bg-[#f6f9fd] px-3 py-2.5 sm:px-3">
-                <div className="min-w-0">
-                  <p className="text-[13px] font-bold text-[#1a1a1a]">
-                    Local calculate only
-                  </p>
-                </div>
+            <div className="flex w-full min-w-0 flex-col gap-3 sm:w-[min(100%,20rem)] sm:shrink-0 sm:items-stretch">
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-200/60 bg-gradient-to-r from-amber-50/90 to-amber-50/30 px-3.5 py-2.5 shadow-sm">
+                <p className="min-w-0 text-[12px] font-medium leading-snug text-amber-950/90 sm:text-[13px]">
+                  Local calculate only
+                </p>
                 <button
                   type="button"
                   role="switch"
@@ -610,7 +615,7 @@ export default function AdminPage() {
                   className={`relative h-7 w-[52px] shrink-0 cursor-pointer rounded-full border-2 transition-colors ${
                     localOnlyCalculate
                       ? "border-amber-500 bg-amber-400"
-                      : "border-[#c5d4e3] bg-[#d9e2ec]"
+                      : "border-slate-200 bg-slate-200/80"
                   }`}
                 >
                   <span
@@ -627,15 +632,15 @@ export default function AdminPage() {
                   type="button"
                   onClick={() => void toggleReportPush()}
                   title={REPORT_PUSH_TOOLTIP}
-                  className={`min-h-[44px] w-full rounded-[12px] border-2 px-3 py-2.5 text-[13px] font-bold transition-colors sm:min-h-0 sm:w-auto ${
+                  className={`min-h-[44px] w-full rounded-xl border px-3.5 py-2.5 text-[13px] font-semibold transition-colors sm:min-h-0 sm:w-auto ${
                     reportPushOn
-                      ? "border-green-300 bg-green-50 text-green-800"
-                      : "border-[#dde8f0] bg-white text-[#4a6685] hover:bg-[#f5f9ff]"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-900 ring-1 ring-emerald-100"
+                      : "border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50"
                   }`}
                 >
                   {reportPushOn
-                    ? "🔔 Report alerts: on"
-                    : "🔕 Enable report alerts"}
+                    ? "Report alerts on"
+                    : "Enable report alerts"}
                 </button>
                 <button
                   type="button"
@@ -649,166 +654,247 @@ export default function AdminPage() {
                     bulkAuditDeleting ||
                     bulkReportDeleting
                   }
-                  className="min-h-[44px] w-full rounded-[12px] bg-[#1d6fb8] px-4 py-2.5 text-[14px] font-bold text-white active:opacity-90 disabled:opacity-50 sm:min-h-0 sm:w-auto"
+                  className="min-h-[44px] w-full rounded-xl bg-blue-600 px-4 py-2.5 text-[14px] font-semibold text-white shadow-sm ring-1 ring-blue-500/20 transition-all hover:bg-blue-700 active:scale-[0.99] disabled:pointer-events-none disabled:opacity-50 sm:min-h-0 sm:w-auto"
                 >
                   Refresh
                 </button>
               </div>
-            </div>
             {pushError && (
-              <p className="text-left text-[12px] text-red-600 sm:text-right">
+              <p className="rounded-lg border border-red-100 bg-red-50 px-2.5 py-2 text-left text-[12px] text-red-700">
                 {pushError}
               </p>
             )}
+            </div>
           </div>
         </div>
 
         {error && (
-          <div className="mb-4 rounded-[16px] border-2 border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:p-4">
-            {error}
+          <div
+            className="mb-6 flex items-start gap-2 rounded-2xl border border-red-100 bg-red-50/90 px-4 py-3 text-sm text-red-800 shadow-sm sm:px-5"
+            role="alert"
+          >
+            <span className="mt-0.5 shrink-0 text-red-500" aria-hidden>
+              ●
+            </span>
+            <span className="min-w-0">{error}</span>
           </div>
         )}
 
-        <div className="space-y-4">
+        <div className="space-y-5 sm:space-y-6">
           {activeTab === "audit" && (
-            <section className="overflow-hidden rounded-[16px] border-2 border-[#dde8f0] bg-white shadow-sm">
-              <div className="flex flex-col gap-3 border-b border-[#e7eef7] p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
-                <div className="min-w-0">
-                  <h2 className="text-lg font-extrabold text-[#1a1a1a] sm:text-[18px]">
-                    Calculation Audits
-                  </h2>
-                  <p className="mt-0.5 text-[12px] text-gray-500">
-                    {displayAuditRows.length} shown
-                    {auditDateFilter
-                      ? ` (of ${auditRows.length} loaded)`
-                      : ` · ${auditRows.length} loaded`}
-                  </p>
-                  <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                    <label className="flex min-h-[40px] flex-col gap-1 sm:min-h-0 sm:flex-row sm:items-center sm:gap-2">
-                      <span className="text-[12px] font-semibold text-[#4a6685]">
-                        Date
-                      </span>
-                      <input
-                        type="date"
-                        value={auditDateFilter}
-                        onChange={(e) => setAuditDateFilter(e.target.value)}
-                        className="min-h-[40px] rounded-[10px] border-2 border-[#d9e6f5] bg-white px-2 py-1.5 text-[13px] text-[#1a1a1a] sm:min-h-0"
-                        aria-label="Filter by local date"
-                      />
-                    </label>
-                    {auditDateFilter ? (
+            <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm ring-1 ring-slate-200/40">
+              <div className="border-b border-slate-100 bg-slate-50/50">
+                <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-stretch sm:justify-between sm:gap-6 sm:p-5">
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-lg font-bold text-slate-900 sm:text-xl">
+                      Calculation audits
+                    </h2>
+                    <p className="mt-1 text-[12px] text-slate-500 sm:text-[13px]">
+                      {displayAuditRows.length} in view
+                      {hasDateRangeFilter
+                        ? ` · ${auditRows.length} loaded from server`
+                        : ` · ${auditRows.length} loaded`}
+                    </p>
+                    <div className="mt-3 flex flex-col gap-3 rounded-xl border border-slate-200/60 bg-white p-3 sm:p-3.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                        Date range
+                      </p>
+                      <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:flex-wrap min-[420px]:items-end min-[420px]:gap-3">
+                        <label className="flex min-h-[40px] flex-1 flex-col gap-1 sm:min-h-0 sm:min-w-[8rem] sm:max-w-[10rem]">
+                          <span className="shrink-0 text-[12px] font-medium text-slate-600">
+                            From
+                          </span>
+                          <input
+                            type="date"
+                            value={auditDateFrom}
+                            onChange={(e) => setAuditDateFrom(e.target.value)}
+                            max={auditDateTo || undefined}
+                            className="min-h-10 w-full min-w-0 rounded-lg border border-slate-200 bg-slate-50/50 px-2.5 py-2 text-[13px] text-slate-900 shadow-inner outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                            aria-label="Filter from local date (inclusive)"
+                          />
+                        </label>
+                        <label className="flex min-h-[40px] flex-1 flex-col gap-1 sm:min-h-0 sm:min-w-[8rem] sm:max-w-[10rem]">
+                          <span className="shrink-0 text-[12px] font-medium text-slate-600">
+                            To
+                          </span>
+                          <input
+                            type="date"
+                            value={auditDateTo}
+                            onChange={(e) => setAuditDateTo(e.target.value)}
+                            min={auditDateFrom || undefined}
+                            className="min-h-10 w-full min-w-0 rounded-lg border border-slate-200 bg-slate-50/50 px-2.5 py-2 text-[13px] text-slate-900 shadow-inner outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                            aria-label="Filter to local date (inclusive)"
+                          />
+                        </label>
+                        {hasDateRangeFilter ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAuditDateFrom("");
+                              setAuditDateTo("");
+                            }}
+                            className="h-10 self-end rounded-lg border border-slate-200 bg-white px-3.5 text-[12px] font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
+                          >
+                            Clear range
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2.5 border-t border-slate-100 pt-3 sm:gap-3">
+                        <div className="rounded-lg bg-slate-100/80 px-2.5 py-1.5 sm:px-3">
+                          <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                            {totalLabelForDateRange(auditDateFrom, auditDateTo)}
+                          </p>
+                          <p className="whitespace-nowrap text-[15px] font-bold tabular-nums text-blue-600">
+                            ₹
+                            {dateFilteredTotalSum.toLocaleString("en-IN", {
+                              maximumFractionDigits: 0,
+                            })}
+                          </p>
+                        </div>
+                        <div className="h-8 w-px bg-slate-200" aria-hidden />
+                        <div className="rounded-lg border border-emerald-100/80 bg-emerald-50/50 px-2.5 py-1.5 sm:px-3">
+                          <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-700/80">
+                            Profit (5%)
+                          </p>
+                          <p className="whitespace-nowrap text-[15px] font-bold tabular-nums text-emerald-800">
+                            ₹
+                            {dateFilteredProfit5Pct.toLocaleString("en-IN", {
+                              maximumFractionDigits: 0,
+                            })}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex w-full flex-col justify-start gap-2 sm:w-[min(100%,11rem)] sm:shrink-0">
+                    {selectedAuditIds.size > 0 && (
                       <button
                         type="button"
-                        onClick={() => setAuditDateFilter("")}
-                        className="min-h-[40px] self-start rounded-[10px] border border-[#d5e4f5] bg-[#f3f7fc] px-3 py-1.5 text-[12px] font-bold text-[#1d6fb8] sm:min-h-0"
+                        onClick={() =>
+                          setConfirmBulkAuditIds([...selectedAuditIds])
+                        }
+                        disabled={
+                          loading ||
+                          clearingAudit ||
+                          pruningAuditDupes ||
+                          bulkAuditDeleting
+                        }
+                        className="h-10 w-full rounded-lg bg-red-700 text-[12px] font-semibold text-white shadow-sm transition hover:bg-red-800 disabled:opacity-50"
                       >
-                        All dates
+                        Delete ({selectedAuditIds.size})
                       </button>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                  {selectedAuditIds.size > 0 && (
+                    )}
                     <button
                       type="button"
-                      onClick={() =>
-                        setConfirmBulkAuditIds([...selectedAuditIds])
+                      onClick={() => setAllAuditInputsOpen(true)}
+                      disabled={
+                        loading ||
+                        clearingAudit ||
+                        pruningAuditDupes ||
+                        bulkAuditDeleting ||
+                        displayAuditRows.length === 0
                       }
+                      title="Open every stored input in one text area (current table order)"
+                      className="h-10 w-full rounded-lg border border-blue-200 bg-white text-[12px] font-semibold text-blue-700 shadow-sm transition hover:bg-sky-50/80 disabled:opacity-50"
+                    >
+                      All inputs
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void pruneAuditDupes()}
                       disabled={
                         loading ||
                         clearingAudit ||
                         pruningAuditDupes ||
                         bulkAuditDeleting
                       }
-                      className="min-h-[44px] rounded-[10px] bg-red-700 px-3 py-2 text-left text-[12px] font-bold text-white shadow-sm disabled:opacity-50 sm:min-h-0 sm:text-center"
+                      className="h-10 w-full rounded-lg border border-amber-200/80 bg-amber-50 text-[12px] font-semibold text-amber-900/90 transition hover:bg-amber-100/80 disabled:opacity-50"
                     >
-                      Delete {selectedAuditIds.size} selected
+                      {pruningAuditDupes
+                        ? "Pruning…"
+                        : "Dedupe inputs"}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setAllAuditInputsOpen(true)}
-                    disabled={
-                      loading ||
-                      clearingAudit ||
-                      pruningAuditDupes ||
-                      bulkAuditDeleting ||
-                      displayAuditRows.length === 0
-                    }
-                    title="Open every stored input in one text area (current table order)"
-                    className="min-h-[44px] rounded-[10px] border-2 border-[#1d6fb8] bg-white px-3 py-2 text-left text-[12px] font-bold text-[#1d6fb8] disabled:opacity-50 sm:min-h-0 sm:text-center"
-                  >
-                    All inputs
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void pruneAuditDupes()}
-                    disabled={
-                      loading ||
-                      clearingAudit ||
-                      pruningAuditDupes ||
-                      bulkAuditDeleting
-                    }
-                    className="min-h-[44px] rounded-[10px] bg-amber-600 px-3 py-2 text-left text-[12px] font-bold text-white disabled:opacity-50 sm:min-h-0 sm:text-center"
-                  >
-                    {pruningAuditDupes
-                      ? "Deleting…"
-                      : "Delete duplicate inputs"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void clearAudits()}
-                    disabled={
-                      loading ||
-                      clearingAudit ||
-                      pruningAuditDupes ||
-                      auditRows.length === 0 ||
-                      bulkAuditDeleting
-                    }
-                    className="min-h-[44px] rounded-[10px] bg-red-600 px-3 py-2 text-left text-[12px] font-bold text-white disabled:opacity-50 sm:min-h-0 sm:text-center"
-                  >
-                    {clearingAudit ? "Clearing…" : "Clear logs"}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => void clearAudits()}
+                      disabled={
+                        loading ||
+                        clearingAudit ||
+                        pruningAuditDupes ||
+                        auditRows.length === 0 ||
+                        bulkAuditDeleting
+                      }
+                      className="h-10 w-full rounded-lg border border-red-200/80 bg-red-50/90 text-[12px] font-semibold text-red-800 transition hover:bg-red-100/60 disabled:opacity-50"
+                    >
+                      {clearingAudit ? "Clearing…" : "Clear all logs"}
+                    </button>
+                  </div>
                 </div>
               </div>
               {loading ? (
-                <div className="p-3 text-gray-500 sm:p-4">Loading…</div>
+                <div className="flex min-h-[120px] items-center justify-center p-6 text-slate-500 sm:p-8">
+                  <div className="text-center text-[14px]">
+                    <div className="mb-2 inline-block h-6 w-6 animate-pulse rounded-full border-2 border-slate-200 border-t-blue-500" />
+                    <p>Loading audit logs…</p>
+                  </div>
+                </div>
               ) : auditRows.length === 0 ? (
-                <div className="p-3 text-gray-500 sm:p-4">
-                  No audit logs found.
+                <div className="p-8 text-center text-[14px] text-slate-500 sm:p-10">
+                  <p className="text-slate-400">No audit logs yet</p>
                 </div>
               ) : displayAuditRows.length === 0 ? (
-                <div className="p-3 text-sm text-gray-600 sm:p-4">
-                  <p className="font-semibold text-[#1a1a1a]">
-                    No rows for this date
+                <div className="p-6 text-center text-sm sm:p-8">
+                  <p className="font-semibold text-slate-800">No rows in this range</p>
+                  <p className="mt-1.5 max-w-sm mx-auto text-[12px] text-slate-500 leading-relaxed">
+                    Try a different range or clear the date filter. Only a recent
+                    batch is loaded — older days may be missing.
                   </p>
-                  <p className="mt-1 text-[12px] text-gray-500">
-                    Try another day or clear the filter. (Only the most recent
-                    batch is loaded from the server — older days may be
-                    missing.)
-                  </p>
-                  {auditDateFilter ? (
+                  {hasDateRangeFilter ? (
                     <button
                       type="button"
-                      onClick={() => setAuditDateFilter("")}
-                      className="mt-3 rounded-[10px] border-2 border-[#1d6fb8] bg-white px-3 py-1.5 text-[12px] font-bold text-[#1d6fb8]"
+                      onClick={() => {
+                        setAuditDateFrom("");
+                        setAuditDateTo("");
+                      }}
+                      className="mt-4 rounded-lg border border-blue-200 bg-white px-4 py-2 text-[12px] font-semibold text-blue-700 shadow-sm transition hover:bg-slate-50"
                     >
-                      All dates
+                      Clear range
                     </button>
                   ) : null}
                 </div>
               ) : (
                 <div className="overflow-x-auto overscroll-x-contain">
                   <table className="w-full min-w-[720px] text-left text-[11px] sm:text-[12px]">
-                    <thead className="bg-[#f6f9fd] border-b border-[#e3edf7]">
+                    <thead className="bg-slate-100/80 text-slate-600">
                       <tr>
-                        <th className="w-12 px-2 py-2 font-bold text-center">
+                        <th
+                          scope="col"
+                          className="w-12 py-2.5 pl-3 pr-1 text-center text-[10px] font-semibold uppercase tracking-wider"
+                        >
                           #
                         </th>
-                        <th className="px-3 py-2 font-bold">Time</th>
-                        <th className="px-3 py-2 font-bold">Mode</th>
-                        <th className="px-3 py-2 font-bold">Total</th>
-                        <th className="w-[100px] px-3 py-2 font-bold">
+                        <th
+                          scope="col"
+                          className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                        >
+                          Time
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                        >
+                          Mode
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                        >
+                          Total
+                        </th>
+                        <th
+                          scope="col"
+                          className="w-[100px] px-2 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider"
+                        >
                           <button
                             type="button"
                             onClick={() =>
@@ -820,7 +906,7 @@ export default function AdminPage() {
                                   : "off"
                               )
                             }
-                            className="inline-flex items-center gap-1 font-bold text-[#1a1a1a] hover:text-[#1d6fb8]"
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-wider text-slate-600 hover:text-blue-600"
                             title="Sort: failed first → OK first → default order"
                             aria-sort={
                               auditStatusSort === "off"
@@ -832,18 +918,18 @@ export default function AdminPage() {
                           >
                             Status
                             {auditStatusSort === "asc" && (
-                              <span className="text-[#1d6fb8]" aria-hidden>
+                              <span className="text-blue-600" aria-hidden>
                                 ▲
                               </span>
                             )}
                             {auditStatusSort === "desc" && (
-                              <span className="text-[#1d6fb8]" aria-hidden>
+                              <span className="text-blue-600" aria-hidden>
                                 ▼
                               </span>
                             )}
                             {auditStatusSort === "off" && (
                               <span
-                                className="text-gray-300 font-normal"
+                                className="text-slate-300 font-normal"
                                 aria-hidden
                               >
                                 ↕
@@ -851,19 +937,37 @@ export default function AdminPage() {
                             )}
                           </button>
                         </th>
-                        <th className="px-3 py-2 font-bold">Slot</th>
-                        <th className="px-3 py-2 font-bold min-w-[300px]">
+                        <th
+                          scope="col"
+                          className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                        >
+                          Slot
+                        </th>
+                        <th
+                          scope="col"
+                          className="min-w-[300px] px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                        >
                           Input
                         </th>
-                        <th className="px-3 py-2 font-bold">View</th>
-                        <th className="px-3 py-2 font-bold">Delete</th>
+                        <th
+                          scope="col"
+                          className="px-2 py-2.5 pr-1 text-center text-[10px] font-semibold uppercase tracking-wider"
+                        >
+                          View
+                        </th>
+                        <th
+                          scope="col"
+                          className="px-2 py-2.5 pl-1 pr-3 text-right text-[10px] font-semibold uppercase tracking-wider"
+                        >
+                          Delete
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {displayAuditRows.map((r, rowIdx) => (
                         <tr
                           key={r.id}
-                          className="border-b border-[#eef2f7] align-top"
+                          className="border-b border-slate-100 align-top even:bg-slate-50/40 transition-[background-color] hover:bg-sky-50/40"
                         >
                           <td className="px-2 py-2 align-middle text-center">
                             <button
@@ -880,55 +984,59 @@ export default function AdminPage() {
                               }
                               className={`mx-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold transition-colors disabled:opacity-40 ${
                                 selectedAuditIds.has(r.id)
-                                  ? "bg-red-600 text-white ring-2 ring-red-800 shadow-sm"
-                                  : "bg-[#1d6fb8] text-white hover:bg-[#165fa3]"
+                                  ? "bg-red-600 text-white ring-2 ring-red-700 shadow-sm"
+                                  : "bg-blue-600 text-white shadow-sm ring-1 ring-blue-500/20 hover:bg-blue-700"
                               }`}
                             >
                               {rowIdx + 1}
                             </button>
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap text-gray-600">
-                            {fmtTs(r.createdAt)}
+                          <td className="px-2 py-2.5 whitespace-nowrap text-slate-600 sm:px-3">
+                            {formatAuditTimestamp(r.createdAt)}
                           </td>
-                          <td className="px-3 py-2 font-semibold">{r.mode}</td>
-                          <td className="px-3 py-2 font-bold">₹{r.total}</td>
-                          <td className="px-3 py-2">
+                          <td className="px-2 py-2.5 font-medium text-slate-800 sm:px-3">
+                            {r.mode}
+                          </td>
+                          <td className="px-2 py-2.5 font-bold tabular-nums text-slate-900 sm:px-3">
+                            ₹{r.total}
+                          </td>
+                          <td className="px-2 py-2.5 sm:px-3">
                             {(() => {
                               const n = r.failedCount ?? 0;
                               return n > 0 ? (
                                 <span
-                                  className="inline-block rounded-lg bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900"
+                                  className="inline-block rounded-md bg-amber-100/90 px-2 py-0.5 text-[11px] font-semibold text-amber-900"
                                   title="Lines the parser could not match"
                                 >
                                   Failed ({n})
                                 </span>
                               ) : (
-                                <span className="font-semibold text-emerald-700">
+                                <span className="text-[12px] font-semibold text-emerald-600">
                                   OK
                                 </span>
                               );
                             })()}
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-2 py-2.5 text-slate-600 sm:px-3">
                             {r.mode === "wa" && r.waSlotsSummary
                               ? r.waSlotsSummary
-                              : r.selectedSlotName ?? r.selectedSlotId ?? "-"}
+                              : r.selectedSlotName ?? r.selectedSlotId ?? "—"}
                           </td>
-                          <td className="px-3 py-2">
-                            <pre className="whitespace-pre-wrap wrap-break-word bg-[#f8fbff] border border-[#e4edf8] rounded-[10px] p-2 max-h-[120px] overflow-auto font-mono text-[11px]">
+                          <td className="px-2 py-2.5 sm:px-3">
+                            <pre className="max-h-[120px] overflow-auto rounded-lg border border-slate-200/80 bg-slate-50/80 p-2 font-mono text-[11px] whitespace-pre-wrap text-slate-800 wrap-break-word">
                               {r.input}
                             </pre>
                           </td>
-                          <td className="px-2 py-2 sm:px-3">
+                          <td className="px-1 py-2 text-center sm:px-2">
                             <button
                               type="button"
                               onClick={() => openAuditPreview(r)}
-                              className="min-h-[40px] min-w-[72px] rounded-[10px] border border-[#c8dbef] bg-[#eef6ff] px-2.5 py-2 text-[11px] font-bold text-[#1d6fb8] sm:min-h-0 sm:min-w-0 sm:py-1.5"
+                              className="h-8 min-w-[4.5rem] rounded-md border border-blue-200/80 bg-white px-2.5 text-[11px] font-semibold text-blue-700 shadow-sm transition hover:border-blue-300 hover:bg-sky-50/80 sm:h-7"
                             >
-                              View calc
+                              View
                             </button>
                           </td>
-                          <td className="px-2 py-2 sm:px-3">
+                          <td className="px-1 py-2 pl-0 text-right sm:px-2 sm:pl-0">
                             <button
                               type="button"
                               onClick={() => void deleteAudit(r.id)}
@@ -937,9 +1045,9 @@ export default function AdminPage() {
                                 clearingAudit ||
                                 bulkAuditDeleting
                               }
-                              className="min-h-[40px] min-w-[72px] rounded-[10px] border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] font-bold text-red-700 disabled:opacity-50 sm:min-h-0 sm:min-w-0 sm:py-1.5"
+                              className="h-8 min-w-[4.5rem] rounded-md border border-red-200/80 bg-red-50/50 px-2.5 text-[11px] font-semibold text-red-700 transition hover:bg-red-100/60 disabled:opacity-50 sm:h-7"
                             >
-                              {busyAuditId === r.id ? "Deleting…" : "Delete"}
+                              {busyAuditId === r.id ? "…" : "Delete"}
                             </button>
                           </td>
                         </tr>
@@ -952,14 +1060,15 @@ export default function AdminPage() {
           )}
 
           {activeTab === "report" && (
-            <section className="overflow-hidden rounded-[16px] border-2 border-[#dde8f0] bg-white shadow-sm">
-              <div className="flex flex-col gap-3 border-b border-[#e7eef7] p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+            <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm ring-1 ring-slate-200/40">
+              <div className="border-b border-slate-100 bg-slate-50/50 p-4 sm:p-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
-                  <h2 className="text-lg font-extrabold text-[#1a1a1a] sm:text-[18px]">
-                    User Reports
+                  <h2 className="text-lg font-bold text-slate-900 sm:text-xl">
+                    User reports
                   </h2>
-                  <p className="mt-0.5 text-[12px] text-gray-500">
-                    {reportRows.length} rows
+                  <p className="mt-0.5 text-[12px] text-slate-500 sm:text-[13px]">
+                    {reportRows.length} in list
                   </p>
                 </div>
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
@@ -970,9 +1079,9 @@ export default function AdminPage() {
                         setConfirmBulkReportIds([...selectedReportIds])
                       }
                       disabled={loading || clearingReport || bulkReportDeleting}
-                      className="min-h-[44px] rounded-[10px] bg-red-700 px-3 py-2 text-[12px] font-bold text-white shadow-sm disabled:opacity-50 sm:min-h-0"
+                      className="h-10 w-full rounded-lg bg-red-700 text-[12px] font-semibold text-white shadow-sm transition hover:bg-red-800 disabled:opacity-50 sm:min-w-[10rem] sm:px-3"
                     >
-                      Delete {selectedReportIds.size} selected
+                      Delete ({selectedReportIds.size})
                     </button>
                   )}
                   <button
@@ -984,48 +1093,76 @@ export default function AdminPage() {
                       reportRows.length === 0 ||
                       bulkReportDeleting
                     }
-                    className="min-h-[44px] w-full rounded-[10px] bg-red-600 px-3 py-2 text-[12px] font-bold text-white disabled:opacity-50 sm:min-h-0 sm:w-auto"
+                    className="h-10 w-full rounded-lg border border-red-200/80 bg-red-50/90 text-[12px] font-semibold text-red-800 transition hover:bg-red-100/60 disabled:opacity-50 sm:min-w-[7rem] sm:px-3"
                   >
-                    {clearingReport ? "Clearing…" : "Clear logs"}
+                    {clearingReport ? "Clearing…" : "Clear all"}
                   </button>
+                </div>
                 </div>
               </div>
               {loading ? (
-                <div className="p-3 text-gray-500 sm:p-4">Loading…</div>
+                <div className="flex min-h-[100px] items-center justify-center p-6 text-slate-500">
+                  <p className="text-[14px]">Loading reports…</p>
+                </div>
               ) : reportRows.length === 0 ? (
-                <div className="p-3 text-gray-500 sm:p-4">
-                  No report issues found.
+                <div className="p-8 text-center text-slate-500 sm:p-10">
+                  <p className="text-slate-400">No user reports</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto overscroll-x-contain">
                   <table className="w-full min-w-[720px] text-left text-[11px] sm:text-[12px]">
-                    <thead className="bg-[#f6f9fd] border-b border-[#e3edf7]">
+                    <thead className="bg-slate-100/80 text-slate-600">
                       <tr>
-                        <th className="w-12 px-2 py-2 font-bold text-center">
+                        <th
+                          scope="col"
+                          className="w-12 py-2.5 pl-3 pr-1 text-center text-[10px] font-semibold uppercase tracking-wider"
+                        >
                           #
                         </th>
-                        <th className="px-3 py-2 font-bold">Time</th>
-                        <th className="px-3 py-2 font-bold text-center w-[88px]">
+                        <th
+                          scope="col"
+                          className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                        >
+                          Time
+                        </th>
+                        <th
+                          scope="col"
+                          className="w-[88px] px-2 py-2.5 text-center text-[10px] font-semibold uppercase tracking-wider"
+                        >
                           Fixed
                         </th>
-                        <th className="px-3 py-2 font-bold min-w-[230px]">
+                        <th
+                          scope="col"
+                          className="min-w-[230px] px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                        >
                           Input
                         </th>
-                        <th className="px-3 py-2 font-bold min-w-[170px]">
+                        <th
+                          scope="col"
+                          className="min-w-[170px] px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                        >
                           Expected
                         </th>
-                        <th className="px-3 py-2 font-bold min-w-[170px]">
+                        <th
+                          scope="col"
+                          className="min-w-[170px] px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                        >
                           Note
                         </th>
-                        <th className="px-3 py-2 font-bold">Delete</th>
+                        <th
+                          scope="col"
+                          className="pr-3 pl-1 text-right text-[10px] font-semibold uppercase tracking-wider"
+                        >
+                          Del
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {reportRows.map((r, rowIdx) => (
                         <tr
                           key={r.id}
-                          className={`border-b border-[#eef2f7] align-top ${
-                            r.fixed ? "bg-[#f0fdf4]" : ""
+                          className={`border-b border-slate-100 align-top even:bg-slate-50/40 transition-[background-color] hover:bg-sky-50/40 ${
+                            r.fixed ? "bg-emerald-50/50" : ""
                           }`}
                         >
                           <td className="px-2 py-2 align-middle text-center">
@@ -1049,10 +1186,10 @@ export default function AdminPage() {
                               {rowIdx + 1}
                             </button>
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap text-gray-600">
-                            {fmtTs(r.createdAt)}
+                          <td className="px-2 py-2.5 whitespace-nowrap text-slate-600 sm:px-3">
+                            {formatAuditTimestamp(r.createdAt)}
                           </td>
-                          <td className="px-3 py-2 text-center align-middle">
+                          <td className="px-2 py-2.5 text-center align-middle sm:px-3">
                             <label className="inline-flex flex-col items-center gap-0.5 cursor-pointer select-none">
                               <input
                                 type="checkbox"
@@ -1066,30 +1203,30 @@ export default function AdminPage() {
                                 onChange={(e) =>
                                   void setReportFixed(r.id, e.target.checked)
                                 }
-                                className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-50"
+                                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-2 focus:ring-emerald-500/30 disabled:opacity-50"
                                 title="Mark as fixed"
                               />
-                              <span className="text-[10px] font-semibold text-gray-500">
+                              <span className="text-[9px] font-medium uppercase text-slate-500">
                                 Fixed
                               </span>
                             </label>
                           </td>
-                          <td className="px-3 py-2">
-                            <pre className="whitespace-pre-wrap wrap-break-word bg-[#f8fbff] border border-[#e4edf8] rounded-[10px] p-2 max-h-[120px] overflow-auto font-mono text-[11px]">
+                          <td className="px-2 py-2.5 sm:px-3">
+                            <pre className="max-h-[120px] overflow-auto rounded-lg border border-slate-200/80 bg-slate-50/80 p-2 font-mono text-[11px] whitespace-pre-wrap text-slate-800 wrap-break-word">
                               {r.input}
                             </pre>
                           </td>
-                          <td className="px-3 py-2">
-                            <pre className="whitespace-pre-wrap wrap-break-word bg-[#f8fbff] border border-[#e4edf8] rounded-[10px] p-2 max-h-[120px] overflow-auto font-mono text-[11px]">
-                              {r.expected || "-"}
+                          <td className="px-2 py-2.5 sm:px-3">
+                            <pre className="max-h-[120px] overflow-auto rounded-lg border border-slate-200/80 bg-slate-50/80 p-2 font-mono text-[11px] whitespace-pre-wrap text-slate-800 wrap-break-word">
+                              {r.expected || "—"}
                             </pre>
                           </td>
-                          <td className="px-3 py-2">
-                            <pre className="whitespace-pre-wrap wrap-break-word bg-[#f8fbff] border border-[#e4edf8] rounded-[10px] p-2 max-h-[120px] overflow-auto font-mono text-[11px]">
-                              {r.note || "-"}
+                          <td className="px-2 py-2.5 sm:px-3">
+                            <pre className="max-h-[120px] overflow-auto rounded-lg border border-slate-200/80 bg-slate-50/80 p-2 font-mono text-[11px] whitespace-pre-wrap text-slate-800 wrap-break-word">
+                              {r.note || "—"}
                             </pre>
                           </td>
-                          <td className="px-2 py-2 sm:px-3">
+                          <td className="px-1 py-2 pl-0 text-right sm:px-2 sm:pl-0">
                             <button
                               type="button"
                               onClick={() => void deleteReport(r.id)}
@@ -1098,9 +1235,9 @@ export default function AdminPage() {
                                 clearingReport ||
                                 bulkReportDeleting
                               }
-                              className="min-h-[40px] min-w-[72px] rounded-[10px] border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] font-bold text-red-700 disabled:opacity-50 sm:min-h-0 sm:min-w-0 sm:py-1.5"
+                              className="h-8 min-w-[3.5rem] rounded-md border border-red-200/80 bg-red-50/50 px-2 text-[11px] font-semibold text-red-700 transition hover:bg-red-100/60 disabled:opacity-50"
                             >
-                              {busyReportId === r.id ? "Deleting…" : "Delete"}
+                              {busyReportId === r.id ? "…" : "Del"}
                             </button>
                           </td>
                         </tr>
@@ -1115,45 +1252,44 @@ export default function AdminPage() {
       </div>
 
       {previewAudit && previewResult && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 overscroll-contain sm:p-4"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) closeAuditPreview();
-          }}
-          role="presentation"
+        <Modal
+          open
+          onBackdropClick={closeAuditPreview}
+          backdrop="blurred"
+          overlayClassName="p-3 sm:p-4"
         >
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="audit-preview-title"
-            className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-[16px] border-2 border-[#dbe8f3] bg-white shadow-2xl"
+            className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_25px_50px_-12px_rgba(0,0,0,0.25)]"
           >
-            <div className="flex items-start justify-between gap-3 border-b border-[#e7eef7] bg-[#f6f9fd] px-4 py-3 sm:px-5">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-4 py-3.5 sm:px-5">
               <div>
                 <h3
                   id="audit-preview-title"
-                  className="text-[17px] font-extrabold text-[#1a1a1a]"
+                  className="text-[18px] font-bold tracking-tight text-slate-900"
                 >
-                  Calculation Preview
+                  Calculation preview
                 </h3>
-                <p className="mt-1 text-[12px] text-gray-600">
-                  Parsed with the same calculator logic users use
+                <p className="mt-0.5 text-[12px] text-slate-500">
+                  Same engine as the home calculator
                 </p>
               </div>
               <button
                 type="button"
                 onClick={closeAuditPreview}
-                className="rounded-[10px] border border-[#d5e4f5] bg-white px-3 py-1.5 text-[12px] font-bold text-[#4a6685]"
+                className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
               >
                 Close
               </button>
             </div>
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
-              <div className="grid gap-2 rounded-[12px] border border-[#e4edf8] bg-[#f8fbff] p-3 text-[12px] sm:grid-cols-2">
+              <div className="grid gap-2.5 rounded-xl border border-slate-200/80 bg-slate-50/80 p-3.5 text-[12px] sm:grid-cols-2">
                 <p>
                   <span className="font-semibold text-gray-500">Time:</span>{" "}
-                  {fmtTs(previewAudit.createdAt)}
+                  {formatAuditTimestamp(previewAudit.createdAt)}
                 </p>
                 <p>
                   <span className="font-semibold text-gray-500">Mode:</span>{" "}
@@ -1267,36 +1403,34 @@ export default function AdminPage() {
               </div>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {allAuditInputsOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 overscroll-contain sm:p-4"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setAllAuditInputsOpen(false);
-          }}
-          role="presentation"
+        <Modal
+          open
+          onBackdropClick={() => setAllAuditInputsOpen(false)}
+          backdrop="blurred"
+          overlayClassName="p-3 sm:p-4"
         >
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="audit-all-inputs-title"
-            className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[16px] border-2 border-[#dbe8f3] bg-white shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_25px_50px_-12px_rgba(0,0,0,0.25)]"
           >
-            <div className="flex items-start justify-between gap-3 border-b border-[#e7eef7] bg-[#f6f9fd] px-4 py-3 sm:px-5">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-4 py-3.5 sm:px-5">
               <div>
                 <h3
                   id="audit-all-inputs-title"
-                  className="text-[17px] font-extrabold text-[#1a1a1a]"
+                  className="text-[18px] font-bold tracking-tight text-slate-900"
                 >
                   All audit inputs
                 </h3>
-                <p className="mt-1 text-[12px] text-gray-600">
-                  {displayAuditRows.length} pastes, separated by a blank line
-                  (same order as the table
-                  {auditStatusSort !== "off" ? " — status sort applied" : ""}).
+                <p className="mt-0.5 text-[12px] text-slate-500">
+                  {displayAuditRows.length} pastes, blank line between
+                  (table order{auditStatusSort !== "off" ? ", status sort" : ""}
+                  ).
                 </p>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
@@ -1312,14 +1446,14 @@ export default function AdminPage() {
                       toast.error("Could not copy");
                     }
                   }}
-                  className="rounded-[10px] border border-[#1d6fb8] bg-[#1d6fb8] px-3 py-1.5 text-[12px] font-bold text-white"
+                  className="rounded-lg border border-blue-200 bg-blue-600 px-3.5 py-1.5 text-[12px] font-semibold text-white shadow-sm transition hover:bg-blue-700"
                 >
                   Copy
                 </button>
                 <button
                   type="button"
                   onClick={() => setAllAuditInputsOpen(false)}
-                  className="rounded-[10px] border border-[#d5e4f5] bg-white px-3 py-1.5 text-[12px] font-bold text-[#4a6685]"
+                  className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-[12px] font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
                 >
                   Close
                 </button>
@@ -1330,12 +1464,12 @@ export default function AdminPage() {
                 readOnly
                 value={combinedAllAuditInputText}
                 spellCheck={false}
-                className="h-[min(70vh,720px)] w-full resize-y rounded-[12px] border-2 border-[#e4edf8] bg-[#f8fbff] p-3 font-mono text-[12px] text-[#1a1a1a] leading-relaxed sm:p-4"
+                className="h-[min(70vh,720px)] w-full resize-y rounded-xl border border-slate-200/90 bg-slate-50/50 p-3.5 font-mono text-[12px] text-slate-800 leading-relaxed ring-0 outline-none focus:ring-2 focus:ring-blue-500/20 sm:p-4"
                 aria-label="All calculation audit inputs concatenated"
               />
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       <ConfirmDialog
@@ -1353,113 +1487,61 @@ export default function AdminPage() {
         }}
       />
 
-      {typeof document !== "undefined" &&
-      confirmBulkAuditIds &&
-      confirmBulkAuditIds.length > 0
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-20000 flex items-center justify-center p-4"
-              style={{ background: "rgba(0,0,0,0.45)" }}
-              onClick={(e) => {
-                if (e.target === e.currentTarget) setConfirmBulkAuditIds(null);
-              }}
-            >
-              <div
-                className="w-full max-w-[400px] overflow-hidden rounded-[20px] border-2 border-[#dde8f0] bg-white shadow-2xl"
-                role="dialog"
-                aria-labelledby="admin-bulk-audit-title"
-                aria-modal="true"
-              >
-                <div className="border-b border-[#e7eef7] px-5 py-4">
-                  <h2
-                    id="admin-bulk-audit-title"
-                    className="text-[18px] font-extrabold text-red-700"
-                  >
-                    Delete {confirmBulkAuditIds.length} audit log
-                    {confirmBulkAuditIds.length === 1 ? "" : "s"}?
-                  </h2>
-                  <p className="mt-2 text-[13px] leading-snug text-gray-600">
-                    This permanently removes the selected rows from Firestore.
-                    This cannot be undone.
-                  </p>
-                </div>
-                <div className="flex gap-2 p-4">
-                  <button
-                    type="button"
-                    onClick={() => void deleteAuditsBulk(confirmBulkAuditIds)}
-                    disabled={bulkAuditDeleting}
-                    className="flex-1 rounded-[12px] bg-red-600 py-3 text-[15px] font-bold text-white active:opacity-90 disabled:opacity-50"
-                  >
-                    {bulkAuditDeleting ? "Deleting…" : "Yes, Delete"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmBulkAuditIds(null)}
-                    disabled={bulkAuditDeleting}
-                    className="flex-1 rounded-[12px] bg-gray-100 py-3 text-[15px] font-semibold text-gray-700 active:opacity-90 disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+      <DangerActionDialog
+        open={Boolean(confirmBulkAuditIds && confirmBulkAuditIds.length > 0)}
+        onClose={() => {
+          if (!bulkAuditDeleting) setConfirmBulkAuditIds(null);
+        }}
+        onConfirm={() => {
+          if (confirmBulkAuditIds?.length)
+            void deleteAuditsBulk(confirmBulkAuditIds);
+        }}
+        titleId="admin-bulk-audit-title"
+        title={
+          confirmBulkAuditIds?.length
+            ? `Delete ${confirmBulkAuditIds.length} audit log${
+                confirmBulkAuditIds.length === 1 ? "" : "s"
+              }?`
+            : ""
+        }
+        message={
+          <p className="text-[13px] leading-snug text-gray-600">
+            This permanently removes the selected rows from Firestore. This
+            cannot be undone.
+          </p>
+        }
+        confirmLabel="Yes, Delete"
+        confirmLoading={bulkAuditDeleting}
+        loadingLabel="Deleting…"
+      />
 
-      {typeof document !== "undefined" &&
-      confirmBulkReportIds &&
-      confirmBulkReportIds.length > 0
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-20000 flex items-center justify-center p-4"
-              style={{ background: "rgba(0,0,0,0.45)" }}
-              onClick={(e) => {
-                if (e.target === e.currentTarget) setConfirmBulkReportIds(null);
-              }}
-            >
-              <div
-                className="w-full max-w-[400px] overflow-hidden rounded-[20px] border-2 border-[#dde8f0] bg-white shadow-2xl"
-                role="dialog"
-                aria-labelledby="admin-bulk-report-title"
-                aria-modal="true"
-              >
-                <div className="border-b border-[#e7eef7] px-5 py-4">
-                  <h2
-                    id="admin-bulk-report-title"
-                    className="text-[18px] font-extrabold text-red-700"
-                  >
-                    Delete {confirmBulkReportIds.length} report
-                    {confirmBulkReportIds.length === 1 ? "" : "s"}?
-                  </h2>
-                  <p className="mt-2 text-[13px] leading-snug text-gray-600">
-                    This permanently removes the selected user reports from
-                    Firestore. This cannot be undone.
-                  </p>
-                </div>
-                <div className="flex gap-2 p-4">
-                  <button
-                    type="button"
-                    onClick={() => void deleteReportsBulk(confirmBulkReportIds)}
-                    disabled={bulkReportDeleting}
-                    className="flex-1 rounded-[12px] bg-red-600 py-3 text-[15px] font-bold text-white active:opacity-90 disabled:opacity-50"
-                  >
-                    {bulkReportDeleting ? "Deleting…" : "Yes, Delete"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmBulkReportIds(null)}
-                    disabled={bulkReportDeleting}
-                    className="flex-1 rounded-[12px] bg-gray-100 py-3 text-[15px] font-semibold text-gray-700 active:opacity-90 disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+      <DangerActionDialog
+        open={Boolean(confirmBulkReportIds && confirmBulkReportIds.length > 0)}
+        onClose={() => {
+          if (!bulkReportDeleting) setConfirmBulkReportIds(null);
+        }}
+        onConfirm={() => {
+          if (confirmBulkReportIds?.length)
+            void deleteReportsBulk(confirmBulkReportIds);
+        }}
+        titleId="admin-bulk-report-title"
+        title={
+          confirmBulkReportIds?.length
+            ? `Delete ${confirmBulkReportIds.length} report${
+                confirmBulkReportIds.length === 1 ? "" : "s"
+              }?`
+            : ""
+        }
+        message={
+          <p className="text-[13px] leading-snug text-gray-600">
+            This permanently removes the selected user reports from Firestore.
+            This cannot be undone.
+          </p>
+        }
+        confirmLabel="Yes, Delete"
+        confirmLoading={bulkReportDeleting}
+        loadingLabel="Deleting…"
+      />
     </div>
   );
 }

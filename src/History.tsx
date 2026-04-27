@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
 import { toastApiError } from "./apiToast";
 import type {
   SavedSession,
@@ -14,6 +13,7 @@ import {
   SESSION_SLOT_KEY_UNSLOTTED,
 } from "./calcUtils";
 import { useLoadingSignal } from "./TopProgressBar";
+import { DangerActionDialog } from "./ui";
 
 interface Props {
   slots: GameSlot[];
@@ -919,160 +919,67 @@ export default function History({
         </div>
       )}
 
-      {typeof document !== "undefined" && confirmClear
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[20000] flex items-center justify-center p-4"
-              style={{ background: "rgba(0,0,0,0.45)" }}
-              onClick={(e) => {
-                if (e.target === e.currentTarget) setConfirmClear(false);
-              }}
-            >
-              <div
-                className="bg-white rounded-[20px] shadow-2xl w-full max-w-[400px] overflow-hidden border-2 border-[#dde8f0]"
-                role="dialog"
-                aria-labelledby="history-clear-all-title"
-                aria-modal="true"
-              >
-                <div className="px-5 py-4 border-b border-[#e7eef7]">
-                  <h2
-                    id="history-clear-all-title"
-                    className="text-[18px] font-extrabold text-red-700"
-                  >
-                    Delete ALL entries for this day?
-                  </h2>
-                </div>
-                <div className="p-4 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void handleClearAll()}
-                    className="flex-1 py-3 rounded-[12px] text-[15px] font-bold bg-red-600 text-white active:opacity-90"
-                  >
-                    Yes, Delete All
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmClear(false)}
-                    className="flex-1 py-3 rounded-[12px] text-[15px] font-semibold bg-gray-100 text-gray-700 active:opacity-90"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+      <DangerActionDialog
+        open={confirmClear}
+        onClose={() => setConfirmClear(false)}
+        onConfirm={() => void handleClearAll()}
+        titleId="history-clear-all-title"
+        title="Delete ALL entries for this day?"
+        message={null}
+        confirmLabel="Yes, Delete All"
+      />
 
-      {typeof document !== "undefined" && confirmDeleteId
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[20000] flex items-center justify-center p-4"
-              style={{ background: "rgba(0,0,0,0.45)" }}
-              onClick={(e) => {
-                if (e.target === e.currentTarget) setConfirmDeleteId(null);
-              }}
-            >
-              <div
-                className="bg-white rounded-[20px] shadow-2xl w-full max-w-[400px] overflow-hidden border-2 border-[#dde8f0]"
-                role="dialog"
-                aria-labelledby="history-delete-entry-title"
-                aria-modal="true"
+      <DangerActionDialog
+        open={confirmDeleteId != null}
+        onClose={() => setConfirmDeleteId(null)}
+        onConfirm={() => {
+          if (confirmDeleteId) void deleteSession(confirmDeleteId);
+        }}
+        titleId="history-delete-entry-title"
+        title="Delete this entry?"
+        message={
+          <>
+            <p className="text-[13px] text-red-600 leading-snug">
+              This will also remove their payment record for this day.
+            </p>
+            {deleteConfirmContact ? (
+              <p
+                className="text-[14px] font-semibold text-[#1a1a1a] mt-2 truncate"
+                title={deleteConfirmContact}
               >
-                <div className="px-5 py-4 border-b border-[#e7eef7]">
-                  <h2
-                    id="history-delete-entry-title"
-                    className="text-[18px] font-extrabold text-red-700"
-                  >
-                    Delete this entry?
-                  </h2>
-                  <p className="text-[13px] text-red-600 mt-2 leading-snug">
-                    This will also remove their payment record for this day.
-                  </p>
-                  {deleteConfirmContact ? (
-                    <p
-                      className="text-[14px] font-semibold text-[#1a1a1a] mt-2 truncate"
-                      title={deleteConfirmContact}
-                    >
-                      {deleteConfirmContact}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="p-4 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void deleteSession(confirmDeleteId)}
-                    className="flex-1 py-3 rounded-[12px] text-[15px] font-bold bg-red-600 text-white active:opacity-90"
-                  >
-                    Yes, Delete
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmDeleteId(null)}
-                    className="flex-1 py-3 rounded-[12px] text-[15px] font-semibold bg-gray-100 text-gray-700 active:opacity-90"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+                {deleteConfirmContact}
+              </p>
+            ) : null}
+          </>
+        }
+        confirmLabel="Yes, Delete"
+      />
 
-      {typeof document !== "undefined" && confirmMultiRowDelete
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[20000] flex items-center justify-center p-4"
-              style={{ background: "rgba(0,0,0,0.45)" }}
-              onClick={(e) => {
-                if (e.target === e.currentTarget)
-                  setConfirmMultiRowDelete(null);
-              }}
-            >
-              <div
-                className="bg-white rounded-[20px] shadow-2xl w-full max-w-[400px] overflow-hidden border-2 border-[#dde8f0]"
-                role="dialog"
-                aria-labelledby="history-multi-row-title"
-                aria-modal="true"
-              >
-                <div className="px-5 py-4 border-b border-[#e7eef7]">
-                  <h2
-                    id="history-multi-row-title"
-                    className="text-[18px] font-extrabold text-red-700"
-                  >
-                    Delete {confirmMultiRowDelete.indices.length} selected line
-                    {confirmMultiRowDelete.indices.length === 1 ? "" : "s"}?
-                  </h2>
-                  <p className="text-[13px] text-gray-600 mt-2 leading-snug">
-                    This updates the saved breakdown for{" "}
-                    <span className="font-semibold text-[#1a1a1a]">
-                      {confirmMultiRowDelete.contact}
-                    </span>{" "}
-                    in History (only the highlighted rows are removed).
-                  </p>
-                </div>
-                <div className="p-4 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void applyMultiRowDelete()}
-                    className="flex-1 py-3 rounded-[12px] text-[15px] font-bold bg-red-600 text-white active:opacity-90"
-                  >
-                    Yes, Delete
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmMultiRowDelete(null)}
-                    className="flex-1 py-3 rounded-[12px] text-[15px] font-semibold bg-gray-100 text-gray-700 active:opacity-90"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+      <DangerActionDialog
+        open={confirmMultiRowDelete != null}
+        onClose={() => setConfirmMultiRowDelete(null)}
+        onConfirm={() => void applyMultiRowDelete()}
+        titleId="history-multi-row-title"
+        title={
+          confirmMultiRowDelete
+            ? `Delete ${confirmMultiRowDelete.indices.length} selected line${
+                confirmMultiRowDelete.indices.length === 1 ? "" : "s"
+              }?`
+            : ""
+        }
+        message={
+          confirmMultiRowDelete ? (
+            <p className="text-[13px] text-gray-600 leading-snug">
+              This updates the saved breakdown for{" "}
+              <span className="font-semibold text-[#1a1a1a]">
+                {confirmMultiRowDelete.contact}
+              </span>{" "}
+              in History (only the highlighted rows are removed).
+            </p>
+          ) : null
+        }
+        confirmLabel="Yes, Delete"
+      />
     </div>
   );
 }

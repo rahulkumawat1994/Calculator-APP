@@ -2,6 +2,8 @@ import { useState } from "react";
 import { toastApiError } from "./apiToast";
 import { logReportIssue } from "./firestoreDb";
 import { notifyReportListenersAfterSubmit } from "./reportNotify";
+import { Button } from "./ui/Button";
+import { Modal } from "./ui/Modal";
 
 interface Props {
   prefillInput?: string;
@@ -34,27 +36,30 @@ export default function ReportIssue({ prefillInput = "", onClose }: Props) {
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.45)" }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="bg-white rounded-[20px] shadow-2xl w-full max-w-[480px] overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+    <Modal open onBackdropClick={onClose} backdrop="dim" overlayClassName="p-4">
+      <div
+        className="w-full max-w-[480px] overflow-hidden rounded-[20px] bg-white shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="report-issue-title"
+      >
+        <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
           <div>
-            <h2 className="text-lg font-bold text-[#1a1a1a]">
+            <h2
+              id="report-issue-title"
+              className="text-lg font-bold text-[#1a1a1a]"
+            >
               🐛 Report a Pattern Issue
             </h2>
-            <p className="text-xs text-gray-400 mt-0.5">
+            <p className="mt-0.5 text-xs text-gray-400">
               Help us improve the calculator
             </p>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 text-xl font-bold leading-none transition-colors"
+            className="text-xl font-bold leading-none text-gray-400 transition-colors hover:text-gray-600"
+            aria-label="Close"
           >
             ×
           </button>
@@ -62,24 +67,24 @@ export default function ReportIssue({ prefillInput = "", onClose }: Props) {
 
         {status === "success" ? (
           <div className="px-6 py-12 text-center">
-            <div className="text-5xl mb-3">✅</div>
+            <div className="mb-3 text-5xl">✅</div>
             <p className="text-lg font-bold text-green-700">Thank you!</p>
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="mt-1 text-sm text-gray-500">
               Your feedback has been recorded. We'll review and improve the
               pattern.
             </p>
-            <button
+            <Button
+              variant="primary"
               onClick={onClose}
-              className="mt-6 px-6 py-2.5 bg-[#1d6fb8] text-white font-semibold rounded-xl text-sm hover:bg-[#165fa3] transition-colors"
+              className="mt-6 rounded-xl px-6 py-2.5 text-sm font-semibold"
             >
               Close
-            </button>
+            </Button>
           </div>
         ) : (
-          <div className="px-6 py-5 space-y-4">
-            {/* Input that failed */}
+          <div className="space-y-4 px-6 py-5">
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+              <label className="mb-1.5 block text-sm font-semibold text-gray-700">
                 Input that didn't work <span className="text-red-500">*</span>
               </label>
               <textarea
@@ -90,67 +95,62 @@ export default function ReportIssue({ prefillInput = "", onClose }: Props) {
                 spellCheck={false}
                 autoCapitalize="none"
                 autoCorrect="off"
-                className="w-full p-3 text-sm font-mono border-2 border-[#c5cfe0] focus:border-[#1d6fb8] rounded-xl outline-none resize-y bg-[#f8faff] text-[#111] transition-colors"
+                className="w-full resize-y rounded-xl border-2 border-[#c5cfe0] bg-[#f8faff] p-3 font-mono text-sm text-[#111] outline-none transition-colors focus:border-[#1d6fb8]"
               />
             </div>
 
-            {/* What they expected */}
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+              <label className="mb-1.5 block text-sm font-semibold text-gray-700">
                 What result did you expect?
               </label>
               <input
                 value={expected}
                 onChange={(e) => setExpected(e.target.value)}
                 placeholder="e.g. 4 numbers × 5 = 20"
-                className="w-full p-3 text-sm border-2 border-[#c5cfe0] focus:border-[#1d6fb8] rounded-xl outline-none bg-[#f8faff] transition-colors"
+                className="w-full rounded-xl border-2 border-[#c5cfe0] bg-[#f8faff] p-3 text-sm outline-none transition-colors focus:border-[#1d6fb8]"
               />
             </div>
 
-            {/* Extra note */}
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+              <label className="mb-1.5 block text-sm font-semibold text-gray-700">
                 Any additional notes{" "}
-                <span className="text-gray-400 font-normal">(optional)</span>
+                <span className="font-normal text-gray-400">(optional)</span>
               </label>
               <input
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 placeholder="e.g. This format comes from WhatsApp..."
-                className="w-full p-3 text-sm border-2 border-[#c5cfe0] focus:border-[#1d6fb8] rounded-xl outline-none bg-[#f8faff] transition-colors"
+                className="w-full rounded-xl border-2 border-[#c5cfe0] bg-[#f8faff] p-3 text-sm outline-none transition-colors focus:border-[#1d6fb8]"
               />
             </div>
 
             {status === "error" && (
-              <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-500">
                 ⚠️ Failed to send. Please check your internet connection and try
                 again.
               </p>
             )}
 
-            {/* Buttons */}
             <div className="flex gap-3 pt-1">
-              <button
+              <Button
+                variant="outline"
                 onClick={onClose}
-                className="flex-1 py-3 text-sm font-semibold text-gray-500 border-2 border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+                className="flex-1 rounded-xl border-2 py-3 text-sm font-semibold"
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="primary"
                 onClick={handleSubmit}
                 disabled={!input.trim() || status === "sending"}
-                className={`flex-1 py-3 text-sm font-bold rounded-xl transition-colors ${
-                  !input.trim() || status === "sending"
-                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                    : "bg-[#1d6fb8] hover:bg-[#165fa3] text-white cursor-pointer"
-                }`}
+                className="flex-1 rounded-xl py-3 text-sm font-bold"
               >
                 {status === "sending" ? "Sending..." : "Submit Report"}
-              </button>
+              </Button>
             </div>
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }
