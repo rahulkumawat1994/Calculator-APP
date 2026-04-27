@@ -154,6 +154,85 @@ Gb`;
     const harfSeg = r.results.find(x => x.line.includes("6666"));
     expect(harfSeg).toMatchObject({ isDouble: true, count: 2, rate: 50, lineTotal: 100 });
   });
+
+  it("WhatsApp: comma list broken with trailing comma, rate ×N on next line (FB…)", () => {
+    const raw = `[27/04, 5:12 pm] PAWAN JI PLAYER: FB 43,97,62,98,
+33,79,26,89×70
+`;
+    const r = calculateTotal(raw);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(8 * 70);
+    expect(r.results).toHaveLength(1);
+  });
+
+  it("slash pair/rate (NN/10) lines from WhatsApp — 43/10, 07/20 parse as NN×rate, not as junk", () => {
+    const raw = `[27/04, 5:43 pm] JAGSIR: 43/10
+34/5
+07/20
+50/10
+`;
+    const r = calculateTotal(raw);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(10 + 5 + 20 + 10);
+  });
+
+  it("regression: slash stake + multiline comma + x-rate (one segment each where applicable)", () => {
+    const slash = calculateTotal("43/10");
+    expect(slash.failedLines ?? []).toEqual([]);
+    expect(slash.total).toBe(10);
+
+    const pawan = `FB 43,97,62,98,
+33,79,26,89×70
+`;
+    const c = calculateTotal(pawan);
+    expect(c.failedLines ?? []).toEqual([]);
+    expect(c.total).toBe(8 * 70);
+    expect(c.results).toHaveLength(1);
+  });
+
+  it("full JAGSIR-style slash list (all NN/rate rows) — no failed lines, sum of rates", () => {
+    const raw = `[27/04, 5:43 pm] JAGSIR SINGH PLAYER: 43/10
+34/5
+07/20
+70/20
+14/5
+41/5
+12/5
+21/5
+10/20
+13/10
+15/5
+16/10
+61/10
+[27/04, 5:45 pm] JAGSIR SINGH PLAYER: 05/20
+52/10
+25/5
+53/5
+35/10
+71/5
+17/10
+54/10
+45/10
+56/10
+65/20
+57/5
+75/10.
+58/10
+85/30
+[27/04, 5:46 pm] JAGSIR SINGH PLAYER: 72/10
+27/20
+74/10
+47/10
+76/10
+67/10
+78/10
+87/40
+[27/04, 5:47 pm] JAGSIR SINGH PLAYER: 50/10
+`;
+    const r = calculateTotal(raw);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(430);
+  });
 });
 
 describe("parser structure checks", () => {

@@ -359,6 +359,13 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/[\u200B-\u200D\uFEFF]/g, "");
   // Fullwidth ASCII digits → ASCII
   t = t.replace(/[\uFF10-\uFF19]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30));
+  // "NN/rate" with a slash (WhatsApp pastes: 43/10, 07/20) — must run *before* slash→space below
+  // so the rate is not split into a loose "NN DD" line. Whitelist the denominator to typical stakes
+  // and avoid mistaking calendar fragments like 12/04 (→ would match rate 4 if we only used \d+).
+  t = t.replace(
+    /\b(\d{2})\/(5|10|15|20|25|30|40|50|100)\b/g,
+    "$1x$2",
+  );
   // Between digits: `;` `|` `/` `\` or tabs often used instead of space (keep `,` for comma-rate lines)
   t = t.replace(/(?<=\d)[\t]*[;|/\\]+[\t]*(?=\d)/g, " ");
   // Same-digit run (3+ identical digits) then AB / A / B then rate, with no x/=/*
@@ -490,6 +497,58 @@ function mergeCommaOnlyRateContinuationLine(lines: string[]): string[] {
   return out;
 }
 
+/**
+ * WhatsApp / narrow screens often break a long comma list across lines, with a trailing
+ * `,` on the first line(s) and the rate (×70, x50, *10) only on the last line, e.g.
+ *   `FB 43,97,62,98,`
+ *   `33,79,26,89×70`
+ * If we do not join them, the first line is parsed with the last two-digit as the
+ * (wrong) rate, and the second line is parsed as a second segment.
+ * Absorb any middle lines that are still comma-lists with no rate marker, then the
+ * first line with `,…(x/=/\*)(rate)`.
+ */
+function mergeTrailingCommaListWithXOnLaterLine(lines: string[]): string[] {
+  const hasExplicit =
+    (s: string) =>
+      /\(\d+\)/.test(s) || X_RATE_RE.test(s) || /=+\s*\d+/.test(s) || /\*\s*\d+/.test(s);
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const start = lines[i]!.trim();
+    if (!/,/.test(start) || hasExplicit(start) || !/,\s*$/.test(start)) {
+      out.push(lines[i]!);
+      i += 1;
+      continue;
+    }
+    let acc = lines[i]!.replace(/\s+$/g, "");
+    let j = i + 1;
+    let merged = false;
+    while (j < lines.length) {
+      const n = lines[j]!;
+      if (hasExplicit(n) && /,/.test(n)) {
+        acc = acc + n;
+        out.push(acc);
+        i = j + 1;
+        merged = true;
+        break;
+      }
+      if (hasExplicit(n) && !/,/.test(n)) {
+        break;
+      }
+      if (/,/.test(n) && !hasExplicit(n)) {
+        acc = acc + n;
+        j += 1;
+        continue;
+      }
+      break;
+    }
+    if (merged) continue;
+    out.push(lines[i]!);
+    i += 1;
+  }
+  return out;
+}
+
 /** Last explicit ×rate (or last (rate)) in a merged line — used to repeat rate for continuation rows. */
 function lastExplicitRateInLine(line: string): number | null {
   const ms = [...line.matchAll(SEP_RATE_RE)];
@@ -543,8 +602,7 @@ function mergePendingBodyWithInheritedRate(pending: string, continuationBody: st
 
 export function calculateTotal(text: string): CalculationResult {
   const cleaned = preprocessText(text);
-  const rawLines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
-
+  const rawLines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
   const logicalLines: string[] = [];
   for (const rawLine of rawLines) {
     const labelStripped = stripLeadingGameLabels(rawLine);
@@ -554,8 +612,8 @@ export function calculateTotal(text: string): CalculationResult {
     if (isSeparatorOnlyLine(line)) continue;
     logicalLines.push(...splitTrailingNumberRunAfterLastRate(line));
   }
-
   const withCommaCont = mergeCommaOnlyRateContinuationLine(logicalLines);
+  const withCommaXMerge = mergeTrailingCommaListWithXOnLaterLine(withCommaCont);
 
   const mergedLines: string[] = [];
   let pending = '';
@@ -584,7 +642,7 @@ export function calculateTotal(text: string): CalculationResult {
     pending = "";
   };
 
-  for (const line of withCommaCont) {
+  for (const line of withCommaXMerge) {
     const hasExplicitRate =
       /\(\d+\)/.test(line) || X_RATE_RE.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
