@@ -31,8 +31,8 @@ function countSegment(allNumbers: number[], isWP: boolean): number {
   return count;
 }
 
-// Splits digit blocks into 2-digit pairs: "8307" → [83, 07]
-function extractPairedNumbers(text: string): number[] {
+/** Splits digit blocks into 2-digit pairs: "8307" → [83, 07], "9103" → [91, 03]. */
+export function extractPairedNumbers(text: string): number[] {
   const out: number[] = [];
   for (const block of text.match(/\d+/g) ?? []) {
     if (block.length === 1) continue;
@@ -40,6 +40,30 @@ function extractPairedNumbers(text: string): number[] {
     else { for (let i = 0; i + 1 < block.length; i += 2) out.push(Number(block.slice(i, i + 2))); }
   }
   return out;
+}
+
+/**
+ * Comma-separated jodis for the breakdown UI. Uses the same {@link extractPairedNumbers} rules
+ * as `processLine` so embedded runs (e.g. 9103 → 91, 03) match the row count. Falls back to
+ * "standalone" two-digit regex + raw line for WP, solid, or other count mismatches.
+ */
+export function formatSegmentLineForPairListDisplay(segment: {
+  line: string;
+  count: number;
+  isWP: boolean;
+  isDouble: boolean;
+}): string {
+  const pairs = extractPairedNumbers(segment.line);
+  const n = pairs.length;
+  if (n > 0 && !segment.isWP) {
+    if (
+      segment.count === n ||
+      (segment.isDouble && segment.count === 2 * n)
+    ) {
+      return pairs.map((p) => p.toString().padStart(2, "0")).join(", ");
+    }
+  }
+  return (segment.line.match(/(?<!\d)\d{2}(?!\d)/g) ?? [segment.line]).join(", ");
 }
 
 // ─── Flag detector ─────────────────────────────────────────────────────────────

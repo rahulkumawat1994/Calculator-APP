@@ -24,6 +24,12 @@ import {
   REPORT_PUSH_CHANGED_EVENT,
   REPORT_PUSH_ENABLED_KEY,
 } from "./useReportIssuePush";
+import {
+  CALCULATE_ALL_SKIP_AUDIT_KEY,
+  CALC_LOCAL_ONLY_CHANGED_EVENT,
+  getSkipAuditOnCalculateAll,
+  setSkipAuditOnCalculateAll,
+} from "./calcLocalAuditPref";
 
 const REPORT_PUSH_TOOLTIP =
   "Notify this browser when someone submits a pattern issue from the calculator.";
@@ -34,6 +40,16 @@ interface ConfirmState {
   confirmLabel: string;
   danger?: boolean;
   run: () => void;
+}
+
+/** `YYYY-MM-DD` in the browser’s local calendar (for date filter on `createdAt`). */
+function localDateKeyFromTimestamp(ts: number | undefined): string {
+  if (ts == null || !Number.isFinite(ts)) return "";
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function fmtTs(ts?: number): string {
@@ -88,6 +104,7 @@ export default function AdminPage() {
   const [previewResult, setPreviewResult] = useState<CalculationResult | null>(
     null
   );
+  const [allAuditInputsOpen, setAllAuditInputsOpen] = useState(false);
   const [reportPushOn, setReportPushOn] = useState(() => {
     try {
       return localStorage.getItem(REPORT_PUSH_ENABLED_KEY) === "1";
@@ -96,22 +113,61 @@ export default function AdminPage() {
     }
   });
   const [pushError, setPushError] = useState<string | null>(null);
+  const [localOnlyCalculate, setLocalOnlyCalculate] = useState(
+    getSkipAuditOnCalculateAll
+  );
+  const toggleLocalOnlyCalculate = () => {
+    const n = !getSkipAuditOnCalculateAll();
+    setSkipAuditOnCalculateAll(n);
+    setLocalOnlyCalculate(n);
+  };
+  useEffect(() => {
+    const sync = () => setLocalOnlyCalculate(getSkipAuditOnCalculateAll());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key === CALCULATE_ALL_SKIP_AUDIT_KEY) sync();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(
+      CALC_LOCAL_ONLY_CHANGED_EVENT,
+      sync as EventListener
+    );
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(
+        CALC_LOCAL_ONLY_CHANGED_EVENT,
+        sync as EventListener
+      );
+    };
+  }, []);
   /** off = Firestore order (newest first); desc = most failed lines first; asc = fewest/OK first */
   const [auditStatusSort, setAuditStatusSort] = useState<
     "off" | "asc" | "desc"
   >("off");
+  /** Empty string = all dates. Otherwise `YYYY-MM-DD` (local) matching `createdAt`. */
+  const [auditDateFilter, setAuditDateFilter] = useState("");
+
+  const dateFilteredAuditRows = useMemo(() => {
+    if (!auditDateFilter.trim()) return auditRows;
+    return auditRows.filter(
+      (r) => localDateKeyFromTimestamp(r.createdAt) === auditDateFilter
+    );
+  }, [auditRows, auditDateFilter]);
 
   const displayAuditRows = useMemo(() => {
-    if (auditStatusSort === "off") return auditRows;
+    if (auditStatusSort === "off") return dateFilteredAuditRows;
     const fc = (r: CalculationAuditLog) => r.failedCount ?? 0;
-    return [...auditRows].sort((a, b) => {
+    return [...dateFilteredAuditRows].sort((a, b) => {
       const na = fc(a);
       const nb = fc(b);
-      if (na !== nb)
-        return auditStatusSort === "asc" ? na - nb : nb - na;
+      if (na !== nb) return auditStatusSort === "asc" ? na - nb : nb - na;
       return (b.createdAt ?? 0) - (a.createdAt ?? 0);
     });
-  }, [auditRows, auditStatusSort]);
+  }, [dateFilteredAuditRows, auditStatusSort]);
+
+  const combinedAllAuditInputText = useMemo(
+    () => displayAuditRows.map((r) => r.input ?? "").join("\n\n"),
+    [displayAuditRows]
+  );
 
   const load = async () => {
     setLoading(true);
@@ -538,37 +594,66 @@ export default function AdminPage() {
             </div>
           </div>
           <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:shrink-0 sm:items-end">
-            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
-              <button
-                type="button"
-                onClick={() => void toggleReportPush()}
-                title={REPORT_PUSH_TOOLTIP}
-                className={`min-h-[44px] w-full rounded-[12px] border-2 px-3 py-2.5 text-[13px] font-bold transition-colors sm:min-h-0 sm:w-auto ${
-                  reportPushOn
-                    ? "border-green-300 bg-green-50 text-green-800"
-                    : "border-[#dde8f0] bg-white text-[#4a6685] hover:bg-[#f5f9ff]"
-                }`}
-              >
-                {reportPushOn
-                  ? "🔔 Report alerts: on"
-                  : "🔕 Enable report alerts"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void load()}
-                disabled={
-                  loading ||
-                  clearingAudit ||
-                  clearingReport ||
-                  pruningAuditDupes ||
-                  busyFixedReportId != null ||
-                  bulkAuditDeleting ||
-                  bulkReportDeleting
-                }
-                className="min-h-[44px] w-full rounded-[12px] bg-[#1d6fb8] px-4 py-2.5 text-[14px] font-bold text-white active:opacity-90 disabled:opacity-50 sm:min-h-0 sm:w-auto"
-              >
-                Refresh
-              </button>
+            <div className="flex w-full min-w-0 max-w-md flex-col gap-2 sm:max-w-none sm:items-stretch sm:justify-end">
+              <div className="flex items-center justify-between gap-3 rounded-[12px] border border-[#e0eaf5] bg-[#f6f9fd] px-3 py-2.5 sm:px-3">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-bold text-[#1a1a1a]">
+                    Local calculate only
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={localOnlyCalculate}
+                  aria-label="Local calculate only, skip audit API"
+                  onClick={toggleLocalOnlyCalculate}
+                  className={`relative h-7 w-[52px] shrink-0 cursor-pointer rounded-full border-2 transition-colors ${
+                    localOnlyCalculate
+                      ? "border-amber-500 bg-amber-400"
+                      : "border-[#c5d4e3] bg-[#d9e2ec]"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                      localOnlyCalculate
+                        ? "translate-x-[1.4rem]"
+                        : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => void toggleReportPush()}
+                  title={REPORT_PUSH_TOOLTIP}
+                  className={`min-h-[44px] w-full rounded-[12px] border-2 px-3 py-2.5 text-[13px] font-bold transition-colors sm:min-h-0 sm:w-auto ${
+                    reportPushOn
+                      ? "border-green-300 bg-green-50 text-green-800"
+                      : "border-[#dde8f0] bg-white text-[#4a6685] hover:bg-[#f5f9ff]"
+                  }`}
+                >
+                  {reportPushOn
+                    ? "🔔 Report alerts: on"
+                    : "🔕 Enable report alerts"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void load()}
+                  disabled={
+                    loading ||
+                    clearingAudit ||
+                    clearingReport ||
+                    pruningAuditDupes ||
+                    busyFixedReportId != null ||
+                    bulkAuditDeleting ||
+                    bulkReportDeleting
+                  }
+                  className="min-h-[44px] w-full rounded-[12px] bg-[#1d6fb8] px-4 py-2.5 text-[14px] font-bold text-white active:opacity-90 disabled:opacity-50 sm:min-h-0 sm:w-auto"
+                >
+                  Refresh
+                </button>
+              </div>
             </div>
             {pushError && (
               <p className="text-left text-[12px] text-red-600 sm:text-right">
@@ -593,8 +678,34 @@ export default function AdminPage() {
                     Calculation Audits
                   </h2>
                   <p className="mt-0.5 text-[12px] text-gray-500">
-                    {auditRows.length} rows
+                    {displayAuditRows.length} shown
+                    {auditDateFilter
+                      ? ` (of ${auditRows.length} loaded)`
+                      : ` · ${auditRows.length} loaded`}
                   </p>
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                    <label className="flex min-h-[40px] flex-col gap-1 sm:min-h-0 sm:flex-row sm:items-center sm:gap-2">
+                      <span className="text-[12px] font-semibold text-[#4a6685]">
+                        Date
+                      </span>
+                      <input
+                        type="date"
+                        value={auditDateFilter}
+                        onChange={(e) => setAuditDateFilter(e.target.value)}
+                        className="min-h-[40px] rounded-[10px] border-2 border-[#d9e6f5] bg-white px-2 py-1.5 text-[13px] text-[#1a1a1a] sm:min-h-0"
+                        aria-label="Filter by local date"
+                      />
+                    </label>
+                    {auditDateFilter ? (
+                      <button
+                        type="button"
+                        onClick={() => setAuditDateFilter("")}
+                        className="min-h-[40px] self-start rounded-[10px] border border-[#d5e4f5] bg-[#f3f7fc] px-3 py-1.5 text-[12px] font-bold text-[#1d6fb8] sm:min-h-0"
+                      >
+                        All dates
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                   {selectedAuditIds.size > 0 && (
@@ -614,6 +725,21 @@ export default function AdminPage() {
                       Delete {selectedAuditIds.size} selected
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => setAllAuditInputsOpen(true)}
+                    disabled={
+                      loading ||
+                      clearingAudit ||
+                      pruningAuditDupes ||
+                      bulkAuditDeleting ||
+                      displayAuditRows.length === 0
+                    }
+                    title="Open every stored input in one text area (current table order)"
+                    className="min-h-[44px] rounded-[10px] border-2 border-[#1d6fb8] bg-white px-3 py-2 text-left text-[12px] font-bold text-[#1d6fb8] disabled:opacity-50 sm:min-h-0 sm:text-center"
+                  >
+                    All inputs
+                  </button>
                   <button
                     type="button"
                     onClick={() => void pruneAuditDupes()}
@@ -651,6 +777,26 @@ export default function AdminPage() {
                 <div className="p-3 text-gray-500 sm:p-4">
                   No audit logs found.
                 </div>
+              ) : displayAuditRows.length === 0 ? (
+                <div className="p-3 text-sm text-gray-600 sm:p-4">
+                  <p className="font-semibold text-[#1a1a1a]">
+                    No rows for this date
+                  </p>
+                  <p className="mt-1 text-[12px] text-gray-500">
+                    Try another day or clear the filter. (Only the most recent
+                    batch is loaded from the server — older days may be
+                    missing.)
+                  </p>
+                  {auditDateFilter ? (
+                    <button
+                      type="button"
+                      onClick={() => setAuditDateFilter("")}
+                      className="mt-3 rounded-[10px] border-2 border-[#1d6fb8] bg-white px-3 py-1.5 text-[12px] font-bold text-[#1d6fb8]"
+                    >
+                      All dates
+                    </button>
+                  ) : null}
+                </div>
               ) : (
                 <div className="overflow-x-auto overscroll-x-contain">
                   <table className="w-full min-w-[720px] text-left text-[11px] sm:text-[12px]">
@@ -667,7 +813,11 @@ export default function AdminPage() {
                             type="button"
                             onClick={() =>
                               setAuditStatusSort((s) =>
-                                s === "off" ? "desc" : s === "desc" ? "asc" : "off"
+                                s === "off"
+                                  ? "desc"
+                                  : s === "desc"
+                                  ? "asc"
+                                  : "off"
                               )
                             }
                             className="inline-flex items-center gap-1 font-bold text-[#1a1a1a] hover:text-[#1d6fb8]"
@@ -676,8 +826,8 @@ export default function AdminPage() {
                               auditStatusSort === "off"
                                 ? "none"
                                 : auditStatusSort === "asc"
-                                  ? "ascending"
-                                  : "descending"
+                                ? "ascending"
+                                : "descending"
                             }
                           >
                             Status
@@ -1119,6 +1269,75 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
+      {allAuditInputsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 overscroll-contain sm:p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setAllAuditInputsOpen(false);
+          }}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="audit-all-inputs-title"
+            className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[16px] border-2 border-[#dbe8f3] bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-[#e7eef7] bg-[#f6f9fd] px-4 py-3 sm:px-5">
+              <div>
+                <h3
+                  id="audit-all-inputs-title"
+                  className="text-[17px] font-extrabold text-[#1a1a1a]"
+                >
+                  All audit inputs
+                </h3>
+                <p className="mt-1 text-[12px] text-gray-600">
+                  {displayAuditRows.length} pastes, separated by a blank line
+                  (same order as the table
+                  {auditStatusSort !== "off" ? " — status sort applied" : ""}).
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(
+                        combinedAllAuditInputText
+                      );
+                      toast.success("Copied to clipboard");
+                    } catch {
+                      toast.error("Could not copy");
+                    }
+                  }}
+                  className="rounded-[10px] border border-[#1d6fb8] bg-[#1d6fb8] px-3 py-1.5 text-[12px] font-bold text-white"
+                >
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAllAuditInputsOpen(false)}
+                  className="rounded-[10px] border border-[#d5e4f5] bg-white px-3 py-1.5 text-[12px] font-bold text-[#4a6685]"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 p-4 sm:p-5">
+              <textarea
+                readOnly
+                value={combinedAllAuditInputText}
+                spellCheck={false}
+                className="h-[min(70vh,720px)] w-full resize-y rounded-[12px] border-2 border-[#e4edf8] bg-[#f8fbff] p-3 font-mono text-[12px] text-[#1a1a1a] leading-relaxed sm:p-4"
+                aria-label="All calculation audit inputs concatenated"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmDialog
         open={confirmState !== null}
         title={confirmState?.title ?? ""}

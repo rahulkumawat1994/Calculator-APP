@@ -12,6 +12,16 @@ import {
   type CalculationAuditLog,
 } from "./firestoreDb";
 
+/** `YYYY-MM-DD` in the browser’s local calendar (for date filter on `createdAt`). */
+function localDateKeyFromTimestamp(ts: number | undefined): string {
+  if (ts == null || !Number.isFinite(ts)) return "";
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function fmtTs(ts?: number): string {
   if (!ts) return "-";
   try {
@@ -49,17 +59,32 @@ export default function AuditPage() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const [failedSort, setFailedSort] = useState<"off" | "asc" | "desc">("off");
+  const [allInputsOpen, setAllInputsOpen] = useState(false);
+  /** Empty = all dates. Otherwise `YYYY-MM-DD` (local) matching `createdAt`. */
+  const [dateFilter, setDateFilter] = useState("");
+
+  const dateFilteredRows = useMemo(() => {
+    if (!dateFilter.trim()) return rows;
+    return rows.filter(
+      (r) => localDateKeyFromTimestamp(r.createdAt) === dateFilter,
+    );
+  }, [rows, dateFilter]);
 
   const displayRows = useMemo(() => {
-    if (failedSort === "off") return rows;
+    if (failedSort === "off") return dateFilteredRows;
     const fc = (r: CalculationAuditLog) => r.failedCount ?? 0;
-    return [...rows].sort((a, b) => {
+    return [...dateFilteredRows].sort((a, b) => {
       const na = fc(a);
       const nb = fc(b);
       if (na !== nb) return failedSort === "asc" ? na - nb : nb - na;
       return (b.createdAt ?? 0) - (a.createdAt ?? 0);
     });
-  }, [rows, failedSort]);
+  }, [dateFilteredRows, failedSort]);
+
+  const combinedAllInputText = useMemo(
+    () => displayRows.map((r) => r.input ?? "").join("\n\n"),
+    [displayRows],
+  );
 
   const load = async () => {
     setLoading(true);
@@ -212,12 +237,39 @@ export default function AuditPage() {
   return (
     <div className="min-h-screen bg-[#eef2f7] font-sans">
       <div className="max-w-[1200px] mx-auto px-4 py-5">
-        <div className="bg-white border-2 border-[#dde8f0] rounded-[16px] p-4 shadow-sm mb-4 flex items-center justify-between">
-          <div>
+        <div className="bg-white border-2 border-[#dde8f0] rounded-[16px] p-4 shadow-sm mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <h1 className="text-[22px] font-black text-[#1a1a1a]">Calculation Audit</h1>
             <p className="text-[13px] text-gray-500 mt-1">
               Internal only: logs from collection <code>calc_audit_logs</code>
             </p>
+            <p className="text-[12px] text-gray-500 mt-1">
+              {displayRows.length} shown
+              {dateFilter
+                ? ` (of ${rows.length} loaded)`
+                : ` · ${rows.length} loaded`}
+            </p>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+              <label className="flex min-h-[40px] flex-col gap-1 sm:min-h-0 sm:flex-row sm:items-center sm:gap-2">
+                <span className="text-[12px] font-semibold text-[#4a6685]">Date</span>
+                <input
+                  type="date"
+                  value={dateFilter}
+                  onChange={(e) => setDateFilter(e.target.value)}
+                  className="min-h-[40px] rounded-[10px] border-2 border-[#d9e6f5] bg-white px-2 py-1.5 text-[13px] text-[#1a1a1a] sm:min-h-0"
+                  aria-label="Filter by local date"
+                />
+              </label>
+              {dateFilter ? (
+                <button
+                  type="button"
+                  onClick={() => setDateFilter("")}
+                  className="min-h-[40px] self-start rounded-[10px] border border-[#d5e4f5] bg-[#f3f7fc] px-3 py-1.5 text-[12px] font-bold text-[#1d6fb8] sm:min-h-0"
+                >
+                  All dates
+                </button>
+              ) : null}
+            </div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             {selectedIds.size > 0 && (
@@ -232,6 +284,15 @@ export default function AuditPage() {
             )}
             <button
               type="button"
+              onClick={() => setAllInputsOpen(true)}
+              disabled={loading || clearing || pruningDupes || bulkDeleting || displayRows.length === 0}
+              title="Open every stored input in one text area (current table order)"
+              className="px-4 py-2.5 rounded-[12px] text-[14px] font-bold border-2 border-[#1d6fb8] text-[#1d6fb8] bg-white active:opacity-90 disabled:opacity-50"
+            >
+              All inputs
+            </button>
+            <button
+              type="button"
               onClick={() => void handlePruneDuplicates()}
               disabled={loading || clearing || pruningDupes || bulkDeleting}
               className="px-4 py-2.5 rounded-[12px] text-[14px] font-bold bg-amber-600 text-white active:opacity-90 disabled:opacity-50"
@@ -240,7 +301,7 @@ export default function AuditPage() {
             </button>
             <button
               type="button"
-              onClick={handleClearAll}
+              onClick={() => void handleClearAll()}
               disabled={loading || clearing || pruningDupes || rows.length === 0 || bulkDeleting}
               className="px-4 py-2.5 rounded-[12px] text-[14px] font-bold bg-red-600 text-white active:opacity-90 disabled:opacity-50"
             >
@@ -263,6 +324,23 @@ export default function AuditPage() {
           <div className="bg-red-50 border-2 border-red-200 rounded-[16px] p-4 text-red-700">{error}</div>
         ) : rows.length === 0 ? (
           <div className="bg-white border-2 border-[#dde8f0] rounded-[16px] p-6 text-gray-500">No audit logs found.</div>
+        ) : displayRows.length === 0 ? (
+          <div className="bg-white border-2 border-[#dde8f0] rounded-[16px] p-6 text-sm text-gray-600">
+            <p className="font-semibold text-[#1a1a1a]">No rows for this date</p>
+            <p className="mt-1 text-[12px] text-gray-500">
+              Try another day or clear the filter. (Only a recent batch is loaded — older days
+              may be missing.)
+            </p>
+            {dateFilter ? (
+              <button
+                type="button"
+                onClick={() => setDateFilter("")}
+                className="mt-3 rounded-[10px] border-2 border-[#1d6fb8] bg-white px-3 py-1.5 text-[12px] font-bold text-[#1d6fb8]"
+              >
+                All dates
+              </button>
+            ) : null}
+          </div>
         ) : (
           <div className="bg-white border-2 border-[#dde8f0] rounded-[16px] shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
@@ -372,6 +450,71 @@ export default function AuditPage() {
           </div>
         )}
       </div>
+
+      {allInputsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 sm:p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setAllInputsOpen(false);
+          }}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="standalone-audit-all-title"
+            className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[16px] border-2 border-[#dbe8f3] bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-[#e7eef7] bg-[#f6f9fd] px-4 py-3 sm:px-5">
+              <div>
+                <h2
+                  id="standalone-audit-all-title"
+                  className="text-[17px] font-extrabold text-[#1a1a1a]"
+                >
+                  All audit inputs
+                </h2>
+                <p className="mt-1 text-[12px] text-gray-600">
+                  {displayRows.length} pastes, separated by a blank line
+                  {failedSort !== "off" ? " (failed-count sort applied)" : ""}.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(combinedAllInputText);
+                      toast.success("Copied to clipboard");
+                    } catch {
+                      toast.error("Could not copy");
+                    }
+                  }}
+                  className="rounded-[10px] border border-[#1d6fb8] bg-[#1d6fb8] px-3 py-1.5 text-[12px] font-bold text-white"
+                >
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAllInputsOpen(false)}
+                  className="rounded-[10px] border border-[#d5e4f5] bg-white px-3 py-1.5 text-[12px] font-bold text-[#4a6685]"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 p-4 sm:p-5">
+              <textarea
+                readOnly
+                value={combinedAllInputText}
+                spellCheck={false}
+                className="h-[min(70vh,720px)] w-full resize-y rounded-[12px] border-2 border-[#e4edf8] bg-[#f8fbff] p-3 font-mono text-[12px] text-[#1a1a1a] sm:p-4"
+                aria-label="All calculation audit inputs concatenated"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmDialog
         open={confirmState !== null}

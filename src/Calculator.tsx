@@ -19,6 +19,11 @@ import {
 } from "./calcUtils";
 import EditableBreakdown from "./EditableBreakdown";
 import ReportIssue from "./ReportIssue";
+import {
+  getSkipAuditOnCalculateAll,
+  CALC_LOCAL_ONLY_CHANGED_EVENT,
+  CALCULATE_ALL_SKIP_AUDIT_KEY,
+} from "./calcLocalAuditPref";
 import type { CalculationAuditPayload } from "./firestoreDb";
 import type {
   CalculationResult,
@@ -196,6 +201,27 @@ export default function Calculator({
   const [showReport, setShowReport] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [skipAuditOnCalculate, setSkipAuditOnCalculate] = useState(
+    getSkipAuditOnCalculateAll
+  );
+  useEffect(() => {
+    const sync = () => setSkipAuditOnCalculate(getSkipAuditOnCalculateAll());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key === CALCULATE_ALL_SKIP_AUDIT_KEY) sync();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(
+      CALC_LOCAL_ONLY_CHANGED_EVENT,
+      sync as EventListener
+    );
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(
+        CALC_LOCAL_ONLY_CHANGED_EVENT,
+        sync as EventListener
+      );
+    };
+  }, []);
 
   const [savedInfo, setSavedInfo] = useState<{
     date: string;
@@ -381,6 +407,8 @@ export default function Calculator({
     setCopied(false);
     setIsSaved(false);
     setSavedInfo(null);
+    const skipAuditLog = getSkipAuditOnCalculateAll();
+    setSkipAuditOnCalculate(skipAuditLog);
 
     const hasEnabledSlot = slots.some(s => s.enabled);
     const hasWaBlock = blocks.some(b => {
@@ -438,17 +466,19 @@ export default function Calculator({
           isWAMode: true,
           waSlotFallbackCount,
         });
-        void logCalculationAudit({
-          input: b.text,
-          mode: "wa",
-          total: nextResult.total,
-          resultCount: nextResult.results.length,
-          failedCount: allFailed.length,
-          selectedSlotId: selectedSlot.id,
-          selectedSlotName: selectedSlot.name,
-          waSlotsSummary: summarizeWaSlots(tagged, slots),
-          waMessageCount: tagged.length,
-        });
+        if (!skipAuditLog) {
+          void logCalculationAudit({
+            input: b.text,
+            mode: "wa",
+            total: nextResult.total,
+            resultCount: nextResult.results.length,
+            failedCount: allFailed.length,
+            selectedSlotId: selectedSlot.id,
+            selectedSlotName: selectedSlot.name,
+            waSlotsSummary: summarizeWaSlots(tagged, slots),
+            waMessageCount: tagged.length,
+          });
+        }
       } else {
         const normalized = normPasteText(b.text);
         const parts = splitPlainTextByMarketSlots(
@@ -506,15 +536,17 @@ export default function Calculator({
             isWAMode: false,
             waSlotFallbackCount: 0,
           });
-          void logCalculationAudit({
-            input: b.text,
-            mode: "manual",
-            total: nextResult.total,
-            resultCount: nextResult.results.length,
-            failedCount: allFailed.length,
-            selectedSlotId: selectedSlot.id,
-            selectedSlotName: selectedSlot.name,
-          });
+          if (!skipAuditLog) {
+            void logCalculationAudit({
+              input: b.text,
+              mode: "manual",
+              total: nextResult.total,
+              resultCount: nextResult.results.length,
+              failedCount: allFailed.length,
+              selectedSlotId: selectedSlot.id,
+              selectedSlotName: selectedSlot.name,
+            });
+          }
         } else {
           const nextResult = calculateTotal(b.text);
           next.push({
@@ -526,15 +558,17 @@ export default function Calculator({
             isWAMode: false,
             waSlotFallbackCount: 0,
           });
-          void logCalculationAudit({
-            input: b.text,
-            mode: "manual",
-            total: nextResult.total,
-            resultCount: nextResult.results.length,
-            failedCount: nextResult.failedLines?.length ?? 0,
-            selectedSlotId: selectedSlot.id,
-            selectedSlotName: selectedSlot.name,
-          });
+          if (!skipAuditLog) {
+            void logCalculationAudit({
+              input: b.text,
+              mode: "manual",
+              total: nextResult.total,
+              resultCount: nextResult.results.length,
+              failedCount: nextResult.failedLines?.length ?? 0,
+              selectedSlotId: selectedSlot.id,
+              selectedSlotName: selectedSlot.name,
+            });
+          }
         }
       }
     }
@@ -997,6 +1031,19 @@ export default function Calculator({
         >
           ✅ Calculate all
         </button>
+        {skipAuditOnCalculate ? (
+          <p className="text-center text-[12px] text-amber-800/90 -mt-2 mb-0 px-1 leading-snug">
+            Audit logging is off: calculation runs in this browser only (no server
+            log). Turn the switch off in{" "}
+            <a
+              className="font-bold text-[#1d6fb8] underline underline-offset-2"
+              href="/admin"
+            >
+              Admin
+            </a>{" "}
+            to record audits again.
+          </p>
+        ) : null}
 
         <button
           type="button"

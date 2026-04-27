@@ -173,12 +173,41 @@ function mergePendingBodyWithInheritedRate(pending: string, continuationBody: st
   return `${p}${sep}${b} x${rate}`;
 }
 
+/**
+ * Strips a leading slot code with **no** dot: `FB 31.67…` (WhatsApp). `stripLeadingGameLabels`
+ * only handles `Harf.` / `Gali.`-style `Word.`, so leading `FB ` left letters on the
+ * line, broke `isPureNumbers` and pending-merge with a following `.…xN` line.
+ * Only strip when the rest clearly starts a jodi list, so e.g. `SG harf AxB …` is unchanged.
+ */
+function stripLooseSlotMarketPrefixForNumberLine(line: string): string {
+  const t = line.replace(/^\uFEFF/, "").trim();
+  if (!t) return line;
+  const m = t.match(
+    /^(?:FB|FD|GL|DB|SG|DS|GB|Gali)\b\.?\s*/i,
+  );
+  if (!m) return line;
+  const rest = t.slice(m[0].length);
+  const trimmed = rest.trimStart();
+  if (trimmed.length === 0) return t;
+  const c = trimmed[0]!;
+  const looksLikeNumberListStart =
+    /\d/.test(c) ||
+    c === "." ||
+    c === "," ||
+    c === "…" ||
+    c === "।" ||
+    /[\u0966-\u096F]/.test(c);
+  if (looksLikeNumberListStart) return rest.trim();
+  return line;
+}
+
 export function calculateTotal(text: string): CalculationResult {
   const cleaned = preprocessText(text);
   const rawLines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
   const logicalLines: string[] = [];
   for (const rawLine of rawLines) {
-    const labelStripped = stripLeadingGameLabels(rawLine);
+    const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
+    const labelStripped = stripLeadingGameLabels(afterLoose);
     const line = normalizeTrailingDashRate(
       normalizeIntoRateMarker(normalizeTypoTolerantInput(labelStripped)),
     );

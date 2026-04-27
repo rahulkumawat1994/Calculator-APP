@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import type { CalculationResult, Segment } from "./types";
-import { processLine } from "./calcUtils";
+import {
+  extractPairedNumbers,
+  formatSegmentLineForPairListDisplay,
+  processLine,
+} from "./calcUtils";
 
 interface Props {
   result: CalculationResult;
@@ -24,8 +28,28 @@ function rebuild(results: Segment[], failedLines?: string[]): CalculationResult 
   };
 }
 
-// Extract any 2-digit numbers from the failed line as a hint for the numbers field
+/** Comma jodi list: each jodi in nowrap so digits like 0 and 3 in 03 are never split across lines. */
+function JodiListDisplay({ text }: { text: string }) {
+  const parts = text.split(", ");
+  if (parts.length === 0) return text;
+  return (
+    <>
+      {parts.map((p, i) => (
+        <span key={i} className="whitespace-nowrap">
+          {i > 0 ? ", " : null}
+          {p}
+        </span>
+      ))}
+    </>
+  );
+}
+
+// Hint for the numbers field on failed lines — align with extractPairedNumbers when possible.
 function hintNumbers(line: string): string {
+  const pairs = extractPairedNumbers(line);
+  if (pairs.length > 0) {
+    return pairs.map((p) => p.toString().padStart(2, "0")).join(" ");
+  }
   return (line.match(/(?<!\d)\d{2}(?!\d)/g) ?? []).join(" ");
 }
 
@@ -336,8 +360,10 @@ export default function EditableBreakdown({
                 </span>
               )}
               <div className="flex-1 min-w-0">
-                <div className={`${numSize} font-mono text-[#333] mb-1 break-all leading-relaxed`}>
-                  {(r.line.match(/(?<!\d)\d{2}(?!\d)/g) ?? [r.line]).join(", ")}
+                <div
+                  className={`${numSize} font-mono text-[#333] mb-1 min-w-0 wrap-break-word leading-relaxed`}
+                >
+                  <JodiListDisplay text={formatSegmentLineForPairListDisplay(r)} />
                   {r.isWP && <span className="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ml-1.5 bg-blue-100 text-blue-700 align-middle">WP</span>}
                   {r.isDouble && <span className="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ml-1.5 bg-yellow-100 text-yellow-800 align-middle">AB</span>}
                 </div>

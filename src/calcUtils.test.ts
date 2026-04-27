@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { GameSlot, SavedSession } from "./types";
 import {
   calculateTotal,
+  formatSegmentLineForPairListDisplay,
   processLine,
   splitWhatsAppInputByContact,
   computePatternAccuracy,
@@ -46,6 +47,12 @@ describe("calculateTotal regression scenarios", () => {
     { id: "label-harf", input: "Harf.B.1111x9999x50", expectedTotal: 100 },
     { id: "label-harf-typo-seps", input: "Harf.B..2222.x7777x50", expectedTotal: 100 },
     { id: "label-db", input: "DB. 29.09.11x10", expectedTotal: 30 },
+    // Dot jodi line: 9103 → two pairs 91+03 (same as 91.03). Tail is .30x5 → jodi 30, rate 5 (not x30).
+    {
+      id: "dot-9103-typo-and-30x5",
+      input: "83.45.94.34.13..02.20.38.27.19.9103.30x5",
+      expectedTotal: 65,
+    },
     {
       id: "multiline-sep",
       input:
@@ -72,6 +79,18 @@ describe("calculateTotal regression scenarios", () => {
     const result = calculateTotal(row.input);
     expect(result.total).toBe(row.expectedTotal);
     expect(result.failedLines ?? []).toEqual([]);
+  });
+
+  it("formatSegmentLineForPairListDisplay: 9103 shows 91, 03 in comma list (13 jodis, not 11 from regex)", () => {
+    const r = calculateTotal("83.45.94.34.13..02.20.38.27.19.9103.30x5");
+    const s = r.results[0]!;
+    expect(s.count).toBe(13);
+    const list = formatSegmentLineForPairListDisplay(s);
+    const parts = list.split(", ");
+    expect(parts).toHaveLength(13);
+    expect(parts).toEqual([
+      "83", "45", "94", "34", "13", "02", "20", "38", "27", "19", "91", "03", "30",
+    ]);
   });
 
   it("WhatsApp sample: into / intu / ijto lines all parse (markers Sg/Fd/Gb may fail)", () => {
