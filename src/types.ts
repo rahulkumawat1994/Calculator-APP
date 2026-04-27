@@ -13,6 +13,17 @@ export interface CalculationResult {
   failedLines?: string[];
 }
 
+/** One parsed WhatsApp message from `parseWhatsAppMessages` (used when merging into sessions). */
+export interface ParsedMessage {
+  id?: string;
+  contact: string;
+  date: string;
+  timestamp: string;
+  text: string;
+  result: CalculationResult;
+  slotId?: string;
+}
+
 export interface SavedMessage {
   id: string;
   timestamp: string;
