@@ -1,5 +1,4 @@
-import { Button } from "./ui/Button";
-import { Modal } from "./ui/Modal";
+import { Button, Card, Modal } from "./ui";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -24,8 +23,9 @@ export default function ConfirmDialog({
 }: ConfirmDialogProps) {
   return (
     <Modal open={open} onBackdropClick={onCancel} backdrop="dim" overlayClassName="p-4">
-      <div
-        className="w-full max-w-[420px] overflow-hidden rounded-[20px] border-2 border-[#dde8f0] bg-white shadow-2xl"
+      <Card
+        surface="panel"
+        className="max-w-[420px]"
         role="dialog"
         aria-modal="true"
       >
@@ -57,7 +57,7 @@ export default function ConfirmDialog({
             {cancelLabel}
           </Button>
         </div>
-      </div>
+      </Card>
     </Modal>
   );
 }

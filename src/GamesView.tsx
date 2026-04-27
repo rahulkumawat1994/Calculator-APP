@@ -1,22 +1,23 @@
 import { useState, useEffect, useRef } from "react";
 import { toast } from "react-toastify";
-import { toastApiError } from "./apiToast";
-import ConfirmDialog from "./ConfirmDialog";
 import {
-  slotMinutes,
   formatSlotTime,
   getCurrentSlot,
   mergeSessionLedgerResult,
   sessionLedgerForSlotKey,
+  slotMinutes,
   upsertPayment,
-} from "./calcUtils";
+  toastApiError,
+} from "@/lib";
 import type {
   SavedSession,
   GameSlot,
   AppSettings,
   PaymentRecord,
-} from "./types";
+} from "@/types";
+import ConfirmDialog from "./ConfirmDialog";
 import { useLoadingSignal } from "./TopProgressBar";
+import { Card } from "./ui";
 
 interface Props {
   slots: GameSlot[];
@@ -240,10 +241,7 @@ function SkeletonSlotCards() {
   return (
     <div className="space-y-4 animate-pulse">
       {[1, 2, 3].map((i) => (
-        <div
-          key={i}
-          className="bg-white rounded-[20px] border-2 border-[#e4edf8] p-5 shadow-sm"
-        >
+        <Card key={i} padding="md">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 rounded-full bg-gray-100 shrink-0" />
             <div className="flex-1 space-y-2">
@@ -251,7 +249,7 @@ function SkeletonSlotCards() {
               <div className="h-3 bg-gray-100 rounded-lg w-1/2" />
             </div>
           </div>
-        </div>
+        </Card>
       ))}
     </div>
   );
@@ -821,9 +819,10 @@ export default function GamesView({
                   const { badge, label: statusLabel } = STATUS_STYLE[status];
 
                   return (
-                    <div
+                    <Card
                       key={slot.id}
-                      className="bg-white rounded-[20px] shadow-sm border-2 border-[#e4edf8] overflow-hidden"
+                      overflow="hidden"
+                      padding="none"
                     >
                       <button
                         onClick={() => toggleSlot(slot.id)}
@@ -1370,7 +1369,7 @@ export default function GamesView({
                           )}
                         </div>
                       )}
-                    </div>
+                    </Card>
                   );
                 })}
               </div>
@@ -1519,7 +1518,10 @@ export default function GamesView({
               </div>
 
               {monthDays.length === 0 ? (
-                <div className="bg-white rounded-[20px] border-2 border-[#e4edf8] px-5 py-12 text-center shadow-sm">
+                <Card
+                  padding="none"
+                  className="px-5 py-12 text-center"
+                >
                   <div className="text-[40px] mb-3">📭</div>
                   <div className="text-[17px] font-bold text-gray-400">
                     No payments recorded
@@ -1527,7 +1529,7 @@ export default function GamesView({
                   <div className="text-[14px] text-gray-400 mt-1">
                     for {MONTH_NAMES[monthYear.month - 1]} {monthYear.year}
                   </div>
-                </div>
+                </Card>
               ) : (
                 <div className="space-y-3">
                   {monthDays.map((day) => (

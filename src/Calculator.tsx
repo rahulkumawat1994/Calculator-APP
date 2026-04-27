@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useLayoutEffect } from "react";
 import { toast } from "react-toastify";
-import { toastApiError } from "./apiToast";
 import {
   calculateTotal,
+  getSkipAuditOnCalculateAll,
   parseWhatsAppMessages,
   splitWhatsAppInputByContact,
   computePatternAccuracy,
@@ -15,25 +15,22 @@ import {
   detectSlotFromMarketLine,
   splitPlainTextByMarketSlots,
   ledgerDateStringForSlot,
-  type ParsedMessage,
-} from "./calcUtils";
-import EditableBreakdown from "./EditableBreakdown";
-import ReportIssue from "./ReportIssue";
-import { Button } from "./ui/Button";
-import { Modal } from "./ui/Modal";
-import {
-  getSkipAuditOnCalculateAll,
   CALC_LOCAL_ONLY_CHANGED_EVENT,
   CALCULATE_ALL_SKIP_AUDIT_KEY,
-} from "./calcLocalAuditPref";
-import type { CalculationAuditPayload } from "./firestoreDb";
+  type ParsedMessage,
+  toastApiError,
+} from "@/lib";
+import type { CalculationAuditPayload } from "@/data/firestoreDb";
 import type {
   CalculationResult,
   SavedSession,
   GameSlot,
   AppSettings,
   PaymentRecord,
-} from "./types";
+} from "@/types";
+import EditableBreakdown from "./EditableBreakdown";
+import ReportIssue from "./ReportIssue";
+import { Button, Card, Modal } from "./ui";
 
 interface Props {
   slots: GameSlot[];
@@ -1080,8 +1077,9 @@ export default function Calculator({
           backdrop="dim"
           overlayClassName="p-4"
         >
-          <div
-            className="w-full max-w-[400px] overflow-hidden rounded-[20px] border-2 border-[#dde8f0] bg-white shadow-2xl"
+          <Card
+            surface="panel"
+            className="max-w-[400px]"
             role="dialog"
             aria-labelledby="clear-dialog-title"
             aria-modal="true"
@@ -1132,7 +1130,7 @@ export default function Calculator({
                 Cancel
               </Button>
             </div>
-          </div>
+          </Card>
         </Modal>
       )}
 

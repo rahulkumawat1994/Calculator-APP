@@ -1,9 +1,8 @@
 import { useState } from "react";
-import { toastApiError } from "./apiToast";
-import { logReportIssue } from "./firestoreDb";
-import { notifyReportListenersAfterSubmit } from "./reportNotify";
-import { Button } from "./ui/Button";
-import { Modal } from "./ui/Modal";
+import { toastApiError } from "@/lib";
+import { logReportIssue } from "@/data/firestoreDb";
+import { notifyReportListenersAfterSubmit } from "@/services/reportNotify";
+import { Button, Card, Modal } from "./ui";
 
 interface Props {
   prefillInput?: string;
@@ -37,8 +36,9 @@ export default function ReportIssue({ prefillInput = "", onClose }: Props) {
 
   return (
     <Modal open onBackdropClick={onClose} backdrop="dim" overlayClassName="p-4">
-      <div
-        className="w-full max-w-[480px] overflow-hidden rounded-[20px] bg-white shadow-2xl"
+      <Card
+        surface="panel"
+        className="max-w-[480px]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="report-issue-title"
@@ -150,7 +150,7 @@ export default function ReportIssue({ prefillInput = "", onClose }: Props) {
             </div>
           </div>
         )}
-      </div>
+      </Card>
     </Modal>
   );
 }

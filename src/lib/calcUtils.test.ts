@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GameSlot, SavedSession } from "./types";
+import type { GameSlot, SavedSession } from "../types";
 import {
   calculateTotal,
   formatSegmentLineForPairListDisplay,

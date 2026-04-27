@@ -3,9 +3,9 @@ import ReactDOM from 'react-dom/client';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import './index.css';
-import App from './App';
-import AdminPage from './AdminPage';
-import { useReportIssuePush } from './useReportIssuePush';
+import App from "./App";
+import AdminPage from "./AdminPage";
+import { useReportIssuePush } from "@/hooks/useReportIssuePush";
 
 const path = window.location.pathname;
 const isAdminPath = path === '/admin' || path === '/audit';

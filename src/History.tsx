@@ -1,19 +1,19 @@
 import { useState, useEffect, useRef } from "react";
-import { toastApiError } from "./apiToast";
+import {
+  mergeSessionLedgerResult,
+  sessionLedgerForSlotKey,
+  SESSION_SLOT_KEY_UNSLOTTED,
+  toastApiError,
+} from "@/lib";
 import type {
   SavedSession,
   CalculationResult,
   GameSlot,
   PaymentRecord,
-} from "./types";
+} from "@/types";
 import EditableBreakdown from "./EditableBreakdown";
-import {
-  mergeSessionLedgerResult,
-  sessionLedgerForSlotKey,
-  SESSION_SLOT_KEY_UNSLOTTED,
-} from "./calcUtils";
 import { useLoadingSignal } from "./TopProgressBar";
-import { DangerActionDialog } from "./ui";
+import { Card, DangerActionDialog } from "./ui";
 
 interface Props {
   slots: GameSlot[];
@@ -125,10 +125,7 @@ function SkeletonDayView() {
   return (
     <div className="space-y-3 animate-pulse">
       {[1, 2].map((i) => (
-        <div
-          key={i}
-          className="bg-white rounded-[20px] border-2 border-[#e4edf8] p-4 shadow-sm"
-        >
+        <Card key={i} padding="sm">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-8 h-8 rounded-full bg-gray-100" />
             <div className="flex-1 space-y-2">
@@ -140,7 +137,7 @@ function SkeletonDayView() {
             <div className="h-3 bg-gray-100 rounded-lg w-2/3" />
             <div className="h-3 bg-gray-100 rounded-lg w-1/2" />
           </div>
-        </div>
+        </Card>
       ))}
     </div>
   );
@@ -490,7 +487,11 @@ export default function History({
   return (
     <div className="w-full mb-8">
       {/* ── Calendar card ── */}
-      <div className="bg-white rounded-[20px] border-2 border-[#e4edf8] shadow-sm overflow-hidden mb-4">
+      <Card
+        className="mb-4"
+        overflow="hidden"
+        padding="none"
+      >
         <div className="flex items-center justify-between px-4 py-3 border-b-2 border-[#f0f4f8] bg-[#f8faff]">
           <button
             onClick={() => shiftMonth(-1)}
@@ -562,7 +563,7 @@ export default function History({
             Today
           </span>
         </div>
-      </div>
+      </Card>
 
       {/* ── Selected date header ── */}
       <div className="flex items-start justify-between mb-3 px-1">
@@ -596,7 +597,11 @@ export default function History({
           /* First-load skeleton — no stale data to show yet */
           <SkeletonDayView />
         ) : (
-          <div className="bg-white rounded-[18px] border-2 border-[#e4edf8] px-5 py-10 text-center shadow-sm">
+          <Card
+            surface="inset"
+            padding="none"
+            className="px-5 py-10 text-center"
+          >
             <div className="text-[36px] mb-2">📭</div>
             <div className="text-[16px] font-semibold text-gray-400">
               No entries for this day
@@ -604,7 +609,7 @@ export default function History({
             <div className="text-[13px] text-gray-300 mt-1">
               Tap a date on the calendar
             </div>
-          </div>
+          </Card>
         )
       ) : (
         <div className="space-y-3">
@@ -631,9 +636,10 @@ export default function History({
               const slotPending = Math.max(0, slotTotal - slotReceived);
 
               return (
-                <div
+                <Card
                   key={slot.id}
-                  className="bg-white rounded-[20px] border-2 border-[#e4edf8] overflow-hidden shadow-sm"
+                  overflow="hidden"
+                  padding="none"
                 >
                   <button
                     onClick={() => toggleSlot(slot.id)}
@@ -768,7 +774,7 @@ export default function History({
                       </div>
                     </div>
                   )}
-                </div>
+                </Card>
               );
             })}
 
@@ -785,7 +791,7 @@ export default function History({
             );
             const unslottedPending = Math.max(0, total - unslottedReceived);
             return (
-              <div className="bg-white rounded-[20px] border-2 border-[#e4edf8] overflow-hidden shadow-sm">
+              <Card overflow="hidden" padding="none">
                 <button
                   onClick={() => toggleSlot("__unslotted__")}
                   className="w-full flex items-center gap-3 px-4 py-4 hover:bg-[#f5f9ff] text-left"
@@ -904,7 +910,7 @@ export default function History({
                     })}
                   </div>
                 )}
-              </div>
+              </Card>
             );
           })()}
 

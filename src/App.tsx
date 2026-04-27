@@ -1,7 +1,14 @@
 import { lazy, Suspense, useState } from "react";
 import Calculator from "./Calculator";
-import { useAppData } from "./useAppData";
+import { useAppData } from "@/hooks/useAppData";
 import { LoadingProvider } from "./TopProgressBar";
+import {
+  AlertBanner,
+  AppLoadingState,
+  IconTabBar,
+  PageContainer,
+  TabSuspenseFallback,
+} from "./ui";
 
 const History = lazy(() => import("./History"));
 const GamesView = lazy(() => import("./GamesView"));
@@ -40,57 +47,33 @@ export default function App() {
   } = useAppData();
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-[#eef2f7] flex flex-col items-center justify-center gap-4">
-        <div className="text-[48px]">🧮</div>
-        <div className="text-[18px] font-bold text-[#1d6fb8]">
-          Loading your data…
-        </div>
-        <div className="text-[13px] text-gray-400">Connecting to database</div>
-      </div>
-    );
+    return <AppLoadingState />;
   }
 
   return (
     <LoadingProvider>
     <div className="min-h-screen bg-[#eef2f7] font-serif">
-      {/* Tab bar */}
-      <div className="sticky top-0 z-10 bg-white border-b-2 border-[#dde8f0] shadow-md">
-        <div className="max-w-[980px] mx-auto flex">
-          {TABS.map(({ id, icon, label }) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              className={`flex-1 flex flex-col items-center gap-0.5 pt-3 pb-2.5 border-b-[3px] transition-colors ${
-                tab === id
-                  ? "border-[#1d6fb8] text-[#1d6fb8]"
-                  : "border-transparent text-gray-400 active:text-gray-600"
-              }`}
-            >
-              <span className="text-[22px] leading-none">{icon}</span>
-              <span className="text-[11px] font-bold tracking-wide">
-                {label}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
+      <IconTabBar
+        items={TABS}
+        value={tab}
+        onChange={setTab}
+      />
 
       {dbError && (
-        <div className="bg-orange-50 border-b-2 border-orange-200 px-4 py-2 text-center text-[13px] text-orange-700 font-semibold">
+        <AlertBanner tone="warning">
           ⚠️ Could not reach database — using local data. Check your internet
           connection.
-        </div>
+        </AlertBanner>
       )}
 
       {writeError && (
-        <div className="bg-red-50 border-b-2 border-red-200 px-4 py-2 text-center text-[13px] text-red-700 font-semibold">
+        <AlertBanner tone="error">
           ⚠️ Settings could not be saved to the database. Changes are saved
           locally only.
-        </div>
+        </AlertBanner>
       )}
 
-      <div className="max-w-[680px] mx-auto px-3 pt-5 pb-16">
+      <PageContainer>
         {/* Calculator is always mounted to preserve input state between tab switches */}
         <div className={tab === "calculator" ? "flex flex-col items-center" : "hidden"}>
           <Calculator
@@ -105,13 +88,7 @@ export default function App() {
         </div>
 
         {tab !== "calculator" && (
-          <Suspense
-            fallback={
-              <div className="py-12 text-center text-[15px] font-semibold text-[#1d6fb8]">
-                Loading…
-              </div>
-            }
-          >
+          <Suspense fallback={<TabSuspenseFallback />}>
             {tab === "history" && (
               <History
                 slots={slots}
@@ -147,7 +124,7 @@ export default function App() {
             )}
           </Suspense>
         )}
-      </div>
+      </PageContainer>
     </div>
     </LoadingProvider>
   );

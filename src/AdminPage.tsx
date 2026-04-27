@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
-import { toastApiError } from "./apiToast";
-import ConfirmDialog from "./ConfirmDialog";
-import { calculateTotal } from "./calcUtils";
+import {
+  CALCULATE_ALL_SKIP_AUDIT_KEY,
+  CALC_LOCAL_ONLY_CHANGED_EVENT,
+  calculateTotal,
+  filterRowsByLocalDateRange,
+  formatAuditDateTimeParts,
+  getSkipAuditOnCalculateAll,
+  setSkipAuditOnCalculateAll,
+  toastApiError,
+  totalLabelForDateRange,
+} from "@/lib";
 import {
   clearCalculationAuditLogs,
   clearReportIssueLogs,
@@ -16,28 +24,42 @@ import {
   updateReportIssueFixed,
   type CalculationAuditLog,
   type ReportIssueLog,
-} from "./firestoreDb";
-import { registerReportPush, unregisterReportPush } from "./reportPush";
-import type { CalculationResult } from "./types";
+} from "@/data/firestoreDb";
+import { registerReportPush, unregisterReportPush } from "@/services/reportPush";
+import type { CalculationResult } from "@/types";
 import {
   REPORT_PUSH_CHANGED_EVENT,
   REPORT_PUSH_ENABLED_KEY,
-} from "./useReportIssuePush";
-import {
-  CALCULATE_ALL_SKIP_AUDIT_KEY,
-  CALC_LOCAL_ONLY_CHANGED_EVENT,
-  getSkipAuditOnCalculateAll,
-  setSkipAuditOnCalculateAll,
-} from "./calcLocalAuditPref";
-import {
-  filterRowsByLocalDateRange,
-  totalLabelForDateRange,
-} from "./auditDateFilter";
-import { formatAuditTimestamp } from "./formatDateTime";
+} from "@/hooks/useReportIssuePush";
+import ConfirmDialog from "./ConfirmDialog";
 import { DangerActionDialog, Modal } from "./ui";
 
 const REPORT_PUSH_TOOLTIP =
   "Notify this browser when someone submits a pattern issue from the calculator.";
+
+function AdminDateTimeStack({
+  createdAt,
+  size = "table",
+}: {
+  createdAt?: number;
+  size?: "table" | "panel";
+}) {
+  const { date, time } = formatAuditDateTimeParts(createdAt);
+  if (date === "-") {
+    return <span className="text-slate-500">-</span>;
+  }
+  const textSize =
+    size === "panel" ? "text-[12px] tabular-nums" : "text-[11px] tabular-nums";
+  const timeColor = size === "panel" ? "text-slate-600" : "text-slate-500";
+  const dCls = `whitespace-nowrap font-medium text-slate-800 ${textSize}`;
+  const tCls = `whitespace-nowrap font-medium ${timeColor} ${textSize}`;
+  return (
+    <div className="flex min-w-0 flex-col items-start gap-0.5 leading-tight">
+      <span className={dCls}>{date}</span>
+      {time ? <span className={tCls}>{time}</span> : null}
+    </div>
+  );
+}
 
 interface ConfirmState {
   title: string;
@@ -877,7 +899,7 @@ export default function AdminPage() {
                           scope="col"
                           className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
                         >
-                          Time
+                          Date & time
                         </th>
                         <th
                           scope="col"
@@ -991,8 +1013,8 @@ export default function AdminPage() {
                               {rowIdx + 1}
                             </button>
                           </td>
-                          <td className="px-2 py-2.5 whitespace-nowrap text-slate-600 sm:px-3">
-                            {formatAuditTimestamp(r.createdAt)}
+                          <td className="px-2 py-2.5 text-slate-600 sm:px-3">
+                            <AdminDateTimeStack createdAt={r.createdAt} />
                           </td>
                           <td className="px-2 py-2.5 font-medium text-slate-800 sm:px-3">
                             {r.mode}
@@ -1123,7 +1145,7 @@ export default function AdminPage() {
                           scope="col"
                           className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
                         >
-                          Time
+                          Date & time
                         </th>
                         <th
                           scope="col"
@@ -1186,8 +1208,8 @@ export default function AdminPage() {
                               {rowIdx + 1}
                             </button>
                           </td>
-                          <td className="px-2 py-2.5 whitespace-nowrap text-slate-600 sm:px-3">
-                            {formatAuditTimestamp(r.createdAt)}
+                          <td className="px-2 py-2.5 text-slate-600 sm:px-3">
+                            <AdminDateTimeStack createdAt={r.createdAt} />
                           </td>
                           <td className="px-2 py-2.5 text-center align-middle sm:px-3">
                             <label className="inline-flex flex-col items-center gap-0.5 cursor-pointer select-none">
@@ -1287,10 +1309,19 @@ export default function AdminPage() {
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
               <div className="grid gap-2.5 rounded-xl border border-slate-200/80 bg-slate-50/80 p-3.5 text-[12px] sm:grid-cols-2">
-                <p>
-                  <span className="font-semibold text-gray-500">Time:</span>{" "}
-                  {formatAuditTimestamp(previewAudit.createdAt)}
-                </p>
+                <div>
+                  <span className="font-semibold text-gray-500">Recorded</span>
+                  <div
+                    className="mt-0.5"
+                    role="group"
+                    aria-label="Date and time"
+                  >
+                    <AdminDateTimeStack
+                      size="panel"
+                      createdAt={previewAudit.createdAt}
+                    />
+                  </div>
+                </div>
                 <p>
                   <span className="font-semibold text-gray-500">Mode:</span>{" "}
                   {previewAudit.mode}

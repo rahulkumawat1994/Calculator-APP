@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Button } from "./Button";
+import { Card } from "./Card";
 import { Modal } from "./Modal";
 
 export type DangerActionDialogProps = {
@@ -18,9 +19,6 @@ export type DangerActionDialogProps = {
   /** Panel max width, e.g. max-w-[400px] */
   panelClassName?: string;
 };
-
-const PANEL =
-  "w-full overflow-hidden rounded-[20px] border-2 border-[#dde8f0] bg-white shadow-2xl";
 
 /**
  * Two-action destructive confirm (e.g. delete) with shared app chrome.
@@ -41,8 +39,9 @@ export function DangerActionDialog({
 }: DangerActionDialogProps) {
   return (
     <Modal open={open} onBackdropClick={onClose} backdrop="dim" overlayClassName="p-4">
-      <div
-        className={`${PANEL} ${panelClassName}`.replace(/\s+/g, " ").trim()}
+      <Card
+        surface="panel"
+        className={panelClassName}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -78,7 +77,7 @@ export function DangerActionDialog({
             {cancelLabel}
           </Button>
         </div>
-      </div>
+      </Card>
     </Modal>
   );
 }

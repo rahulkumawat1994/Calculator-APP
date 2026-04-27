@@ -3,20 +3,28 @@
  * direct module imports and preserve totals / helpers (no behavior drift).
  */
 import { describe, expect, it } from "vitest";
-import type { GameSlot, SavedSession } from "./types";
-import * as fromBarrel from "./calcUtils";
-import { processLine as processLineDirect } from "./calc/betParser";
-import { calculateTotal as totalDirect, computePatternAccuracy as accuracyDirect } from "./calc/pasteAndTotal";
-import { mergeSessionLedgerResult as mergeLedgerDirect } from "./calc/sessions";
-import { toDateISO as toDateISODirect } from "./calc/sessions";
+import type { GameSlot, SavedSession } from "../types";
+import * as fromBarrel from "../lib/calcUtils";
+import { processLine as processLineDirect } from "./betParser";
+import {
+  calculateTotal as totalDirect,
+  computePatternAccuracy as accuracyDirect,
+} from "./pasteAndTotal";
+import {
+  mergeSessionLedgerResult as mergeLedgerDirect,
+  toDateISO as toDateISODirect,
+} from "./sessions";
 import {
   normalizeTypoTolerantInput as normDirect,
   preprocessText as preprocessDirect,
-} from "./calc/textNormalize";
-import { parseWhatsAppMessages as parseWaDirect } from "./calc/whatsapp";
-import { DEFAULT_SETTINGS as defaultSettingsDirect, upsertPaymentStubs } from "./calc/settingsPayments";
-import { slotMinutes as slotMinutesDirect } from "./calc/slotsTime";
-import { pickSlotByMarketHints as pickDirect } from "./calc/market";
+} from "./textNormalize";
+import { parseWhatsAppMessages as parseWaDirect } from "./whatsapp";
+import {
+  DEFAULT_SETTINGS as defaultSettingsDirect,
+  upsertPaymentStubs,
+} from "./settingsPayments";
+import { slotMinutes as slotMinutesDirect } from "./slotsTime";
+import { pickSlotByMarketHints as pickDirect } from "./market";
 
 const slot: GameSlot = { id: "t", name: "Test", time: "10:00", emoji: "x", enabled: true };
 

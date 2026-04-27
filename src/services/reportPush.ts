@@ -1,6 +1,6 @@
 import { deleteToken, getToken } from "firebase/messaging";
 import { deleteDoc, doc, setDoc } from "firebase/firestore";
-import { db, getFirebaseMessaging } from "./firebase";
+import { db, getFirebaseMessaging } from "../config/firebase";
 
 const DEVICE_ID_STORAGE_KEY = "report_push_device_id";
 

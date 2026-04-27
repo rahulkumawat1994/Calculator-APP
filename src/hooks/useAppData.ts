@@ -3,7 +3,7 @@ import {
   DEFAULT_SETTINGS,
   loadGameSlots, saveGameSlots,
   loadSettings,  saveSettings,
-} from "./calcUtils";
+} from "../lib/calcUtils";
 import {
   loadSlotsDB,    saveSlotsDB,
   loadSettingsDB, saveSettingsDB,
@@ -14,9 +14,9 @@ import {
   migrateOldFirestoreData,
   logCalculationAudit,
   syncPaymentSlotNamesToMatchSlots,
-} from "./firestoreDb";
-import type { GameSlot, AppSettings } from "./types";
-import { toastApiError } from "./apiToast";
+} from "../data/firestoreDb";
+import type { GameSlot, AppSettings } from "../types";
+import { toastApiError } from "../lib/toast/apiToast";
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([

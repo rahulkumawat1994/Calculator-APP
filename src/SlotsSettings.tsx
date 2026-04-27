@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { formatSlotTime } from "./calcUtils";
-import type { GameSlot, AppSettings } from "./types";
+import { Callout, Card } from "./ui";
+import { formatSlotTime } from "@/lib";
+import type { GameSlot, AppSettings } from "@/types";
 
 interface Props {
   slots:          GameSlot[];
@@ -97,19 +98,22 @@ export default function SlotsSettings({ slots, settings, onSaveSlots, onSaveSett
 
       {/* ── Unsaved changes banner ── */}
       {dirty && (
-        <div className="bg-amber-50 border-2 border-amber-300 rounded-[14px] px-4 py-3 mb-4 flex items-center justify-between gap-3">
-          <span className="text-[14px] font-semibold text-amber-700">⚠️ You have unsaved changes</span>
+        <Callout
+          tone="amber"
+          className="mb-4 flex items-center justify-between gap-3"
+        >
+          <span className="text-[14px] font-semibold">⚠️ You have unsaved changes</span>
           <button
             onClick={handleSave}
-            className="bg-amber-500 text-white text-[13px] font-bold rounded-[10px] px-3 py-1.5 shrink-0"
+            className="shrink-0 rounded-[10px] bg-amber-500 px-3 py-1.5 text-[13px] font-bold text-white"
           >
             Save Now
           </button>
-        </div>
+        </Callout>
       )}
 
       {/* ── My Earnings % ── */}
-      <div className="bg-white rounded-[20px] shadow-sm border-2 border-[#e4edf8] p-5 mb-5">
+      <Card padding="md" className="mb-5">
         <h3 className="text-[18px] font-bold text-[#1a1a1a] mb-1">💰 My Earnings %</h3>
         <p className="text-[14px] text-gray-500 mb-4">
           How much percent you keep from each received payment.
@@ -146,10 +150,10 @@ export default function SlotsSettings({ slots, settings, onSaveSlots, onSaveSett
             </span>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* ── Game slots ── */}
-      <div className="bg-white rounded-[20px] shadow-sm border-2 border-[#e4edf8] p-5 mb-5">
+      <Card padding="md" className="mb-5">
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-[18px] font-bold text-[#1a1a1a]">🎮 Game Times</h3>
           <button
@@ -284,7 +288,7 @@ export default function SlotsSettings({ slots, settings, onSaveSlots, onSaveSett
         >
           + Add New Game
         </button>
-      </div>
+      </Card>
 
       {/* ── Buttons ── */}
       <div className="flex gap-3 mb-8">

@@ -28,15 +28,15 @@ import {
   writeBatch,
   type DocumentData,
 } from "firebase/firestore";
-import { db } from "./firebase";
-import { toastApiError } from "./apiToast";
+import { db } from "../config/firebase";
+import { toastApiError } from "../lib/toast/apiToast";
 import type {
   SavedSession,
   GameSlot,
   AppSettings,
   PaymentRecord,
-} from "./types";
-import { DEFAULT_SETTINGS, toDateISO } from "./calcUtils";
+} from "../types";
+import { DEFAULT_SETTINGS, toDateISO } from "../lib/calcUtils";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

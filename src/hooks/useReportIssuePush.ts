@@ -10,8 +10,8 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import type { MessagePayload } from "firebase/messaging";
-import { db, getFirebaseMessaging } from "./firebase";
-import { registerReportPush } from "./reportPush";
+import { db, getFirebaseMessaging } from "../config/firebase";
+import { registerReportPush } from "../services/reportPush";
 
 export const REPORT_PUSH_ENABLED_KEY = "admin_report_issue_push";
 export const REPORT_PUSH_CHANGED_EVENT = "report-issue-push-changed";

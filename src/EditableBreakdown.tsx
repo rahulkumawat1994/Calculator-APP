@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { DangerActionDialog } from "./ui";
-import type { CalculationResult, Segment } from "./types";
 import {
   extractPairedNumbers,
   formatSegmentLineForPairListDisplay,
   processLine,
-} from "./calcUtils";
+} from "@/lib";
+import type { CalculationResult, Segment } from "@/types";
 
 interface Props {
   result: CalculationResult;
