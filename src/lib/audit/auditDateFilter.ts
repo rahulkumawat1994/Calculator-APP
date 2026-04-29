@@ -51,3 +51,15 @@ export function totalLabelForDateRange(
   if (f && t && f === t) return "Day total";
   return "Period total";
 }
+
+/** Label for one combined `calculateTotal` on filtered audit inputs (same scope as saved total). */
+export function freshParsedTotalLabelForDateRange(
+  from: string,
+  to: string
+): "Freshly parsed (loaded)" | "Freshly parsed (day)" | "Freshly parsed (period)" {
+  const f = from.trim();
+  const t = to.trim();
+  if (!f && !t) return "Freshly parsed (loaded)";
+  if (f && t && f === t) return "Freshly parsed (day)";
+  return "Freshly parsed (period)";
+}

@@ -477,6 +477,25 @@ export async function deleteCalculationAuditLog(id: string): Promise<void> {
   }
 }
 
+/**
+ * Overwrite saved audit totals/counts (e.g. after verifying current parser output).
+ */
+export async function updateCalculationAuditSavedFields(
+  id: string,
+  fields: {
+    total: number;
+    resultCount: number;
+    failedCount: number;
+  }
+): Promise<void> {
+  try {
+    await updateDoc(doc(db, "calc_audit_logs", id), fields);
+  } catch (e) {
+    console.warn("updateCalculationAuditSavedFields failed:", e);
+    throw e;
+  }
+}
+
 /** Deletes many audit docs in batches (Firestore write batch limit). */
 export async function deleteCalculationAuditLogsByIds(ids: string[]): Promise<void> {
   if (ids.length === 0) return;

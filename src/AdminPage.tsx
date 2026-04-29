@@ -9,6 +9,7 @@ import {
   getSkipAuditOnCalculateAll,
   setSkipAuditOnCalculateAll,
   toastApiError,
+  freshParsedTotalLabelForDateRange,
   totalLabelForDateRange,
 } from "@/lib";
 import {
@@ -21,11 +22,15 @@ import {
   loadCalculationAuditLogs,
   loadReportIssueLogs,
   pruneDuplicateCalculationAuditLogs,
+  updateCalculationAuditSavedFields,
   updateReportIssueFixed,
   type CalculationAuditLog,
   type ReportIssueLog,
 } from "@/data/firestoreDb";
-import { registerReportPush, unregisterReportPush } from "@/services/reportPush";
+import {
+  registerReportPush,
+  unregisterReportPush,
+} from "@/services/reportPush";
 import type { CalculationResult } from "@/types";
 import {
   REPORT_PUSH_CHANGED_EVENT,
@@ -71,7 +76,7 @@ interface ConfirmState {
 
 async function copyAuditInputToClipboard(
   text: string,
-  successMessage = "Input copied",
+  successMessage = "Input copied"
 ) {
   try {
     await navigator.clipboard.writeText(text ?? "");
@@ -79,6 +84,18 @@ async function copyAuditInputToClipboard(
   } catch {
     toast.error("Could not copy");
   }
+}
+
+function auditSavedFieldsFromParsed(parsed: CalculationResult): {
+  total: number;
+  resultCount: number;
+  failedCount: number;
+} {
+  return {
+    total: parsed.total,
+    resultCount: parsed.results.length,
+    failedCount: parsed.failedLines?.length ?? 0,
+  };
 }
 
 export default function AdminPage() {
@@ -156,9 +173,9 @@ export default function AdminPage() {
     "off" | "asc" | "desc"
   >("off");
   /** off = no diff sort; desc = parser mismatch (Differs) first; asc = match saved total first */
-  const [auditDiffSort, setAuditDiffSort] = useState<
-    "off" | "asc" | "desc"
-  >("off");
+  const [auditDiffSort, setAuditDiffSort] = useState<"off" | "asc" | "desc">(
+    "off"
+  );
   /** Inclusive local date range on `createdAt` (`YYYY-MM-DD`); both empty = no filter. */
   const [auditDateFrom, setAuditDateFrom] = useState("");
   const [auditDateTo, setAuditDateTo] = useState("");
@@ -210,12 +227,7 @@ export default function AdminPage() {
       return (b.createdAt ?? 0) - (a.createdAt ?? 0);
     });
     return rows;
-  }, [
-    dateFilteredAuditRows,
-    auditStatusSort,
-    auditDiffSort,
-    auditTotalRecalc,
-  ]);
+  }, [dateFilteredAuditRows, auditStatusSort, auditDiffSort, auditTotalRecalc]);
 
   /** Sum of stored `total` (calculator grand total) for the current date filter. */
   const dateFilteredTotalSum = useMemo(
@@ -226,15 +238,50 @@ export default function AdminPage() {
       ),
     [dateFilteredAuditRows]
   );
+  /**
+   * Sum of current-engine totals **per audit row** (same rows as Total loaded).
+   * Matches Total (loaded) after each row’s saved total is updated to parsed.
+   */
+  const dateFilteredFreshParsedTotal = useMemo(
+    () =>
+      dateFilteredAuditRows.reduce((s, r) => {
+        const p = auditTotalRecalc.get(r.id)?.parsedTotal;
+        return s + (typeof p === "number" && Number.isFinite(p) ? p : 0);
+      }, 0),
+    [dateFilteredAuditRows, auditTotalRecalc]
+  );
   const dateFilteredProfit5Pct = useMemo(
     () => Math.round(dateFilteredTotalSum * 0.05),
     [dateFilteredTotalSum]
+  );
+
+  /** Only surface “Freshly parsed” when it disagrees with saved sum (drift / logic change). */
+  const auditSavedVersusParserDiffers = useMemo(
+    () => dateFilteredTotalSum !== dateFilteredFreshParsedTotal,
+    [dateFilteredTotalSum, dateFilteredFreshParsedTotal]
   );
 
   const combinedAllAuditInputText = useMemo(
     () => displayAuditRows.map((r) => r.input ?? "").join("\n\n"),
     [displayAuditRows]
   );
+
+  /** Selected rows’ inputs in table order, then any selected id not in current table (e.g. filter). */
+  const combinedSelectedAuditInput = useMemo(() => {
+    const parts: string[] = [];
+    const used = new Set<string>();
+    for (const r of displayAuditRows) {
+      if (!selectedAuditIds.has(r.id)) continue;
+      used.add(r.id);
+      parts.push(r.input ?? "");
+    }
+    for (const id of selectedAuditIds) {
+      if (used.has(id)) continue;
+      const r = auditRows.find((x) => x.id === id);
+      if (r) parts.push(r.input ?? "");
+    }
+    return parts.join("\n\n");
+  }, [displayAuditRows, auditRows, selectedAuditIds]);
 
   const load = async () => {
     setLoading(true);
@@ -623,11 +670,34 @@ export default function AdminPage() {
     setPreviewResult(null);
   };
 
+  const applyParsedToAuditRow = async (row: CalculationAuditLog) => {
+    const parsed = calculateTotal(row.input ?? "");
+    const fields = auditSavedFieldsFromParsed(parsed);
+    setBusyAuditId(row.id);
+    try {
+      await updateCalculationAuditSavedFields(row.id, fields);
+      const merged: CalculationAuditLog = { ...row, ...fields };
+      setAuditRows((prev) => prev.map((r) => (r.id === row.id ? merged : r)));
+      setPreviewAudit((p) => (p?.id === row.id ? merged : p));
+      toast.success("Saved totals updated to match current parser.");
+    } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : "Could not update audit log.";
+      toast.error(msg);
+      toastApiError(e, msg);
+    } finally {
+      setBusyAuditId(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-50 to-slate-100 font-sans text-slate-900 antialiased">
       <div className="mx-auto w-full max-w-[1300px] px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05),0_20px_25px_-5px_rgba(15,23,42,0.04)] sm:mb-8">
-          <div className="h-1 bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600" aria-hidden />
+          <div
+            className="h-1 bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600"
+            aria-hidden
+          />
           <div className="flex flex-col gap-5 p-5 sm:flex-row sm:items-start sm:justify-between sm:gap-6 sm:p-6">
             <div className="min-w-0 flex-1">
               <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
@@ -637,7 +707,9 @@ export default function AdminPage() {
                 Admin
               </h1>
               <p className="mt-1 max-w-md text-[13px] leading-relaxed text-slate-500">
-                <span className="hidden sm:inline">Calculation audits and </span>
+                <span className="hidden sm:inline">
+                  Calculation audits and{" "}
+                </span>
                 user pattern reports in one place
               </p>
               <div
@@ -710,9 +782,7 @@ export default function AdminPage() {
                       : "border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50"
                   }`}
                 >
-                  {reportPushOn
-                    ? "Report alerts on"
-                    : "Enable report alerts"}
+                  {reportPushOn ? "Report alerts on" : "Enable report alerts"}
                 </button>
                 <button
                   type="button"
@@ -731,11 +801,11 @@ export default function AdminPage() {
                   Refresh
                 </button>
               </div>
-            {pushError && (
-              <p className="rounded-lg border border-red-100 bg-red-50 px-2.5 py-2 text-left text-[12px] text-red-700">
-                {pushError}
-              </p>
-            )}
+              {pushError && (
+                <p className="rounded-lg border border-red-100 bg-red-50 px-2.5 py-2 text-left text-[12px] text-red-700">
+                  {pushError}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -812,7 +882,10 @@ export default function AdminPage() {
                         ) : null}
                       </div>
                       <div className="flex flex-wrap items-center gap-2.5 border-t border-slate-100 pt-3 sm:gap-3">
-                        <div className="rounded-lg bg-slate-100/80 px-2.5 py-1.5 sm:px-3">
+                        <div
+                          className="rounded-lg bg-slate-100/80 px-2.5 py-1.5 sm:px-3"
+                          title="Sum of totals as they were stored when each calculation ran (historical snapshot)."
+                        >
                           <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
                             {totalLabelForDateRange(auditDateFrom, auditDateTo)}
                           </p>
@@ -823,6 +896,31 @@ export default function AdminPage() {
                             })}
                           </p>
                         </div>
+                        {auditSavedVersusParserDiffers ? (
+                          <>
+                            <div className="h-8 w-px bg-slate-200" aria-hidden />
+                            <div
+                              className="rounded-lg border border-amber-100/80 bg-amber-50/50 px-2.5 py-1.5 sm:px-3"
+                              title="Sum of what the current parser produces on each row’s stored input (today’s engine)."
+                            >
+                              <p className="text-[10px] font-medium uppercase tracking-wide text-amber-800/80">
+                                {freshParsedTotalLabelForDateRange(
+                                  auditDateFrom,
+                                  auditDateTo
+                                )}
+                              </p>
+                              <p className="whitespace-nowrap text-[15px] font-bold tabular-nums text-amber-900">
+                                ₹
+                                {dateFilteredFreshParsedTotal.toLocaleString(
+                                  "en-IN",
+                                  {
+                                    maximumFractionDigits: 0,
+                                  }
+                                )}
+                              </p>
+                            </div>
+                          </>
+                        ) : null}
                         <div className="h-8 w-px bg-slate-200" aria-hidden />
                         <div className="rounded-lg border border-emerald-100/80 bg-emerald-50/50 px-2.5 py-1.5 sm:px-3">
                           <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-700/80">
@@ -840,21 +938,42 @@ export default function AdminPage() {
                   </div>
                   <div className="flex w-full flex-col justify-start gap-2 sm:w-[min(100%,11rem)] sm:shrink-0">
                     {selectedAuditIds.size > 0 && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setConfirmBulkAuditIds([...selectedAuditIds])
-                        }
-                        disabled={
-                          loading ||
-                          clearingAudit ||
-                          pruningAuditDupes ||
-                          bulkAuditDeleting
-                        }
-                        className="h-10 w-full rounded-lg bg-red-700 text-[12px] font-semibold text-white shadow-sm transition hover:bg-red-800 disabled:opacity-50"
-                      >
-                        Delete ({selectedAuditIds.size})
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void copyAuditInputToClipboard(
+                              combinedSelectedAuditInput,
+                              `Copied ${selectedAuditIds.size} input(s)`
+                            )
+                          }
+                          disabled={
+                            loading ||
+                            clearingAudit ||
+                            pruningAuditDupes ||
+                            bulkAuditDeleting
+                          }
+                          title="Join selected inputs with a blank line (table order)"
+                          className="h-10 w-full rounded-lg border border-sky-200 bg-sky-50 text-[12px] font-semibold text-sky-900 shadow-sm transition hover:bg-sky-100/90 disabled:opacity-50"
+                        >
+                          Copy inputs ({selectedAuditIds.size})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setConfirmBulkAuditIds([...selectedAuditIds])
+                          }
+                          disabled={
+                            loading ||
+                            clearingAudit ||
+                            pruningAuditDupes ||
+                            bulkAuditDeleting
+                          }
+                          className="h-10 w-full rounded-lg bg-red-700 text-[12px] font-semibold text-white shadow-sm transition hover:bg-red-800 disabled:opacity-50"
+                        >
+                          Delete ({selectedAuditIds.size})
+                        </button>
+                      </>
                     )}
                     <button
                       type="button"
@@ -882,9 +1001,7 @@ export default function AdminPage() {
                       }
                       className="h-10 w-full rounded-lg border border-amber-200/80 bg-amber-50 text-[12px] font-semibold text-amber-900/90 transition hover:bg-amber-100/80 disabled:opacity-50"
                     >
-                      {pruningAuditDupes
-                        ? "Pruning…"
-                        : "Dedupe inputs"}
+                      {pruningAuditDupes ? "Pruning…" : "Dedupe inputs"}
                     </button>
                     <button
                       type="button"
@@ -916,10 +1033,12 @@ export default function AdminPage() {
                 </div>
               ) : displayAuditRows.length === 0 ? (
                 <div className="p-6 text-center text-sm sm:p-8">
-                  <p className="font-semibold text-slate-800">No rows in this range</p>
+                  <p className="font-semibold text-slate-800">
+                    No rows in this range
+                  </p>
                   <p className="mt-1.5 max-w-sm mx-auto text-[12px] text-slate-500 leading-relaxed">
-                    Try a different range or clear the date filter. Only a recent
-                    batch is loaded — older days may be missing.
+                    Try a different range or clear the date filter. Only a
+                    recent batch is loaded — older days may be missing.
                   </p>
                   {hasDateRangeFilter ? (
                     <button
@@ -968,8 +1087,8 @@ export default function AdminPage() {
                                 s === "off"
                                   ? "desc"
                                   : s === "desc"
-                                    ? "asc"
-                                    : "off"
+                                  ? "asc"
+                                  : "off"
                               )
                             }
                             className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-wider text-slate-600 hover:text-orange-600"
@@ -978,8 +1097,8 @@ export default function AdminPage() {
                               auditDiffSort === "off"
                                 ? "none"
                                 : auditDiffSort === "asc"
-                                  ? "ascending"
-                                  : "descending"
+                                ? "ascending"
+                                : "descending"
                             }
                           >
                             Total
@@ -1117,7 +1236,10 @@ export default function AdminPage() {
                               {auditTotalRecalc.get(r.id)?.differs ? (
                                 <span
                                   className="text-[10px] font-semibold text-orange-600"
-                                  title={`Current parser: ₹${auditTotalRecalc.get(r.id)?.parsedTotal ?? "—"}`}
+                                  title={`Current parser: ₹${
+                                    auditTotalRecalc.get(r.id)?.parsedTotal ??
+                                    "—"
+                                  }`}
                                 >
                                   Differs
                                 </span>
@@ -1152,7 +1274,9 @@ export default function AdminPage() {
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    void copyAuditInputToClipboard(r.input ?? "")
+                                    void copyAuditInputToClipboard(
+                                      r.input ?? ""
+                                    )
                                   }
                                   className="rounded-md border border-slate-200/90 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-600 shadow-sm transition hover:border-blue-200 hover:bg-sky-50/80 hover:text-blue-700"
                                   title="Copy this input to clipboard"
@@ -1169,7 +1293,8 @@ export default function AdminPage() {
                             <button
                               type="button"
                               onClick={() => openAuditPreview(r)}
-                              className="h-8 min-w-[4.5rem] rounded-md border border-blue-200/80 bg-white px-2.5 text-[11px] font-semibold text-blue-700 shadow-sm transition hover:border-blue-300 hover:bg-sky-50/80 sm:h-7"
+                              disabled={busyAuditId === r.id}
+                              className="h-8 min-w-[4.5rem] rounded-md border border-blue-200/80 bg-white px-2.5 text-[11px] font-semibold text-blue-700 shadow-sm transition hover:border-blue-300 hover:bg-sky-50/80 disabled:opacity-50 sm:h-7"
                             >
                               View
                             </button>
@@ -1201,41 +1326,43 @@ export default function AdminPage() {
             <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm ring-1 ring-slate-200/40">
               <div className="border-b border-slate-100 bg-slate-50/50 p-4 sm:p-5">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <h2 className="text-lg font-bold text-slate-900 sm:text-xl">
-                    User reports
-                  </h2>
-                  <p className="mt-0.5 text-[12px] text-slate-500 sm:text-[13px]">
-                    {reportRows.length} in list
-                  </p>
-                </div>
-                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
-                  {selectedReportIds.size > 0 && (
+                  <div className="min-w-0">
+                    <h2 className="text-lg font-bold text-slate-900 sm:text-xl">
+                      User reports
+                    </h2>
+                    <p className="mt-0.5 text-[12px] text-slate-500 sm:text-[13px]">
+                      {reportRows.length} in list
+                    </p>
+                  </div>
+                  <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
+                    {selectedReportIds.size > 0 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setConfirmBulkReportIds([...selectedReportIds])
+                        }
+                        disabled={
+                          loading || clearingReport || bulkReportDeleting
+                        }
+                        className="h-10 w-full rounded-lg bg-red-700 text-[12px] font-semibold text-white shadow-sm transition hover:bg-red-800 disabled:opacity-50 sm:min-w-[10rem] sm:px-3"
+                      >
+                        Delete ({selectedReportIds.size})
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() =>
-                        setConfirmBulkReportIds([...selectedReportIds])
+                      onClick={() => void clearReports()}
+                      disabled={
+                        loading ||
+                        clearingReport ||
+                        reportRows.length === 0 ||
+                        bulkReportDeleting
                       }
-                      disabled={loading || clearingReport || bulkReportDeleting}
-                      className="h-10 w-full rounded-lg bg-red-700 text-[12px] font-semibold text-white shadow-sm transition hover:bg-red-800 disabled:opacity-50 sm:min-w-[10rem] sm:px-3"
+                      className="h-10 w-full rounded-lg border border-red-200/80 bg-red-50/90 text-[12px] font-semibold text-red-800 transition hover:bg-red-100/60 disabled:opacity-50 sm:min-w-[7rem] sm:px-3"
                     >
-                      Delete ({selectedReportIds.size})
+                      {clearingReport ? "Clearing…" : "Clear all"}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => void clearReports()}
-                    disabled={
-                      loading ||
-                      clearingReport ||
-                      reportRows.length === 0 ||
-                      bulkReportDeleting
-                    }
-                    className="h-10 w-full rounded-lg border border-red-200/80 bg-red-50/90 text-[12px] font-semibold text-red-800 transition hover:bg-red-100/60 disabled:opacity-50 sm:min-w-[7rem] sm:px-3"
-                  >
-                    {clearingReport ? "Clearing…" : "Clear all"}
-                  </button>
-                </div>
+                  </div>
                 </div>
               </div>
               {loading ? (
@@ -1473,6 +1600,28 @@ export default function AdminPage() {
                 </p>
               </div>
 
+              {previewResult.total !== previewAudit.total ||
+              previewResult.results.length !== previewAudit.resultCount ||
+              (previewResult.failedLines?.length ?? 0) !==
+                (previewAudit.failedCount ?? 0) ? (
+                <div className="rounded-xl border border-emerald-200/90 bg-emerald-50/90 px-3.5 py-3">
+                  <p className="mb-2 text-[12px] leading-snug text-emerald-950/90">
+                    Stored totals differ from the current parser. Update this
+                    log after you verify the breakdown below.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void applyParsedToAuditRow(previewAudit)}
+                    disabled={busyAuditId === previewAudit.id}
+                    className="rounded-lg border border-emerald-600 bg-emerald-700 px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-50"
+                  >
+                    {busyAuditId === previewAudit.id
+                      ? "Updating…"
+                      : "Update saved totals to match parsed"}
+                  </button>
+                </div>
+              ) : null}
+
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-[12px] border border-[#e4edf8] bg-[#f8fbff] p-3">
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -1527,7 +1676,8 @@ export default function AdminPage() {
                                   B
                                 </span>
                               )}
-                              {(seg.lane === "AB" || (!seg.lane && seg.isDouble)) && (
+                              {(seg.lane === "AB" ||
+                                (!seg.lane && seg.isDouble)) && (
                                 <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700">
                                   AB
                                 </span>
@@ -1609,7 +1759,7 @@ export default function AdminPage() {
                   onClick={() =>
                     void copyAuditInputToClipboard(
                       combinedAllAuditInputText,
-                      "Copied to clipboard",
+                      "Copied to clipboard"
                     )
                   }
                   className="rounded-lg border border-blue-200 bg-blue-600 px-3.5 py-1.5 text-[12px] font-semibold text-white shadow-sm transition hover:bg-blue-700"
