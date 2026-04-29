@@ -104,6 +104,13 @@ export default function AdminPage() {
   const [reportRows, setReportRows] = useState<ReportIssueLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** Distinct from empty DB: load failed (would wrongly show “No audit logs yet”). */
+  const [auditListLoadError, setAuditListLoadError] = useState<string | null>(
+    null
+  );
+  const [reportListLoadError, setReportListLoadError] = useState<string | null>(
+    null
+  );
   const [busyAuditId, setBusyAuditId] = useState<string | null>(null);
   const [busyReportId, setBusyReportId] = useState<string | null>(null);
   const [busyFixedReportId, setBusyFixedReportId] = useState<string | null>(
@@ -286,23 +293,62 @@ export default function AdminPage() {
   const load = async () => {
     setLoading(true);
     setError(null);
+    setAuditListLoadError(null);
+    setReportListLoadError(null);
     try {
-      const [audits, reports] = await Promise.all([
+      const [auditOutcome, reportOutcome] = await Promise.allSettled([
         loadCalculationAuditLogs(400),
         loadReportIssueLogs(400),
       ]);
-      setAuditRows(audits);
-      setReportRows(reports);
-      setSelectedAuditIds(
-        (prev) =>
-          new Set([...prev].filter((id) => audits.some((r) => r.id === id)))
-      );
-      setSelectedReportIds(
-        (prev) =>
-          new Set([...prev].filter((id) => reports.some((r) => r.id === id)))
-      );
+
+      const bannerParts: string[] = [];
+
+      if (auditOutcome.status === "fulfilled") {
+        const audits = auditOutcome.value;
+        setAuditRows(audits);
+        setSelectedAuditIds(
+          (prev) =>
+            new Set([...prev].filter((id) => audits.some((r) => r.id === id)))
+        );
+      } else {
+        console.warn("loadCalculationAuditLogs failed:", auditOutcome.reason);
+        setAuditRows([]);
+        setSelectedAuditIds(new Set());
+        const msg =
+          auditOutcome.reason instanceof Error
+            ? auditOutcome.reason.message
+            : "Could not load audit logs.";
+        setAuditListLoadError(msg);
+        bannerParts.push("Audit logs could not be loaded.");
+        toastApiError(auditOutcome.reason, "Could not load audit logs.");
+      }
+
+      if (reportOutcome.status === "fulfilled") {
+        const reports = reportOutcome.value;
+        setReportRows(reports);
+        setSelectedReportIds(
+          (prev) =>
+            new Set([...prev].filter((id) => reports.some((r) => r.id === id)))
+        );
+      } else {
+        console.warn("loadReportIssueLogs failed:", reportOutcome.reason);
+        setReportRows([]);
+        setSelectedReportIds(new Set());
+        const msg =
+          reportOutcome.reason instanceof Error
+            ? reportOutcome.reason.message
+            : "Could not load report issues.";
+        setReportListLoadError(msg);
+        bannerParts.push("User reports could not be loaded.");
+        toastApiError(reportOutcome.reason, "Could not load report issues.");
+      }
+
+      if (bannerParts.length > 0) {
+        setError(bannerParts.join(" "));
+      }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to load admin data.";
+      const msg =
+        e instanceof Error ? e.message : "Failed to load admin data.";
       setError(msg);
       toastApiError(e, msg);
     } finally {
@@ -692,7 +738,13 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-50 to-slate-100 font-sans text-slate-900 antialiased">
-      <div className="mx-auto w-full max-w-[1300px] px-4 py-6 sm:px-6 sm:py-8">
+      <div
+        className={`mx-auto w-full max-w-[1300px] px-4 py-6 sm:px-6 sm:py-8 ${
+          activeTab === "audit" && selectedAuditIds.size > 0
+            ? "pb-28 sm:pb-24"
+            : ""
+        }`}
+      >
         <div className="mb-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_4px_6px_-1px_rgba(0,0,0,0.05),0_2px_4px_-2px_rgba(0,0,0,0.05),0_20px_25px_-5px_rgba(15,23,42,0.04)] sm:mb-8">
           <div
             className="h-1 bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600"
@@ -937,44 +989,6 @@ export default function AdminPage() {
                     </div>
                   </div>
                   <div className="flex w-full flex-col justify-start gap-2 sm:w-[min(100%,11rem)] sm:shrink-0">
-                    {selectedAuditIds.size > 0 && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void copyAuditInputToClipboard(
-                              combinedSelectedAuditInput,
-                              `Copied ${selectedAuditIds.size} input(s)`
-                            )
-                          }
-                          disabled={
-                            loading ||
-                            clearingAudit ||
-                            pruningAuditDupes ||
-                            bulkAuditDeleting
-                          }
-                          title="Join selected inputs with a blank line (table order)"
-                          className="h-10 w-full rounded-lg border border-sky-200 bg-sky-50 text-[12px] font-semibold text-sky-900 shadow-sm transition hover:bg-sky-100/90 disabled:opacity-50"
-                        >
-                          Copy inputs ({selectedAuditIds.size})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setConfirmBulkAuditIds([...selectedAuditIds])
-                          }
-                          disabled={
-                            loading ||
-                            clearingAudit ||
-                            pruningAuditDupes ||
-                            bulkAuditDeleting
-                          }
-                          className="h-10 w-full rounded-lg bg-red-700 text-[12px] font-semibold text-white shadow-sm transition hover:bg-red-800 disabled:opacity-50"
-                        >
-                          Delete ({selectedAuditIds.size})
-                        </button>
-                      </>
-                    )}
                     <button
                       type="button"
                       onClick={() => setAllAuditInputsOpen(true)}
@@ -1026,6 +1040,27 @@ export default function AdminPage() {
                     <div className="mb-2 inline-block h-6 w-6 animate-pulse rounded-full border-2 border-slate-200 border-t-blue-500" />
                     <p>Loading audit logs…</p>
                   </div>
+                </div>
+              ) : auditListLoadError ? (
+                <div className="p-8 text-center text-[14px] text-slate-700 sm:p-10">
+                  <p className="font-semibold text-red-800">
+                    Could not load audit logs
+                  </p>
+                  <p className="mx-auto mt-2 max-w-lg text-[12px] leading-relaxed text-slate-600">
+                    {auditListLoadError}
+                  </p>
+                  <p className="mx-auto mt-2 max-w-lg text-[12px] text-slate-500">
+                    This is usually a network blip or Firestore being busy. Try
+                    again — a full page refresh also reconnects.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void load()}
+                    disabled={loading}
+                    className="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    Retry load
+                  </button>
                 </div>
               ) : auditRows.length === 0 ? (
                 <div className="p-8 text-center text-[14px] text-slate-500 sm:p-10">
@@ -1368,6 +1403,23 @@ export default function AdminPage() {
               {loading ? (
                 <div className="flex min-h-[100px] items-center justify-center p-6 text-slate-500">
                   <p className="text-[14px]">Loading reports…</p>
+                </div>
+              ) : reportListLoadError ? (
+                <div className="p-8 text-center text-[14px] text-slate-700 sm:p-10">
+                  <p className="font-semibold text-red-800">
+                    Could not load user reports
+                  </p>
+                  <p className="mx-auto mt-2 max-w-lg text-[12px] leading-relaxed text-slate-600">
+                    {reportListLoadError}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void load()}
+                    disabled={loading}
+                    className="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    Retry load
+                  </button>
                 </div>
               ) : reportRows.length === 0 ? (
                 <div className="p-8 text-center text-slate-500 sm:p-10">
@@ -1787,6 +1839,104 @@ export default function AdminPage() {
           </div>
         </Modal>
       )}
+
+      {activeTab === "audit" && selectedAuditIds.size > 0 ? (
+        <div
+          className="pointer-events-none fixed bottom-0 right-0 z-40 max-w-[min(100vw,1300px)] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pl-6 sm:p-4 sm:pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pl-8"
+        >
+          <div
+            className="pointer-events-auto ml-auto w-[min(100%,17.5rem)] overflow-hidden rounded-2xl bg-white shadow-[0_12px_48px_-8px_rgba(15,23,42,0.22),0_0_0_1px_rgba(15,23,42,0.06)] ring-1 ring-slate-900/4"
+            role="toolbar"
+            aria-label={`Bulk actions for ${selectedAuditIds.size} selected audit rows`}
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-linear-to-r from-slate-50 to-white px-3 py-2">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                Selected
+              </span>
+              <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-bold tabular-nums text-white shadow-sm">
+                {selectedAuditIds.size}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-px bg-slate-100 p-px">
+              <button
+                type="button"
+                onClick={() =>
+                  void copyAuditInputToClipboard(
+                    combinedSelectedAuditInput,
+                    `Copied ${selectedAuditIds.size} input(s)`
+                  )
+                }
+                disabled={
+                  loading ||
+                  clearingAudit ||
+                  pruningAuditDupes ||
+                  bulkAuditDeleting
+                }
+                title={`Copy ${selectedAuditIds.size} selected input(s) — joined with a blank line`}
+                aria-label={`Copy ${selectedAuditIds.size} selected inputs`}
+                className="group flex min-h-21 flex-col items-center justify-center gap-1 bg-white py-3 transition hover:bg-sky-50/90 active:bg-sky-100/80 disabled:opacity-45"
+              >
+                <span className="sr-only">
+                  Copy {selectedAuditIds.size} selected inputs
+                </span>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={1.5}
+                  stroke="currentColor"
+                  className="h-7 w-7 text-sky-600 transition group-hover:scale-105 group-hover:text-sky-700"
+                  aria-hidden
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M8.25 7.5V6.108c0-1.036.84-1.875 1.875-1.875h3.75c1.036 0 1.875.84 1.875 1.875V7.5m6 9V18a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 18v-1.5m15-10.5a2.25 2.25 0 012.25 2.25v10.5A2.25 2.25 0 0118 21H6.75a2.25 2.25 0 01-2.25-2.25V10.5a2.25 2.25 0 012.25-2.25h7.5"
+                  />
+                </svg>
+                <span className="text-[11px] font-semibold text-slate-600 group-hover:text-sky-800">
+                  Copy
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmBulkAuditIds([...selectedAuditIds])}
+                disabled={
+                  loading ||
+                  clearingAudit ||
+                  pruningAuditDupes ||
+                  bulkAuditDeleting
+                }
+                title={`Delete ${selectedAuditIds.size} selected audit log(s)`}
+                aria-label={`Delete ${selectedAuditIds.size} selected audit logs`}
+                className="group flex min-h-21 flex-col items-center justify-center gap-1 bg-white py-3 transition hover:bg-rose-50 active:bg-rose-100/80 disabled:opacity-45"
+              >
+                <span className="sr-only">
+                  Delete {selectedAuditIds.size} selected audit logs
+                </span>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={1.5}
+                  stroke="currentColor"
+                  className="h-7 w-7 text-rose-500 transition group-hover:scale-105 group-hover:text-rose-600"
+                  aria-hidden
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+                  />
+                </svg>
+                <span className="text-[11px] font-semibold text-slate-600 group-hover:text-rose-800">
+                  Delete
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <ConfirmDialog
         open={confirmState !== null}

@@ -30,6 +30,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { toastApiError } from "../lib/toast/apiToast";
+import { withFirestoreRetry } from "../lib/firestoreRetry";
 import type {
   SavedSession,
   GameSlot,
@@ -84,7 +85,7 @@ export async function loadSlotsDB(): Promise<GameSlot[]> {
   try {
     // Try new location first, then legacy location
     for (const ref of [configRef("slots"), doc(db, "data", "slots")]) {
-      const snap = await getDoc(ref);
+      const snap = await withFirestoreRetry(() => getDoc(ref));
       if (snap.exists()) {
         const raw = snap.data().slots;
         return Array.isArray(raw) ? (raw as GameSlot[]) : [];
@@ -123,7 +124,9 @@ export async function syncPaymentSlotNamesToMatchSlots(slots: GameSlot[]): Promi
     const desiredName = nameById.get(slotId);
     if (desiredName == null) continue;
 
-    const snap = await getDocs(query(collection(db, "payments"), where("slotId", "==", slotId)));
+    const snap = await withFirestoreRetry(() =>
+      getDocs(query(collection(db, "payments"), where("slotId", "==", slotId)))
+    );
     const toUpdate = snap.docs.filter(
       d => (d.data().slotName as string | undefined) !== desiredName,
     );
@@ -148,7 +151,7 @@ export async function syncPaymentSlotNamesToMatchSlots(slots: GameSlot[]): Promi
 export async function loadSettingsDB(): Promise<AppSettings> {
   try {
     for (const ref of [configRef("settings"), doc(db, "data", "settings")]) {
-      const snap = await getDoc(ref);
+      const snap = await withFirestoreRetry(() => getDoc(ref));
       if (snap.exists()) return snap.data() as AppSettings;
     }
     return DEFAULT_SETTINGS;
@@ -191,8 +194,8 @@ export async function loadSessionsByDate(
   date: string
 ): Promise<SavedSession[]> {
   try {
-    const snap = await getDocs(
-      query(collection(db, "sessions"), where("date", "==", date))
+    const snap = await withFirestoreRetry(() =>
+      getDocs(query(collection(db, "sessions"), where("date", "==", date)))
     );
     return snap.docs.map((d) => hydrateSavedSession(d));
   } catch (e) {
@@ -210,11 +213,13 @@ export async function loadSessionsByMonth(
 ): Promise<SavedSession[]> {
   try {
     const pad = (n: number) => String(n).padStart(2, "0");
-    const snap = await getDocs(
-      query(
-        collection(db, "sessions"),
-        where("dateISO", ">=", `${year}-${pad(month)}-01`),
-        where("dateISO", "<=", `${year}-${pad(month)}-31`)
+    const snap = await withFirestoreRetry(() =>
+      getDocs(
+        query(
+          collection(db, "sessions"),
+          where("dateISO", ">=", `${year}-${pad(month)}-01`),
+          where("dateISO", "<=", `${year}-${pad(month)}-31`)
+        )
       )
     );
     return snap.docs.map((d) => hydrateSavedSession(d));
@@ -251,8 +256,8 @@ export async function deletePaymentsByContactDate(
 ): Promise<void> {
   try {
     // Query by date only (avoids composite index requirement), then filter by contact in memory
-    const snap = await getDocs(
-      query(collection(db, "payments"), where("date", "==", date))
+    const snap = await withFirestoreRetry(() =>
+      getDocs(query(collection(db, "payments"), where("date", "==", date)))
     );
     const toDelete = snap.docs.filter((d) => d.data().contact === contact);
     await Promise.all(toDelete.map((d) => deleteDoc(d.ref)));
@@ -265,8 +270,8 @@ export async function loadPaymentsByDate(
   date: string
 ): Promise<PaymentRecord[]> {
   try {
-    const snap = await getDocs(
-      query(collection(db, "payments"), where("date", "==", date))
+    const snap = await withFirestoreRetry(() =>
+      getDocs(query(collection(db, "payments"), where("date", "==", date)))
     );
     return snap.docs.map((d) => d.data() as PaymentRecord);
   } catch (e) {
@@ -285,11 +290,13 @@ export async function loadSessionDatesForMonth(
 ): Promise<string[]> {
   try {
     const pad = (n: number) => String(n).padStart(2, "0");
-    const snap = await getDocs(
-      query(
-        collection(db, "sessions"),
-        where("dateISO", ">=", `${year}-${pad(month)}-01`),
-        where("dateISO", "<=", `${year}-${pad(month)}-31`)
+    const snap = await withFirestoreRetry(() =>
+      getDocs(
+        query(
+          collection(db, "sessions"),
+          where("dateISO", ">=", `${year}-${pad(month)}-01`),
+          where("dateISO", "<=", `${year}-${pad(month)}-31`)
+        )
       )
     );
     return [...new Set(snap.docs.map((d) => d.data().date as string))];
@@ -307,11 +314,13 @@ export async function loadPaymentsByMonth(
 ): Promise<PaymentRecord[]> {
   try {
     const pad = (n: number) => String(n).padStart(2, "0");
-    const snap = await getDocs(
-      query(
-        collection(db, "payments"),
-        where("dateISO", ">=", `${year}-${pad(month)}-01`),
-        where("dateISO", "<=", `${year}-${pad(month)}-31`)
+    const snap = await withFirestoreRetry(() =>
+      getDocs(
+        query(
+          collection(db, "payments"),
+          where("dateISO", ">=", `${year}-${pad(month)}-01`),
+          where("dateISO", "<=", `${year}-${pad(month)}-31`)
+        )
       )
     );
     return snap.docs.map((d) => d.data() as PaymentRecord);
@@ -382,23 +391,19 @@ export async function logCalculationAudit(
 export async function loadCalculationAuditLogs(
   maxRows = 300
 ): Promise<CalculationAuditLog[]> {
-  try {
-    const snap = await getDocs(
+  const snap = await withFirestoreRetry(() =>
+    getDocs(
       query(
         collection(db, "calc_audit_logs"),
         orderBy("createdAt", "desc"),
         limit(maxRows)
       )
-    );
-    return snap.docs.map((d) => {
-      const data = d.data() as Omit<CalculationAuditLog, "id">;
-      return { id: d.id, ...data };
-    });
-  } catch (e) {
-    console.warn("loadCalculationAuditLogs failed:", e);
-    toastApiError(e, "Could not load audit logs.");
-    return [];
-  }
+    )
+  );
+  return snap.docs.map((d) => {
+    const data = d.data() as Omit<CalculationAuditLog, "id">;
+    return { id: d.id, ...data };
+  });
 }
 
 /** Normalize pasted input so visually identical pastes share one dedupe key. */
@@ -415,11 +420,13 @@ export async function pruneDuplicateCalculationAuditLogs(
   maxScan = 2000
 ): Promise<number> {
   try {
-    const snap = await getDocs(
-      query(
-        collection(db, "calc_audit_logs"),
-        orderBy("createdAt", "desc"),
-        limit(maxScan)
+    const snap = await withFirestoreRetry(() =>
+      getDocs(
+        query(
+          collection(db, "calc_audit_logs"),
+          orderBy("createdAt", "desc"),
+          limit(maxScan)
+        )
       )
     );
     const rows: CalculationAuditLog[] = snap.docs.map((d) => {
@@ -523,11 +530,13 @@ export async function clearCalculationAuditLogs(
   maxRows = 2000
 ): Promise<number> {
   try {
-    const snap = await getDocs(
-      query(
-        collection(db, "calc_audit_logs"),
-        orderBy("createdAt", "desc"),
-        limit(maxRows)
+    const snap = await withFirestoreRetry(() =>
+      getDocs(
+        query(
+          collection(db, "calc_audit_logs"),
+          orderBy("createdAt", "desc"),
+          limit(maxRows)
+        )
       )
     );
     if (snap.empty) return 0;
@@ -561,27 +570,23 @@ export async function logReportIssue(
 export async function loadReportIssueLogs(
   maxRows = 300
 ): Promise<ReportIssueLog[]> {
-  try {
-    const snap = await getDocs(
+  const snap = await withFirestoreRetry(() =>
+    getDocs(
       query(
         collection(db, "report_issue_logs"),
         orderBy("createdAt", "desc"),
         limit(maxRows)
       )
-    );
-    return snap.docs.map((d) => {
-      const data = d.data() as Omit<ReportIssueLog, "id">;
-      return {
-        id: d.id,
-        ...data,
-        fixed: data.fixed === true,
-      };
-    });
-  } catch (e) {
-    console.warn("loadReportIssueLogs failed:", e);
-    toastApiError(e, "Could not load report issues.");
-    return [];
-  }
+    )
+  );
+  return snap.docs.map((d) => {
+    const data = d.data() as Omit<ReportIssueLog, "id">;
+    return {
+      id: d.id,
+      ...data,
+      fixed: data.fixed === true,
+    };
+  });
 }
 
 export async function updateReportIssueFixed(
@@ -626,11 +631,13 @@ export async function deleteReportIssueLogsByIds(ids: string[]): Promise<void> {
 
 export async function clearReportIssueLogs(maxRows = 2000): Promise<number> {
   try {
-    const snap = await getDocs(
-      query(
-        collection(db, "report_issue_logs"),
-        orderBy("createdAt", "desc"),
-        limit(maxRows)
+    const snap = await withFirestoreRetry(() =>
+      getDocs(
+        query(
+          collection(db, "report_issue_logs"),
+          orderBy("createdAt", "desc"),
+          limit(maxRows)
+        )
       )
     );
     if (snap.empty) return 0;
@@ -646,10 +653,12 @@ export async function clearReportIssueLogs(maxRows = 2000): Promise<number> {
 
 export async function migrateOldFirestoreData(): Promise<void> {
   try {
-    const [oldSessions, oldPayments] = await Promise.all([
-      getDoc(doc(db, "data", "sessions")),
-      getDoc(doc(db, "data", "payments")),
-    ]);
+    const [oldSessions, oldPayments] = await withFirestoreRetry(() =>
+      Promise.all([
+        getDoc(doc(db, "data", "sessions")),
+        getDoc(doc(db, "data", "payments")),
+      ])
+    );
     const jobs: Promise<void>[] = [];
     if (oldSessions.exists()) {
       const sessions = (oldSessions.data().sessions ?? []) as SavedSession[];

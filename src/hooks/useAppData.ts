@@ -17,6 +17,7 @@ import {
 } from "../data/firestoreDb";
 import type { GameSlot, AppSettings } from "../types";
 import { toastApiError } from "../lib/toast/apiToast";
+import { withFirestoreRetry } from "../lib/firestoreRetry";
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
@@ -47,9 +48,10 @@ export function useAppData() {
         }
 
         // ── Load slots + settings from Firestore (source of truth when online) ─
-        const [remoteSlots, remoteSettings] = await withTimeout(
-          Promise.all([loadSlotsDB(), loadSettingsDB()]),
-          6000
+        const [remoteSlots, remoteSettings] = await withFirestoreRetry(
+          () =>
+            withTimeout(Promise.all([loadSlotsDB(), loadSettingsDB()]), 18000),
+          { maxAttempts: 3, initialDelayMs: 600 }
         );
 
         let sl = remoteSlots;
