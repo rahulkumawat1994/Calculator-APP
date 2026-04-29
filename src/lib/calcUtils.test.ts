@@ -371,6 +371,15 @@ GL 83×10`;
     expect(out.failedLines ?? []).toEqual([]);
     expect(out.total).toBe(100);
   });
+
+  it("merges comma list split across lines when first row has no trailing comma before ×rate row", () => {
+    const text = `GL 40,95,18,17,70,10,00
+04,59,81,71,07,01,44,19,91×30`;
+    const out = calculateTotal(text);
+    expect(out.failedLines ?? []).toEqual([]);
+    expect(out.results).toHaveLength(1);
+    expect(out.results[0]).toMatchObject({ count: 16, rate: 30, lineTotal: 480 });
+  });
 });
 
 describe("splitWhatsAppInputByContact", () => {

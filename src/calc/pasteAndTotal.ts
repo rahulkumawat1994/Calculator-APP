@@ -75,6 +75,8 @@ function mergeCommaOnlyRateContinuationLine(lines: string[]): string[] {
  * `,` on the first line(s) and the rate (×70, x50, *10) only on the last line, e.g.
  *   `FB 43,97,62,98,`
  *   `33,79,26,89×70`
+ * Some pastes omit the trailing comma on the first row (`…10,00` then newline) but the
+ * next row is still `04,59,…×30` — merge those too (insert `,` between rows when needed).
  * If we do not join them, the first line is parsed with the last two-digit as the
  * (wrong) rate, and the second line is parsed as a second segment.
  * Absorb any middle lines that are still comma-lists with no rate marker, then the
@@ -84,11 +86,27 @@ function mergeTrailingCommaListWithXOnLaterLine(lines: string[]): string[] {
   const hasExplicit =
     (s: string) =>
       /\(\d+\)/.test(s) || X_RATE_RE.test(s) || /=+\s*\d+/.test(s) || /\*\s*\d+/.test(s);
+  /** Join two comma-list fragments: if `acc` already ends with `,`, WhatsApp glue is direct. */
+  const glueCommaFragments = (acc: string, fragment: string): string => {
+    const f = fragment.replace(/^\s+/, "");
+    if (/,[\s]*$/.test(acc)) return acc + f;
+    return `${acc},${f}`;
+  };
   const out: string[] = [];
   let i = 0;
   while (i < lines.length) {
     const start = lines[i]!.trim();
-    if (!/,/.test(start) || hasExplicit(start) || !/,\s*$/.test(start)) {
+    const next = i + 1 < lines.length ? lines[i + 1]!.trim() : "";
+    const trailingCommaStart = /,/.test(start) && !hasExplicit(start) && /,\s*$/.test(start);
+    const noTrailingCommaButContinues =
+      /,/.test(start) &&
+      !hasExplicit(start) &&
+      !/,\s*$/.test(start) &&
+      next.length > 0 &&
+      hasExplicit(lines[i + 1]!) &&
+      /,/.test(lines[i + 1]!) &&
+      /^\d/.test(next);
+    if (!trailingCommaStart && !noTrailingCommaButContinues) {
       out.push(lines[i]!);
       i += 1;
       continue;
@@ -99,7 +117,7 @@ function mergeTrailingCommaListWithXOnLaterLine(lines: string[]): string[] {
     while (j < lines.length) {
       const n = lines[j]!;
       if (hasExplicit(n) && /,/.test(n)) {
-        acc = acc + n;
+        acc = glueCommaFragments(acc, n);
         out.push(acc);
         i = j + 1;
         merged = true;
@@ -109,7 +127,7 @@ function mergeTrailingCommaListWithXOnLaterLine(lines: string[]): string[] {
         break;
       }
       if (/,/.test(n) && !hasExplicit(n)) {
-        acc = acc + n;
+        acc = glueCommaFragments(acc, n);
         j += 1;
         continue;
       }
