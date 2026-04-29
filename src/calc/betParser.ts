@@ -1,4 +1,4 @@
-import type { Segment } from "../types";
+import type { BetLane, Segment } from "../types";
 import {
   normalizeIntoRateMarker,
   normalizeTrailingDashRate,
@@ -42,6 +42,9 @@ export function extractPairedNumbers(text: string): number[] {
   return out;
 }
 
+/** Comma-separated field is a same-digit run length ≥ 3 (444, 1111, …) — show whole token, not paired digits (44, 11). */
+const COMMA_FIELD_SAME_DIGIT_RUN = /^(\d)\1{2,}$/;
+
 /**
  * Comma-separated jodis for the breakdown UI. Uses the same {@link extractPairedNumbers} rules
  * as `processLine` so embedded runs (e.g. 9103 → 91, 03) match the row count. Falls back to
@@ -53,6 +56,23 @@ export function formatSegmentLineForPairListDisplay(segment: {
   isWP: boolean;
   isDouble: boolean;
 }): string {
+  if (/,/.test(segment.line)) {
+    const fields = segment.line
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (
+      fields.length > 0 &&
+      fields.every((f) => COMMA_FIELD_SAME_DIGIT_RUN.test(f))
+    ) {
+      return fields.join(", ");
+    }
+  }
+  // One same-digit run only, commas already stripped (e.g. "333,,,,,,100ab" → line "333"): show "333" not paired "33"
+  const singleRun = segment.line.trim();
+  if (COMMA_FIELD_SAME_DIGIT_RUN.test(singleRun)) {
+    return singleRun;
+  }
   const pairs = extractPairedNumbers(segment.line);
   const n = pairs.length;
   if (n > 0 && !segment.isWP) {
@@ -70,6 +90,16 @@ export function formatSegmentLineForPairListDisplay(segment: {
 // WP keywords: "wp", "w.p", "palat", Hindi "पलट" (reverse/pair).
 // AB keywords: letter 'a'/'b', OR Hindi "अब" (literally "ab").
 // Strip WP keywords first so "palat" (contains 'a') never accidentally triggers AB.
+function stripWpPalatWords(text: string): string {
+  return text
+    .replace(/\bwp\b/gi, "")
+    .replace(/\bw\.?\s*p\b/gi, "")
+    .replace(/\bw\s+p\b/gi, "")
+    .replace(/\bpalat(?:e|el)?\b/gi, "")
+    .replace(/पलट/g, "")
+    .trim();
+}
+
 function parseFlags(text: string): { isWP: boolean; isDouble: boolean } {
   const isWP =
     /\bwp\b/i.test(text) ||
@@ -77,15 +107,31 @@ function parseFlags(text: string): { isWP: boolean; isDouble: boolean } {
     /\bw\s+p\b/i.test(text) ||
     /\bpalat(?:e|el)?\b/i.test(text) ||
     /पलट/.test(text);
-  const cleaned = text
-    .replace(/\bwp\b/gi, "")
-    .replace(/\bw\.?\s*p\b/gi, "")
-    .replace(/\bw\s+p\b/gi, "")
-    .replace(/\bpalat(?:e|el)?\b/gi, "")
-    .replace(/पलट/g, "")
-    .trim();
+  const cleaned = stripWpPalatWords(text);
   const isDouble = /[ab]/i.test(cleaned) || /अब/.test(cleaned);
   return { isWP, isDouble };
+}
+
+/** UI lane chip for non-solid segments: explicit A/B/AB from suffix, else AB when doubled. */
+function laneForNonSolid(flagText: string, isDouble: boolean, numbersText: string): BetLane | undefined {
+  const explicit = parseLaneFromFlagText(flagText);
+  if (explicit) return explicit;
+  if (isDouble && has3DigitBet(numbersText)) return "AB";
+  if (isDouble) return "AB";
+  return undefined;
+}
+
+export function parseLaneFromFlagText(text: string): BetLane | undefined {
+  const cleaned = stripWpPalatWords(text).replace(/[,.\s]+/g, " ").trim();
+  if (!cleaned) return undefined;
+  if (/अब/.test(cleaned)) return "AB";
+  const alpha = cleaned.replace(/[^a-zA-Z]/g, "");
+  if (!alpha) return undefined;
+  const lower = alpha.toLowerCase();
+  if (lower === "ab" || (lower.includes("a") && lower.includes("b"))) return "AB";
+  if (/^a+$/i.test(alpha)) return "A";
+  if (/^b+$/i.test(alpha)) return "B";
+  return undefined;
 }
 
 /**
@@ -102,9 +148,13 @@ function has3DigitBet(numbersText: string): boolean {
  * A/B/AB may appear anywhere in modifierSource (before/after digits or rate). Rate digits
  * are stripped so *20 does not interfere. No WP/palat here — those use the normal pair path.
  */
-function solidRunAbMultiplier(modifierSource: string): { count: number; isDouble: boolean } {
+function solidRunAbMultiplier(modifierSource: string): {
+  count: number;
+  isDouble: boolean;
+  lane?: BetLane;
+} {
   let s = modifierSource;
-  if (/अब/.test(s)) return { count: 2, isDouble: true };
+  if (/अब/.test(s)) return { count: 2, isDouble: true, lane: "AB" };
   // Strip rate chunks only (do not treat the "x" inside "Ax333…" as ×rate).
   s = s
     .replace(/\(\s*\d+\s*\)/g, ' ')
@@ -113,11 +163,14 @@ function solidRunAbMultiplier(modifierSource: string): { count: number; isDouble
     .replace(/(?:^|[\s,])x\s*\d+(?=$|[\s,]|[^0-9])/gi, ' ');
   // A and B separated by punctuation/spaces; include "x" and "×" (letters otherwise) for AxB / A×B.
   // Literal "AB" with no separator is handled by the next check.
-  if (/\bA(?:[^A-Za-z0-9]|x|×)+B\b/i.test(s)) return { count: 2, isDouble: true };
-  if (/AB/i.test(s)) return { count: 2, isDouble: true };
+  if (/\bA(?:[^A-Za-z0-9]|x|×)+B\b/i.test(s)) return { count: 2, isDouble: true, lane: "AB" };
+  if (/AB/i.test(s)) return { count: 2, isDouble: true, lane: "AB" };
   const noAb = s.replace(/AB/gi, '');
-  if (/(?:^|[^A-Za-z])A(?:[^A-Za-z]|$)/i.test(noAb) || /(?:^|[^A-Za-z])B(?:[^A-Za-z]|$)/i.test(noAb))
-    return { count: 1, isDouble: false };
+  const hasA = /(?:^|[^A-Za-z])A(?:[^A-Za-z]|$)/i.test(noAb);
+  const hasB = /(?:^|[^A-Za-z])B(?:[^A-Za-z]|$)/i.test(noAb);
+  if (hasA && hasB) return { count: 1, isDouble: false, lane: "AB" };
+  if (hasA) return { count: 1, isDouble: false, lane: "A" };
+  if (hasB) return { count: 1, isDouble: false, lane: "B" };
   return { count: 1, isDouble: false };
 }
 
@@ -138,9 +191,9 @@ function trySolidRunSegment(
   const ai = bi + run.length;
   if (/\d/.test(nt.slice(0, bi)) || /\d/.test(nt.slice(ai))) return null;
 
-  const { count, isDouble } = solidRunAbMultiplier(modifierSource);
+  const { count, isDouble, lane } = solidRunAbMultiplier(modifierSource);
   const display = nt.replace(/^[\s*\-_.,:|]+|[\s*\-_.,:|]+$/g, '').trim() || run;
-  return { line: display, rate, isWP: false, isDouble, count, lineTotal: count * rate };
+  return { line: display, rate, isWP: false, isDouble, lane, count, lineTotal: count * rate };
 }
 
 /** Same-digit run (length ≥ 3) for multi-x chain values. */
@@ -183,11 +236,17 @@ function tryParseMultiXSameDigitChain(trimmed: string, parseOne: (s: string) => 
   if (!st) return null;
   const { pre, nums: numParts, rate } = st;
   const out: Segment[] = [];
+  let laneFromPre: BetLane | undefined;
+  if (/^AB\./i.test(pre)) laneFromPre = "AB";
+  else if (/^A\./i.test(pre)) laneFromPre = "A";
+  else if (/^B\./i.test(pre)) laneFromPre = "B";
+
   for (const n of numParts) {
     const syn = `${pre}${n}x${rate}`;
     const sub = parseOne(syn);
     if (sub.length !== 1) return null;
-    out.push({ ...sub[0], line: pre ? `${pre}${n}` : n });
+    const first = sub[0]!;
+    out.push({ ...first, line: pre ? `${pre}${n}` : n, lane: first.lane ?? laneFromPre });
   }
   return out;
 }
@@ -260,7 +319,8 @@ export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segm
     const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
     if (count > 0) {
       const display = numbersPart.replace(/^[\s*\-_.,:|]+|[\s*\-_.,:|]+$/g, '').trim();
-      results.push({ line: display || numbersPart.trim(), rate, isWP, isDouble, count, lineTotal: count * rate });
+      const lane = laneForNonSolid(suffix, isDouble, numbersPart);
+      results.push({ line: display || numbersPart.trim(), rate, isWP, isDouble, lane, count, lineTotal: count * rate });
     }
   }
   if (results.length) return results;
@@ -292,7 +352,8 @@ export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segm
         const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
         if (count > 0) {
           const display = numbersText.replace(/^\D+/, '').replace(/\D+$/, '').trim();
-          results.push({ line: display || numbersText.trim(), rate, isWP, isDouble, count, lineTotal: count * rate });
+          const lane = laneForNonSolid(suffix, isDouble, numbersText);
+          results.push({ line: display || numbersText.trim(), rate, isWP, isDouble, lane, count, lineTotal: count * rate });
         }
       }
       prevEnd = (m.index ?? 0) + m[0].length;
@@ -324,7 +385,8 @@ export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segm
             const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
             if (count > 0) {
               const display = numbersText.replace(/^\D+/, '').replace(/\D+$/, '').trim();
-              results.push({ line: display || numbersText.trim(), rate, isWP, isDouble, count, lineTotal: count * rate });
+              const lane = laneForNonSolid(flagText, isDouble, numbersText);
+              results.push({ line: display || numbersText.trim(), rate, isWP, isDouble, lane, count, lineTotal: count * rate });
             }
           }
         }
@@ -357,7 +419,8 @@ export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segm
           const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
           if (count > 0) {
             const display = numbersText.replace(/[,\s.]+$/, '').trim();
-            results.push({ line: display, rate, isWP, isDouble, count, lineTotal: count * rate });
+            const lane = laneForNonSolid(after, isDouble, numbersText);
+            results.push({ line: display, rate, isWP, isDouble, lane, count, lineTotal: count * rate });
           }
         }
       }

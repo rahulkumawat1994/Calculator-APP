@@ -1,8 +1,13 @@
+/** A/B/AB lane marker for solid runs and rate suffixes; optional for backward-compatible stored rows. */
+export type BetLane = "A" | "B" | "AB";
+
 export interface Segment {
   line: string;
   rate: number;
   isWP: boolean;
   isDouble: boolean;
+  /** When set, show matching chip next to WP/AB; if omitted, treat `isDouble` as AB-style double. */
+  lane?: BetLane;
   count: number;
   lineTotal: number;
 }

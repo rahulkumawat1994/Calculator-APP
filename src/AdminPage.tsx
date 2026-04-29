@@ -69,6 +69,18 @@ interface ConfirmState {
   run: () => void;
 }
 
+async function copyAuditInputToClipboard(
+  text: string,
+  successMessage = "Input copied",
+) {
+  try {
+    await navigator.clipboard.writeText(text ?? "");
+    toast.success(successMessage);
+  } catch {
+    toast.error("Could not copy");
+  }
+}
+
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<"audit" | "report">("audit");
   const [auditRows, setAuditRows] = useState<CalculationAuditLog[]>([]);
@@ -1045,9 +1057,23 @@ export default function AdminPage() {
                               : r.selectedSlotName ?? r.selectedSlotId ?? "—"}
                           </td>
                           <td className="px-2 py-2.5 sm:px-3">
-                            <pre className="max-h-[120px] overflow-auto rounded-lg border border-slate-200/80 bg-slate-50/80 p-2 font-mono text-[11px] whitespace-pre-wrap text-slate-800 wrap-break-word">
-                              {r.input}
-                            </pre>
+                            <div className="flex flex-col gap-1.5">
+                              <div className="flex justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void copyAuditInputToClipboard(r.input ?? "")
+                                  }
+                                  className="rounded-md border border-slate-200/90 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-600 shadow-sm transition hover:border-blue-200 hover:bg-sky-50/80 hover:text-blue-700"
+                                  title="Copy this input to clipboard"
+                                >
+                                  Copy
+                                </button>
+                              </div>
+                              <pre className="max-h-[120px] overflow-auto rounded-lg border border-slate-200/80 bg-slate-50/80 p-2 font-mono text-[11px] whitespace-pre-wrap text-slate-800 wrap-break-word">
+                                {r.input}
+                              </pre>
+                            </div>
                           </td>
                           <td className="px-1 py-2 text-center sm:px-2">
                             <button
@@ -1359,9 +1385,20 @@ export default function AdminPage() {
 
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-[12px] border border-[#e4edf8] bg-[#f8fbff] p-3">
-                  <p className="mb-2 text-[12px] font-semibold text-gray-600">
-                    Original input
-                  </p>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[12px] font-semibold text-gray-600">
+                      Original input
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void copyAuditInputToClipboard(previewAudit.input ?? "")
+                      }
+                      className="shrink-0 rounded-lg border border-blue-200 bg-blue-600 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                    >
+                      Copy input
+                    </button>
+                  </div>
                   <pre className="max-h-[52vh] overflow-y-auto overscroll-contain rounded-[10px] border border-[#e4edf8] bg-white p-3 font-mono text-[11px] whitespace-pre-wrap wrap-break-word">
                     {previewAudit.input}
                   </pre>
@@ -1390,7 +1427,17 @@ export default function AdminPage() {
                                   WP
                                 </span>
                               )}
-                              {seg.isDouble && (
+                              {seg.lane === "A" && (
+                                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-800">
+                                  A
+                                </span>
+                              )}
+                              {seg.lane === "B" && (
+                                <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] text-violet-800">
+                                  B
+                                </span>
+                              )}
+                              {(seg.lane === "AB" || (!seg.lane && seg.isDouble)) && (
                                 <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700">
                                   AB
                                 </span>
@@ -1467,16 +1514,12 @@ export default function AdminPage() {
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(
-                        combinedAllAuditInputText
-                      );
-                      toast.success("Copied to clipboard");
-                    } catch {
-                      toast.error("Could not copy");
-                    }
-                  }}
+                  onClick={() =>
+                    void copyAuditInputToClipboard(
+                      combinedAllAuditInputText,
+                      "Copied to clipboard",
+                    )
+                  }
                   className="rounded-lg border border-blue-200 bg-blue-600 px-3.5 py-1.5 text-[12px] font-semibold text-white shadow-sm transition hover:bg-blue-700"
                 >
                   Copy

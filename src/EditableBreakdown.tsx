@@ -319,7 +319,9 @@ export default function EditableBreakdown({
                 >
                   <JodiListDisplay text={formatSegmentLineForPairListDisplay(r)} />
                   {r.isWP && <span className="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ml-1.5 bg-blue-100 text-blue-700 align-middle">WP</span>}
-                  {r.isDouble && <span className="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ml-1.5 bg-yellow-100 text-yellow-800 align-middle">AB</span>}
+                  {r.lane === "A" && <span className="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ml-1.5 bg-emerald-100 text-emerald-800 align-middle">A</span>}
+                  {r.lane === "B" && <span className="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ml-1.5 bg-violet-100 text-violet-800 align-middle">B</span>}
+                  {(r.lane === "AB" || (!r.lane && r.isDouble)) && <span className="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full ml-1.5 bg-yellow-100 text-yellow-800 align-middle">AB</span>}
                 </div>
                 <div className="flex items-center justify-between">
                   <span className={`${numSize} text-[#666]`}>{r.count} × {r.rate}</span>

@@ -73,6 +73,11 @@ describe("calculateTotal regression scenarios", () => {
     { id: "into-typo-olto", input: "11-13-31olto10", expectedTotal: 30 },
     { id: "into-typo-iltu", input: "11-13-31iltu10", expectedTotal: 30 },
     { id: "into-typo-spaced", input: "11-13-31ilto 10", expectedTotal: 30 },
+    // WhatsApp: "=" before A/B lane letter on same-digit run (rate digits must not sit directly after "=" for SEP_RATE_RE)
+    { id: "solid-equals-a", input: "111=A100", expectedTotal: 100 },
+    { id: "solid-equals-b", input: "999=B100", expectedTotal: 100 },
+    // Two-digit jodi + "." + single-digit stake (same as 40x5)
+    { id: "jodi-dot-single-rate", input: "40.5", expectedTotal: 5 },
   ] as const;
 
   it.each(rows)("$id -> total $expectedTotal", (row) => {
@@ -91,6 +96,27 @@ describe("calculateTotal regression scenarios", () => {
     expect(parts).toEqual([
       "83", "45", "94", "34", "13", "02", "20", "38", "27", "19", "91", "03", "30",
     ]);
+  });
+
+  it("formatSegmentLineForPairListDisplay: comma triple same-digit runs show 444, 777 (not 44, 77) with AB", () => {
+    const r = calculateTotal("444,,,777,,,,,100ab");
+    const s = r.results[0]!;
+    expect(s.count).toBe(4);
+    expect(s.isDouble).toBe(true);
+    expect(formatSegmentLineForPairListDisplay(s)).toBe("444, 777");
+  });
+
+  it("formatSegmentLineForPairListDisplay: single triple with commas stripped shows 333 not 33 (AB)", () => {
+    const r = calculateTotal("333,,,,,,100ab");
+    const s = r.results[0]!;
+    expect(formatSegmentLineForPairListDisplay(s)).toBe("333");
+  });
+
+  it("processLine sets lane A / B / AB for solid and comma suffixes", () => {
+    expect(processLine("444(20)A")[0]?.lane).toBe("A");
+    expect(processLine("444x20B")[0]?.lane).toBe("B");
+    expect(processLine("333,,,100ab")[0]?.lane).toBe("AB");
+    expect(processLine("B.1111x9999x50")[0]?.lane).toBe("B");
   });
 
   it("WhatsApp sample: into / intu / ijto lines all parse (markers Sg/Fd/Gb may fail)", () => {

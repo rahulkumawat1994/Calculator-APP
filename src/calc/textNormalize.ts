@@ -27,12 +27,16 @@ export function normalizeTypoTolerantInput(s: string): string {
     /\b(\d{2})\/(5|10|15|20|25|30|40|50|100)\b/g,
     "$1x$2",
   );
+  // Two-digit jodi + "." + single-digit rate (same meaning as 40x5 / 40=5; avoids breaking NN.MM dates with two-digit months)
+  t = t.replace(/\b(\d{2})\.([1-9])\b/g, "$1x$2");
   // Between digits: `;` `|` `/` `\` or tabs often used instead of space (keep `,` for comma-rate lines)
   t = t.replace(/(?<=\d)[\t]*[;|/\\]+[\t]*(?=\d)/g, " ");
   // Same-digit run (3+ identical digits) then AB / A / B then rate, with no x/=/*
   // (common paste: "000B100", "000A100", "000AB100"). Rewrites so SEP_RATE_RE applies;
   // suffix letter is preserved for solidRunAbMultiplier (A/B = 1×, AB = 2×).
   t = t.replace(/\b((\d)\2{2,})\s*(AB|A|B)\s*(\d+)\b/gi, (_, run, _d, mark, rate) => `${run}x${rate}${mark}`);
+  // Same shape with "=" before the lane letter (WhatsApp: "111=A100", "999=B100")
+  t = t.replace(/\b((\d)\2{2,})\s*=\s*(AB|A|B)\s*(\d+)\b/gi, (_, run, _d, mark, rate) => `${run}x${rate}${mark}`);
   // Some users type A/B marker letters directly before rate marker:
   //   222bbb=50  /  999abx10
   // Insert a separator so rate parsing still recognizes =/x/* markers.
