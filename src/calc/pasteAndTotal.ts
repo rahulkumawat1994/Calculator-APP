@@ -296,8 +296,16 @@ export function calculateTotal(text: string): CalculationResult {
           const pureP = /^[\d\s\-_.,:|\/\\]+$/.test(p) && /\d/.test(p);
           const endsWithDot = /\.\s*$/.test(p);
           const body = stripTrailingSeparatorRateTail(line);
-          if (pureP && endsWithDot && lastInheritedRate != null && looksLikeDotSeparatedPairContinuation(body)) {
-            pushMerged(mergePendingBodyWithInheritedRate(p, body, lastInheritedRate));
+          /** Prefer previous clause rate; if none yet (first rows of paste), use ×rate on this line (e.g. `58…65.` + `44…x10`). */
+          const rateForDotMerge =
+            lastInheritedRate ?? lastExplicitRateInLine(line);
+          if (
+            pureP &&
+            endsWithDot &&
+            rateForDotMerge != null &&
+            looksLikeDotSeparatedPairContinuation(body)
+          ) {
+            pushMerged(mergePendingBodyWithInheritedRate(p, body, rateForDotMerge));
             pending = "";
           } else {
             flushPending();

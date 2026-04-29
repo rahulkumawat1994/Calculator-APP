@@ -20,11 +20,11 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/[\u200B-\u200D\uFEFF]/g, "");
   // Fullwidth ASCII digits → ASCII
   t = t.replace(/[\uFF10-\uFF19]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30));
-  // "NN/rate" with a slash (WhatsApp pastes: 43/10, 07/20) — must run *before* slash→space below
+  // "NN/rate" with a slash (WhatsApp pastes: 43/10, 07/20, 27/120) — must run *before* slash→space below
   // so the rate is not split into a loose "NN DD" line. Whitelist the denominator to typical stakes
   // and avoid mistaking calendar fragments like 12/04 (→ would match rate 4 if we only used \d+).
   t = t.replace(
-    /\b(\d{2})\/(5|10|15|20|25|30|40|50|100)\b/g,
+    /\b(\d{2})\/(5|10|15|20|25|30|40|50|100|120)\b/g,
     "$1x$2",
   );
   // Two-digit jodi + "." + single-digit rate (same meaning as 40x5 / 40=5; avoids breaking NN.MM dates with two-digit months)

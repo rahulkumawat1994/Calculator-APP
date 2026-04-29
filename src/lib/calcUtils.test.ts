@@ -221,6 +221,25 @@ Gb`;
     expect(r.total).toBe(10 + 5 + 20 + 10);
   });
 
+  it("slash denominator 120 — NN/120 becomes NN×120 (not NN + 120 merged with next row)", () => {
+    const r = calculateTotal("27/120\n73/20");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.results).toHaveLength(2);
+    expect(r.results[0]).toMatchObject({ line: "27", rate: 120, lineTotal: 120 });
+    expect(r.results[1]).toMatchObject({ line: "73", rate: 20, lineTotal: 20 });
+    expect(r.total).toBe(140);
+  });
+
+  it("merges first dot-clause ending in `.` with following line ×rate when no prior inherited rate", () => {
+    const text = `DB. 58..26.66.65.
+44..05.09.06.60.x10`;
+    const r = calculateTotal(text);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.results).toHaveLength(1);
+    expect(r.total).toBe(90);
+    expect(r.results[0]).toMatchObject({ rate: 10, count: 9, lineTotal: 90 });
+  });
+
   it("regression: slash stake + multiline comma + x-rate (one segment each where applicable)", () => {
     const slash = calculateTotal("43/10");
     expect(slash.failedLines ?? []).toEqual([]);

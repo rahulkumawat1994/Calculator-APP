@@ -155,6 +155,10 @@ export default function AdminPage() {
   const [auditStatusSort, setAuditStatusSort] = useState<
     "off" | "asc" | "desc"
   >("off");
+  /** off = no diff sort; desc = parser mismatch (Differs) first; asc = match saved total first */
+  const [auditDiffSort, setAuditDiffSort] = useState<
+    "off" | "asc" | "desc"
+  >("off");
   /** Inclusive local date range on `createdAt` (`YYYY-MM-DD`); both empty = no filter. */
   const [auditDateFrom, setAuditDateFrom] = useState("");
   const [auditDateTo, setAuditDateTo] = useState("");
@@ -168,16 +172,50 @@ export default function AdminPage() {
     [auditRows, auditDateFrom, auditDateTo]
   );
 
+  /** Re-run parser on stored input; flags rows where current engine total ≠ saved audit total. */
+  const auditTotalRecalc = useMemo(() => {
+    const m = new Map<string, { parsedTotal: number; differs: boolean }>();
+    for (const r of auditRows) {
+      const saved = Number.isFinite(r.total) ? r.total : NaN;
+      const parsed = calculateTotal(r.input ?? "").total;
+      m.set(r.id, {
+        parsedTotal: parsed,
+        differs: !Number.isFinite(saved) || saved !== parsed,
+      });
+    }
+    return m;
+  }, [auditRows]);
+
   const displayAuditRows = useMemo(() => {
-    if (auditStatusSort === "off") return dateFilteredAuditRows;
+    const rows = [...dateFilteredAuditRows];
+    const diffKey = (r: CalculationAuditLog) =>
+      auditTotalRecalc.get(r.id)?.differs === true ? 1 : 0;
     const fc = (r: CalculationAuditLog) => r.failedCount ?? 0;
-    return [...dateFilteredAuditRows].sort((a, b) => {
-      const na = fc(a);
-      const nb = fc(b);
-      if (na !== nb) return auditStatusSort === "asc" ? na - nb : nb - na;
+
+    rows.sort((a, b) => {
+      if (auditDiffSort !== "off") {
+        const da = diffKey(a);
+        const db = diffKey(b);
+        if (da !== db) {
+          return auditDiffSort === "desc" ? db - da : da - db;
+        }
+      }
+      if (auditStatusSort !== "off") {
+        const na = fc(a);
+        const nb = fc(b);
+        if (na !== nb) {
+          return auditStatusSort === "asc" ? na - nb : nb - na;
+        }
+      }
       return (b.createdAt ?? 0) - (a.createdAt ?? 0);
     });
-  }, [dateFilteredAuditRows, auditStatusSort]);
+    return rows;
+  }, [
+    dateFilteredAuditRows,
+    auditStatusSort,
+    auditDiffSort,
+    auditTotalRecalc,
+  ]);
 
   /** Sum of stored `total` (calculator grand total) for the current date filter. */
   const dateFilteredTotalSum = useMemo(
@@ -921,9 +959,49 @@ export default function AdminPage() {
                         </th>
                         <th
                           scope="col"
-                          className="px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                          className="px-2 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider"
                         >
-                          Total
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAuditDiffSort((s) =>
+                                s === "off"
+                                  ? "desc"
+                                  : s === "desc"
+                                    ? "asc"
+                                    : "off"
+                              )
+                            }
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-wider text-slate-600 hover:text-orange-600"
+                            title="Sort: Differs first → match first → default order"
+                            aria-sort={
+                              auditDiffSort === "off"
+                                ? "none"
+                                : auditDiffSort === "asc"
+                                  ? "ascending"
+                                  : "descending"
+                            }
+                          >
+                            Total
+                            {auditDiffSort === "asc" && (
+                              <span className="text-orange-600" aria-hidden>
+                                ▲
+                              </span>
+                            )}
+                            {auditDiffSort === "desc" && (
+                              <span className="text-orange-600" aria-hidden>
+                                ▼
+                              </span>
+                            )}
+                            {auditDiffSort === "off" && (
+                              <span
+                                className="text-slate-300 font-normal"
+                                aria-hidden
+                              >
+                                ↕
+                              </span>
+                            )}
+                          </button>
                         </th>
                         <th
                           scope="col"
@@ -1031,8 +1109,20 @@ export default function AdminPage() {
                           <td className="px-2 py-2.5 font-medium text-slate-800 sm:px-3">
                             {r.mode}
                           </td>
-                          <td className="px-2 py-2.5 font-bold tabular-nums text-slate-900 sm:px-3">
-                            ₹{r.total}
+                          <td className="px-2 py-2.5 sm:px-3">
+                            <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                              <span className="font-bold tabular-nums text-slate-900">
+                                ₹{r.total}
+                              </span>
+                              {auditTotalRecalc.get(r.id)?.differs ? (
+                                <span
+                                  className="text-[10px] font-semibold text-orange-600"
+                                  title={`Current parser: ₹${auditTotalRecalc.get(r.id)?.parsedTotal ?? "—"}`}
+                                >
+                                  Differs
+                                </span>
+                              ) : null}
+                            </div>
                           </td>
                           <td className="px-2 py-2.5 sm:px-3">
                             {(() => {
@@ -1364,8 +1454,8 @@ export default function AdminPage() {
                   </span>{" "}
                   ₹{previewResult.total}
                   {previewResult.total !== previewAudit.total && (
-                    <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
-                      differs
+                    <span className="ml-1.5 text-[10px] font-bold text-orange-600">
+                      Differs
                     </span>
                   )}
                 </p>
@@ -1506,8 +1596,10 @@ export default function AdminPage() {
                   All audit inputs
                 </h3>
                 <p className="mt-0.5 text-[12px] text-slate-500">
-                  {displayAuditRows.length} pastes, blank line between
-                  (table order{auditStatusSort !== "off" ? ", status sort" : ""}
+                  {displayAuditRows.length} pastes, blank line between (table
+                  order
+                  {auditDiffSort !== "off" ? ", Differs sort" : ""}
+                  {auditStatusSort !== "off" ? ", status sort" : ""}
                   ).
                 </p>
               </div>
