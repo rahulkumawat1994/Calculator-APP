@@ -179,9 +179,9 @@ function stripTrailingSeparatorRateTail(line: string): string {
   return line.replace(/\s*(?:x|=+|\*)\s*\d+\s*[a-zA-Z]*$/i, "").trim();
 }
 
-/** Next row looks like `56.18…94` (dot-separated pairs), not `10 20` style. */
+/** Next row looks like `56.18…94` or `87...94..01` (dot-separated pairs, single or multi-dot), not `10 20` style. */
 function looksLikeDotSeparatedPairContinuation(s: string): boolean {
-  return /\d{2}\.\d{2}/.test(s);
+  return /\d{2}\.+\d{2}/.test(s);
 }
 
 function mergePendingBodyWithInheritedRate(pending: string, continuationBody: string, rate: number): string {
@@ -201,7 +201,7 @@ function stripLooseSlotMarketPrefixForNumberLine(line: string): string {
   const t = line.replace(/^\uFEFF/, "").trim();
   if (!t) return line;
   const m = t.match(
-    /^(?:FB|FD|GL|DB|SG|DS|GB|Gali)\b\.?\s*/i,
+    /^(?:FB|FD|GL|DB|SG|DS|GB|Gali|HRF|Harf)\b\.?\s*/i,
   );
   if (!m) return line;
   const rest = t.slice(m[0].length);
@@ -237,7 +237,14 @@ export function calculateTotal(text: string): CalculationResult {
 
   const mergedLines: string[] = [];
   let pending = '';
+  /** Each pure-number line as it was pushed into pending (untrimmed of accumulator joins). */
+  let pendingLines: string[] = [];
   let lastInheritedRate: number | null = null;
+
+  const resetPending = () => {
+    pending = "";
+    pendingLines = [];
+  };
 
   const pushMerged = (s: string) => {
     const t = s.trim();
@@ -247,8 +254,35 @@ export function calculateTotal(text: string): CalculationResult {
     if (r != null) lastInheritedRate = r;
   };
 
+  /**
+   * Two consecutive pure-number rows with no rate context: line 1 is values, line 2 is rates,
+   * paired positionally (`54..14..08` + `10..20..15` → `54x10`, `14x20`, `08x15`).
+   * Only fires when no explicit rate has been seen yet in the message (else inherit-rate path applies).
+   * Both lines must have ≥2 two-digit value tokens and an equal count of 1-4 digit positive rate tokens.
+   */
+  const tryFlushAsValueRatePairs = (): boolean => {
+    if (pendingLines.length !== 2) return false;
+    if (lastInheritedRate != null) return false;
+    const l1 = pendingLines[0]!;
+    const l2 = pendingLines[1]!;
+    const isPureLine = (s: string) => /^[\d\s\-_.,:|\/\\]+$/.test(s) && /\d/.test(s);
+    if (!isPureLine(l1) || !isPureLine(l2)) return false;
+    const valTokens = l1.match(/\d+/g) ?? [];
+    const rateTokens = l2.match(/\d+/g) ?? [];
+    if (valTokens.length < 2) return false;
+    if (rateTokens.length !== valTokens.length) return false;
+    if (!valTokens.every((t) => t.length === 2)) return false;
+    if (!rateTokens.every((t) => t.length >= 1 && t.length <= 4 && parseInt(t, 10) > 0)) return false;
+    for (let i = 0; i < valTokens.length; i++) {
+      pushMerged(`${valTokens[i]}x${rateTokens[i]}`);
+    }
+    resetPending();
+    return true;
+  };
+
   const flushPending = () => {
     if (!pending) return;
+    if (tryFlushAsValueRatePairs()) return;
     let toPush = pending;
     const isPurePending = /^[\d\s\-_.,:|\/\\]+$/.test(pending) && /\d/.test(pending);
     if (isPurePending && lastInheritedRate != null) {
@@ -259,7 +293,7 @@ export function calculateTotal(text: string): CalculationResult {
     if (!(isSeparatorOnlyLine(toPush) || (/^[\d\s\-_.,:|\/\\]*$/.test(toPush) && !/\d/.test(toPush)))) {
       pushMerged(toPush);
     }
-    pending = "";
+    resetPending();
   };
 
   for (const line of withCommaXMerge) {
@@ -271,21 +305,24 @@ export function calculateTotal(text: string): CalculationResult {
 
     // `B.1111x9999x50` must never absorb `pending` — glue would break the first `x`.
     const isSelfContainedMultiX = Boolean(parseMultiXChainStructure(line));
+    // Harf lines are always self-contained — never merge pending numbers into them.
+    const isHarfLine = /\b(?:haruf|harf|hrf)\b/i.test(line);
 
     if (!hasExplicitRate && !hasCommaRate) {
       const isPureNumbers = /^[\d\s\-_.,:|\/\\]+$/.test(line) && /\d/.test(line);
-      if (hasKnownFlag) {
+      if (hasKnownFlag || isHarfLine) {
         flushPending();
         pushMerged(line);
       } else if (isPureNumbers) {
         pending = pending ? `${pending} ${line}` : line;
+        pendingLines.push(line);
       } else {
         flushPending();
         pushMerged(line);
       }
     } else {
       if (pending) {
-        if (isSelfContainedMultiX) {
+        if (isSelfContainedMultiX || isHarfLine) {
           flushPending();
           pushMerged(line);
         } else if (!/\d/.test(pending)) {
@@ -306,7 +343,7 @@ export function calculateTotal(text: string): CalculationResult {
             looksLikeDotSeparatedPairContinuation(body)
           ) {
             pushMerged(mergePendingBodyWithInheritedRate(p, body, rateForDotMerge));
-            pending = "";
+            resetPending();
           } else {
             flushPending();
             pushMerged(line);
@@ -315,7 +352,7 @@ export function calculateTotal(text: string): CalculationResult {
           const endsWithPartialPair = /(?<!\d)\d$/.test(pending);
           const sep = endsWithPartialPair ? "" : " ";
           pushMerged(pending + sep + line);
-          pending = "";
+          resetPending();
         }
       } else {
         pushMerged(line);
@@ -340,6 +377,269 @@ export function calculateTotal(text: string): CalculationResult {
     results,
     total: results.reduce((s, r) => s + r.lineTotal, 0),
     ...(failedLines.length > 0 ? { failedLines } : {}),
+  };
+}
+
+// ─── Source-tracked variant ────────────────────────────────────────────────────
+
+/**
+ * Identical pipeline to {@link calculateTotal} but tracks which original
+ * (pre-normalisation) raw input lines produced each parsed segment.
+ *
+ * `segmentSourceIndices[i]` contains the indices into `rawLines` that were
+ * merged to produce `results[i]`.  Combined with the returned `rawLines`
+ * array and a forward-scan against the original input text, the admin panel
+ * can highlight the exact (positionally-correct) source line even when the
+ * same content appears multiple times in the input.
+ */
+export interface CalculationResultWithSources {
+  result: CalculationResult;
+  /** Parallel to `result.results`: indices into `rawLines` that produced each segment. */
+  segmentSourceIndices: number[][];
+  /** The rawLines array (trimmed, non-empty lines after preprocessText). */
+  rawLines: string[];
+}
+
+/** A logical line paired with the rawLine indices it came from. */
+type TL = { line: string; src: number[] };
+
+function _mergeCommaOnlyRateContinuationTL(pairs: TL[]): TL[] {
+  const out: TL[] = [];
+  for (const pair of pairs) {
+    const rateOnly = /^\s*,+\s*(\d{1,5})\s*$/.exec(pair.line);
+    if (rateOnly && out.length) {
+      const rate = rateOnly[1]!;
+      const prev = out[out.length - 1]!;
+      const core = prev.line.replace(/[.,\s]+$/g, "").replace(/^[\s,]+/, "");
+      const twoDigitFieldCount = core
+        .split(/,+/)
+        .map((s) => s.replace(/[^\d]/g, ""))
+        .filter((s) => s.length === 2).length;
+      if (/,/.test(prev.line) && twoDigitFieldCount >= 3) {
+        out[out.length - 1] = { line: `${core},${rate}`, src: [...prev.src, ...pair.src] };
+        continue;
+      }
+    }
+    out.push(pair);
+  }
+  return out;
+}
+
+function _mergeTrailingCommaListWithXOnLaterLineTL(pairs: TL[]): TL[] {
+  const hasExplicit = (s: string) =>
+    /\(\d+\)/.test(s) || X_RATE_RE.test(s) || /=+\s*\d+/.test(s) || /\*\s*\d+/.test(s);
+  const glue = (acc: TL, frag: TL): TL => {
+    const f = frag.line.replace(/^\s+/, "");
+    return {
+      line: /,[\s]*$/.test(acc.line) ? acc.line + f : `${acc.line},${f}`,
+      src: [...acc.src, ...frag.src],
+    };
+  };
+  const out: TL[] = [];
+  let i = 0;
+  while (i < pairs.length) {
+    const start = pairs[i]!;
+    const startLine = start.line.trim();
+    const nextLine = i + 1 < pairs.length ? pairs[i + 1]!.line.trim() : "";
+    const trailingCommaStart =
+      /,/.test(startLine) && !hasExplicit(startLine) && /,\s*$/.test(startLine);
+    const noTrailingCommaButContinues =
+      /,/.test(startLine) &&
+      !hasExplicit(startLine) &&
+      !/,\s*$/.test(startLine) &&
+      nextLine.length > 0 &&
+      i + 1 < pairs.length &&
+      hasExplicit(pairs[i + 1]!.line) &&
+      /,/.test(pairs[i + 1]!.line) &&
+      /^\d/.test(nextLine);
+    if (!trailingCommaStart && !noTrailingCommaButContinues) {
+      out.push(pairs[i]!);
+      i += 1;
+      continue;
+    }
+    let acc: TL = { line: start.line.replace(/\s+$/g, ""), src: [...start.src] };
+    let j = i + 1;
+    let merged = false;
+    while (j < pairs.length) {
+      const n = pairs[j]!;
+      if (hasExplicit(n.line) && /,/.test(n.line)) {
+        acc = glue(acc, n);
+        out.push(acc);
+        i = j + 1;
+        merged = true;
+        break;
+      }
+      if (hasExplicit(n.line) && !/,/.test(n.line)) break;
+      if (/,/.test(n.line) && !hasExplicit(n.line)) { acc = glue(acc, n); j += 1; continue; }
+      break;
+    }
+    if (merged) continue;
+    out.push(pairs[i]!);
+    i += 1;
+  }
+  return out;
+}
+
+export function calculateTotalWithSources(text: string): CalculationResultWithSources {
+  const cleaned = preprocessText(text);
+  const rawLines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
+
+  // Phase 1 — normalise each raw line, track its index in rawLines
+  const logicalPairs: TL[] = [];
+  for (let ri = 0; ri < rawLines.length; ri++) {
+    const rawLine = rawLines[ri]!;
+    const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
+    const labelStripped = stripLeadingGameLabels(afterLoose);
+    const line = normalizeTrailingDashRate(
+      normalizeIntoRateMarker(normalizeTypoTolerantInput(labelStripped)),
+    );
+    if (isSeparatorOnlyLine(line)) continue;
+    for (const s of splitTrailingNumberRunAfterLastRate(line)) {
+      logicalPairs.push({ line: s, src: [ri] });
+    }
+  }
+
+  // Phase 2 — same two merge passes, now with source tracking
+  const withCommaCont = _mergeCommaOnlyRateContinuationTL(logicalPairs);
+  const withCommaXMerge = _mergeTrailingCommaListWithXOnLaterLineTL(withCommaCont);
+
+  // Phase 3 — pending / merge loop (mirror of calculateTotal)
+  const mergedPairs: TL[] = [];
+  let pendingTL: TL | null = null;
+  let pendingLineStrs: string[] = [];
+  let lastInheritedRateTL: number | null = null;
+
+  const pushMergedTL = (tp: TL) => {
+    const t = tp.line.trim();
+    if (!t) return;
+    mergedPairs.push({ line: t, src: tp.src });
+    const r = lastExplicitRateInLine(t);
+    if (r != null) lastInheritedRateTL = r;
+  };
+  const resetPendingTL = () => { pendingTL = null; pendingLineStrs = []; };
+
+  const tryFlushAsValueRatePairsTL = (): boolean => {
+    if (pendingLineStrs.length !== 2 || lastInheritedRateTL != null || !pendingTL) return false;
+    const l1 = pendingLineStrs[0]!;
+    const l2 = pendingLineStrs[1]!;
+    const isPure = (s: string) => /^[\d\s\-_.,:|\/\\]+$/.test(s) && /\d/.test(s);
+    if (!isPure(l1) || !isPure(l2)) return false;
+    const valToks = l1.match(/\d+/g) ?? [];
+    const rateToks = l2.match(/\d+/g) ?? [];
+    if (valToks.length < 2 || rateToks.length !== valToks.length) return false;
+    if (!valToks.every((t) => t.length === 2)) return false;
+    if (!rateToks.every((t) => t.length >= 1 && t.length <= 4 && parseInt(t, 10) > 0)) return false;
+    for (let i = 0; i < valToks.length; i++) {
+      pushMergedTL({ line: `${valToks[i]}x${rateToks[i]}`, src: [...pendingTL.src] });
+    }
+    resetPendingTL();
+    return true;
+  };
+
+  const flushPendingTL = () => {
+    if (!pendingTL) return;
+    if (tryFlushAsValueRatePairsTL()) return;
+    let toPush = pendingTL.line;
+    const isPurePending = /^[\d\s\-_.,:|\/\\]+$/.test(pendingTL.line) && /\d/.test(pendingTL.line);
+    if (isPurePending && lastInheritedRateTL != null) {
+      const endsWithPartialPair = /(?<!\d)\d$/.test(pendingTL.line);
+      const sep = endsWithPartialPair ? "" : " ";
+      toPush = `${pendingTL.line}${sep}x${lastInheritedRateTL}`;
+    }
+    if (!(isSeparatorOnlyLine(toPush) || (/^[\d\s\-_.,:|\/\\]*$/.test(toPush) && !/\d/.test(toPush)))) {
+      pushMergedTL({ line: toPush, src: pendingTL.src });
+    }
+    resetPendingTL();
+  };
+
+  for (const tp of withCommaXMerge) {
+    const { line } = tp;
+    const hasExplicitRate =
+      /\(\d+\)/.test(line) || X_RATE_RE.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
+    const hasCommaRate = /,/.test(line);
+    const hasKnownFlag =
+      /\b(?:wp|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(line) || /पलट/.test(line);
+    const isSelfContainedMultiX = Boolean(parseMultiXChainStructure(line));
+    const isHarfLine = /\b(?:haruf|harf|hrf)\b/i.test(line);
+
+    if (!hasExplicitRate && !hasCommaRate) {
+      const isPureNumbers = /^[\d\s\-_.,:|\/\\]+$/.test(line) && /\d/.test(line);
+      if (hasKnownFlag || isHarfLine) {
+        flushPendingTL();
+        pushMergedTL(tp);
+      } else if (isPureNumbers) {
+        if (pendingTL) {
+          pendingTL = { line: `${pendingTL.line} ${line}`, src: [...pendingTL.src, ...tp.src] };
+        } else {
+          pendingTL = { ...tp };
+        }
+        pendingLineStrs.push(line);
+      } else {
+        flushPendingTL();
+        pushMergedTL(tp);
+      }
+    } else {
+      if (pendingTL) {
+        if (isSelfContainedMultiX || isHarfLine) {
+          flushPendingTL();
+          pushMergedTL(tp);
+        } else if (!/\d/.test(pendingTL.line)) {
+          flushPendingTL();
+          pushMergedTL(tp);
+        } else if (isSelfContainedDigitRowWithRate(line, pendingTL.line)) {
+          const p = pendingTL.line.trim();
+          const pureP = /^[\d\s\-_.,:|\/\\]+$/.test(p) && /\d/.test(p);
+          const endsWithDot = /\.\s*$/.test(p);
+          const body = stripTrailingSeparatorRateTail(line);
+          const rateForDotMerge = lastInheritedRateTL ?? lastExplicitRateInLine(line);
+          if (pureP && endsWithDot && rateForDotMerge != null && looksLikeDotSeparatedPairContinuation(body)) {
+            pushMergedTL({
+              line: mergePendingBodyWithInheritedRate(p, body, rateForDotMerge),
+              src: [...pendingTL.src, ...tp.src],
+            });
+            resetPendingTL();
+          } else {
+            flushPendingTL();
+            pushMergedTL(tp);
+          }
+        } else {
+          const endsWithPartialPair = /(?<!\d)\d$/.test(pendingTL.line);
+          const sep = endsWithPartialPair ? "" : " ";
+          pushMergedTL({ line: pendingTL.line + sep + line, src: [...pendingTL.src, ...tp.src] });
+          resetPendingTL();
+        }
+      } else {
+        pushMergedTL(tp);
+      }
+    }
+  }
+  flushPendingTL();
+
+  // Phase 4 — run processLine and attach rawLine indices to each produced segment
+  const results: Segment[] = [];
+  const segmentSourceIndices: number[][] = [];
+  const failedLines: string[] = [];
+
+  for (const mp of mergedPairs) {
+    const segs = processLine(mp.line);
+    if (segs.length > 0) {
+      for (const seg of segs) {
+        results.push(seg);
+        segmentSourceIndices.push(mp.src);
+      }
+    } else if (mp.line.trim()) {
+      failedLines.push(mp.line.trim());
+    }
+  }
+
+  return {
+    result: {
+      results,
+      total: results.reduce((s, r) => s + r.lineTotal, 0),
+      ...(failedLines.length > 0 ? { failedLines } : {}),
+    },
+    segmentSourceIndices,
+    rawLines,
   };
 }
 

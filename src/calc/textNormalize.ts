@@ -41,6 +41,10 @@ export function normalizeTypoTolerantInput(s: string): string {
   //   222bbb=50  /  999abx10
   // Insert a separator so rate parsing still recognizes =/x/* markers.
   t = t.replace(/(?<=\d)\s*([ab]+)\s*(?=(?:x|=+|\*)\s*\d)/gi, " $1 ");
+  // "AB/15" or "ab/ 15" — slash between betting flag and rate (e.g. "HRF 9999 ab/ 15") → remove slash
+  t = t.replace(/\b(AB|A|B)\s*\/\s*(\d)/gi, '$1 $2');
+  // "harufx20" / "harfx20" / "hrfx20" — x rate glued to the keyword → insert space so SEP_RATE_RE can see it
+  t = t.replace(/\b(haruf|harf|hrf)(x)(\d)/gi, '$1 x$3');
   // Middle dot · between digits
   t = t.replace(/(?<=\d)\s*\u00B7\s*(?=\d)/g, " ");
   // Collapse runs of spaces
@@ -95,12 +99,15 @@ function looksLikeIntoTypo(letters: string): boolean {
  */
 export function normalizeIntoRateMarker(s: string): string {
   let out = s
-    .replace(/\s*ij\s*to(?=\s*\d)/gi, "x")
-    .replace(/\s*in\s*t[ou](?=\s*\d)/gi, "x");
+    .replace(/\s*ij\s*to(?=\s*\d)/gi, " x")
+    .replace(/\s*in\s*t[ou](?=\s*\d)/gi, " x");
   // After a digit: [letters typo "into"] [rate] at end of string → xrate
   out = out.replace(
     /(?<=\d)([a-zA-Z]{2,})\s*(\d{1,5})\s*$/gi,
     (full, letters: string, rate: string) => (looksLikeIntoTypo(letters) ? `x${rate}` : full),
   );
+  // Standalone "10.intu" / "10 into" lines where the rate number PRECEDES "into" (no rate after).
+  // Converts the whole line to a rate-only token so pending pairs can inherit it.
+  out = out.replace(/^(\d{1,5})\.?\s*(?:in\s*t[ou])\s*$/i, "x$1");
   return out;
 }

@@ -426,5 +426,43 @@ export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segm
       }
     }
   }
+  if (results.length) return results;
+
+  // ── Harf / haruf single-digit bet ────────────────────────────────────────────
+  // "9 harufx20", "9 harf x20", "9 hrf into 20"
+  // The keyword implies AB (both sides) unless an explicit A or B suffix overrides.
+  {
+    const harfRE = /\b(?:haruf|harf|hrf)\b/i;
+    if (harfRE.test(trimmed)) {
+      // Remove keyword; if "x" was glued directly to the keyword ("harufx20") a space
+      // appears — SEP_RATE_RE will still find it since the preceding char is now a space.
+      const noHarf = trimmed.replace(/\b(?:haruf|harf|hrf)\b\s*/gi, ' ').replace(/ +/g, ' ').trim();
+      const cleaned = normalizeTrailingDashRate(normalizeIntoRateMarker(noHarf));
+      const sepM = [...cleaned.matchAll(SEP_RATE_RE)];
+      if (sepM.length > 0) {
+        const last = sepM[sepM.length - 1]!;
+        const rate = parseInt(last[1], 10);
+        if (rate > 0) {
+          const suffix = last[2] ?? '';
+          const beforeRate = cleaned.slice(0, last.index).trim();
+          // Single isolated digit — the "harf" number (0–9).
+          const digitM = beforeRate.match(/(?<!\d)(\d)(?!\d)/);
+          if (digitM) {
+            const lane = parseLaneFromFlagText(suffix) ?? 'AB';
+            const count = lane === 'AB' ? 2 : 1;
+            results.push({
+              line: digitM[1]!,
+              rate,
+              isWP: false,
+              isDouble: lane === 'AB',
+              lane,
+              count,
+              lineTotal: count * rate,
+            });
+          }
+        }
+      }
+    }
+  }
   return results;
 }

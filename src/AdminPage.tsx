@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import {
   CALCULATE_ALL_SKIP_AUDIT_KEY,
@@ -32,6 +32,8 @@ import {
   unregisterReportPush,
 } from "@/services/reportPush";
 import type { CalculationResult } from "@/types";
+import { parseWhatsAppMessages } from "@/calc/whatsapp";
+import { calculateTotalWithSources } from "@/calc/pasteAndTotal";
 import {
   REPORT_PUSH_CHANGED_EVENT,
   REPORT_PUSH_ENABLED_KEY,
@@ -140,6 +142,18 @@ export default function AdminPage() {
   const [previewResult, setPreviewResult] = useState<CalculationResult | null>(
     null
   );
+  /** For each segment in previewResult, the raw input lines (pre-normalisation) that produced it. */
+  const [segmentSourceIndices, setSegmentSourceIndices] = useState<number[][] | null>(null);
+  /** The rawLines array that corresponds to segmentSourceIndices (flat, WA-offset-adjusted). */
+  const [previewRawLines, setPreviewRawLines] = useState<string[] | null>(null);
+  /** Which segment indices are currently highlighted (single or multi-select). */
+  const [activeSegIdxs, setActiveSegIdxs] = useState<Set<number>>(new Set());
+  /** When true, clicking multiple cards accumulates highlights instead of replacing. */
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  /** Ref to the original-input <pre> so we can scroll to the highlighted line. */
+  const inputPreRef = useRef<HTMLPreElement>(null);
+  /** The segment index most recently clicked — determines scroll target. */
+  const lastClickedSegIdxRef = useRef<number | null>(null);
   const [allAuditInputsOpen, setAllAuditInputsOpen] = useState(false);
   const [reportPushOn, setReportPushOn] = useState(() => {
     try {
@@ -201,7 +215,12 @@ export default function AdminPage() {
     const m = new Map<string, { parsedTotal: number; differs: boolean }>();
     for (const r of auditRows) {
       const saved = Number.isFinite(r.total) ? r.total : NaN;
-      const parsed = calculateTotal(r.input ?? "").total;
+      // WhatsApp inputs must be parsed per-message (same as the calculator does) so that
+      // lastInheritedRate never leaks across message boundaries — otherwise the totals diverge.
+      const waMessages = parseWhatsAppMessages(r.input ?? "");
+      const parsed = waMessages
+        ? waMessages.reduce((s, msg) => s + msg.result.total, 0)
+        : calculateTotal(r.input ?? "").total;
       m.set(r.id, {
         parsedTotal: parsed,
         differs: !Number.isFinite(saved) || saved !== parsed,
@@ -366,6 +385,33 @@ export default function AdminPage() {
     setConfirmBulkAuditIds(null);
     setConfirmBulkReportIds(null);
   }, [activeTab]);
+
+  // Auto-scroll the original-input panel to the clicked segment's source line.
+  useEffect(() => {
+    const segIdx = lastClickedSegIdxRef.current;
+    if (
+      activeSegIdxs.size === 0 ||
+      segIdx === null ||
+      !activeSegIdxs.has(segIdx) ||
+      !inputPreRef.current ||
+      !segmentSourceIndices ||
+      !previewRawLines
+    ) return;
+
+    const container = inputPreRef.current;
+    const srcIdxs = segmentSourceIndices[segIdx];
+    if (!srcIdxs || srcIdxs.length === 0) return;
+
+    // Find the first input line index that belongs to this segment
+    const firstRawIdx = srcIdxs.slice().sort((a, b) => a - b)[0]!;
+    const hlSpan = container.querySelector<HTMLElement>(`[data-hl-line="${firstRawIdx}"]`);
+    if (!hlSpan) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const hlRect = hlSpan.getBoundingClientRect();
+    container.scrollTop += hlRect.top - containerRect.top - 24;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSegIdxs]);
 
   useEffect(() => {
     const sync = () => {
@@ -707,17 +753,59 @@ export default function AdminPage() {
   };
 
   const openAuditPreview = (row: CalculationAuditLog) => {
+    setActiveSegIdxs(new Set());
+    setMultiSelectMode(false);
     setPreviewAudit(row);
-    setPreviewResult(calculateTotal(row.input));
+    const waMessages = parseWhatsAppMessages(row.input ?? "");
+    if (waMessages) {
+      const allResults = waMessages.flatMap((m) => m.result.results);
+      const allFailed = waMessages.flatMap((m) => m.result.failedLines ?? []);
+      setPreviewResult({
+        results: allResults,
+        total: waMessages.reduce((s, m) => s + m.result.total, 0),
+        ...(allFailed.length > 0 ? { failedLines: allFailed } : {}),
+      });
+      // Source tracking: per-message calculateTotalWithSources, then flatten with cumulative offsets
+      const allRawLines: string[] = [];
+      const allSourceIndices: number[][] = [];
+      for (const m of waMessages) {
+        const { segmentSourceIndices: msgIdxs, rawLines: msgRaw } = calculateTotalWithSources(m.text);
+        const offset = allRawLines.length;
+        allRawLines.push(...msgRaw);
+        for (const idxs of msgIdxs) allSourceIndices.push(idxs.map((i) => i + offset));
+      }
+      setPreviewRawLines(allRawLines);
+      setSegmentSourceIndices(allSourceIndices);
+    } else {
+      const { result, segmentSourceIndices: srcIdxs, rawLines } = calculateTotalWithSources(
+        row.input ?? "",
+      );
+      setPreviewResult(result);
+      setPreviewRawLines(rawLines);
+      setSegmentSourceIndices(srcIdxs);
+    }
   };
 
   const closeAuditPreview = () => {
     setPreviewAudit(null);
     setPreviewResult(null);
+    setSegmentSourceIndices(null);
+    setPreviewRawLines(null);
+    setActiveSegIdxs(new Set());
+    setMultiSelectMode(false);
   };
 
   const applyParsedToAuditRow = async (row: CalculationAuditLog) => {
-    const parsed = calculateTotal(row.input ?? "");
+    const waMessages = parseWhatsAppMessages(row.input ?? "");
+    const parsed: CalculationResult = waMessages
+      ? {
+          results: waMessages.flatMap((m) => m.result.results),
+          total: waMessages.reduce((s, m) => s + m.result.total, 0),
+          ...(waMessages.flatMap((m) => m.result.failedLines ?? []).length > 0
+            ? { failedLines: waMessages.flatMap((m) => m.result.failedLines ?? []) }
+            : {}),
+        }
+      : calculateTotal(row.input ?? "");
     const fields = auditSavedFieldsFromParsed(parsed);
     setBusyAuditId(row.id);
     try {
@@ -1679,6 +1767,11 @@ export default function AdminPage() {
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <p className="text-[12px] font-semibold text-gray-600">
                       Original input
+                      {activeSegIdxs.size > 0 && (
+                        <span className="ml-2 text-[11px] font-normal text-gray-400">
+                          — {activeSegIdxs.size === 1 ? "matching lines highlighted" : `${activeSegIdxs.size} segments highlighted`}
+                        </span>
+                      )}
                     </p>
                     <button
                       type="button"
@@ -1690,15 +1783,101 @@ export default function AdminPage() {
                       Copy input
                     </button>
                   </div>
-                  <pre className="max-h-[52vh] overflow-y-auto overscroll-contain rounded-[10px] border border-[#e4edf8] bg-white p-3 font-mono text-[11px] whitespace-pre-wrap wrap-break-word">
-                    {previewAudit.input}
+                  <pre ref={inputPreRef} className="max-h-[52vh] overflow-y-auto overscroll-contain rounded-[10px] border border-[#e4edf8] bg-white p-3 font-mono text-[11px] whitespace-pre-wrap wrap-break-word">
+                    {(() => {
+                      const PALETTE_HL = [
+                        "#dbeafe","#d1fae5","#fef3c7","#ede9fe",
+                        "#ffe4e6","#cffafe","#ffedd5","#fce7f3",
+                      ];
+                      const input = previewAudit.input ?? "";
+                      const inputLines = input.split("\n");
+                      if (activeSegIdxs.size === 0 || !segmentSourceIndices || !previewRawLines) {
+                        return input;
+                      }
+                      // Forward-scan: map each rawLine index → the input line it came from.
+                      // Scanning in order ensures duplicate rawLine content maps to the
+                      // correct positional occurrence, not always the first.
+                      const rawLineToInputIdx = new Array<number>(previewRawLines.length).fill(-1);
+                      let scanPtr = 0;
+                      for (let ri = 0; ri < previewRawLines.length; ri++) {
+                        const target = previewRawLines[ri]!;
+                        while (scanPtr < inputLines.length) {
+                          const t = inputLines[scanPtr]!.trim();
+                          if (t === target || t.endsWith(target) || t.includes(target)) {
+                            rawLineToInputIdx[ri] = scanPtr;
+                            scanPtr++;
+                            break;
+                          }
+                          scanPtr++;
+                        }
+                      }
+                      // Build inputLine → { hlColor, rawLineIdx } map from all active segments
+                      const lineHighlights = new Map<number, { color: string; ri: number }>();
+                      for (const segIdx of activeSegIdxs) {
+                        const srcIdxs = segmentSourceIndices[segIdx];
+                        if (!srcIdxs) continue;
+                        const hlColor = PALETTE_HL[segIdx % PALETTE_HL.length]!;
+                        for (const ri of srcIdxs) {
+                          const li = rawLineToInputIdx[ri];
+                          if (li !== undefined && li >= 0 && !lineHighlights.has(li)) {
+                            lineHighlights.set(li, { color: hlColor, ri });
+                          }
+                        }
+                      }
+                      return inputLines.map((rawLine, li) => {
+                        const hl = lineHighlights.get(li);
+                        return (
+                          <span
+                            key={li}
+                            className="block"
+                            {...(hl ? { "data-hl-line": String(hl.ri) } : {})}
+                            style={hl ? { backgroundColor: hl.color, borderRadius: "3px" } : undefined}
+                          >
+                            {rawLine}
+                          </span>
+                        );
+                      });
+                    })()}
                   </pre>
                 </div>
 
                 <div className="rounded-[12px] border border-[#e4edf8] bg-[#f8fbff] p-3">
-                  <p className="mb-2 text-[12px] font-semibold text-gray-600">
-                    Line-by-line result
-                  </p>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-[12px] font-semibold text-gray-600">
+                      Line-by-line result
+                    </p>
+                    <div className="flex items-center gap-2">
+                      {/* Single / Multi select toggle */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMultiSelectMode((m) => !m);
+                          if (multiSelectMode) {
+                            // switching back to single: keep at most one selection
+                            const first = activeSegIdxs.values().next().value;
+                            setActiveSegIdxs(first !== undefined ? new Set([first]) : new Set());
+                          }
+                        }}
+                        className={[
+                          "flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-semibold transition",
+                          multiSelectMode
+                            ? "bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300"
+                            : "bg-slate-100 text-slate-500 hover:bg-slate-200",
+                        ].join(" ")}
+                      >
+                        {multiSelectMode ? "Multi-select ON" : "Multi-select"}
+                      </button>
+                      {activeSegIdxs.size > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveSegIdxs(new Set())}
+                          className="text-[11px] text-gray-400 underline hover:text-gray-600"
+                        >
+                          Clear{activeSegIdxs.size > 1 ? ` (${activeSegIdxs.size})` : ""}
+                        </button>
+                      )}
+                    </div>
+                  </div>
                   <div className="max-h-[52vh] space-y-3 overflow-y-auto overscroll-contain pr-1">
                     {previewResult.results.length === 0 ? (
                       <div className="rounded-[10px] border border-[#e4edf8] bg-white p-3 text-[12px] text-gray-500">
@@ -1706,46 +1885,99 @@ export default function AdminPage() {
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        {previewResult.results.map((seg, idx) => (
-                          <div
-                            key={`${idx}-${seg.line}-${seg.rate}`}
-                            className="rounded-[10px] border border-[#e4edf8] bg-white p-3"
-                          >
-                            <div className="mb-1 flex items-center gap-2 text-[12px] font-bold text-[#1d6fb8]">
-                              <span>#{idx + 1}</span>
-                              {seg.isWP && (
-                                <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] text-blue-700">
-                                  WP
-                                </span>
-                              )}
-                              {seg.lane === "A" && (
-                                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-800">
-                                  A
-                                </span>
-                              )}
-                              {seg.lane === "B" && (
-                                <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] text-violet-800">
-                                  B
-                                </span>
-                              )}
-                              {(seg.lane === "AB" ||
-                                (!seg.lane && seg.isDouble)) && (
-                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700">
-                                  AB
-                                </span>
-                              )}
-                            </div>
-                            <p className="font-mono text-[12px] text-[#222] whitespace-pre-wrap wrap-break-word">
-                              {seg.line}
-                            </p>
-                            <p className="mt-1 text-[12px] text-gray-600">
-                              {seg.count} × {seg.rate} ={" "}
-                              <span className="font-extrabold text-[#1d6fb8]">
-                                {seg.lineTotal}
-                              </span>
-                            </p>
-                          </div>
-                        ))}
+                        {(() => {
+                          const PALETTE_BORDER = [
+                            "border-l-blue-400","border-l-emerald-400","border-l-amber-400","border-l-violet-400",
+                            "border-l-rose-400","border-l-cyan-400","border-l-orange-400","border-l-pink-400",
+                          ];
+                          const PALETTE_ACTIVE_BG = [
+                            "bg-blue-50","bg-emerald-50","bg-amber-50","bg-violet-50",
+                            "bg-rose-50","bg-cyan-50","bg-orange-50","bg-pink-50",
+                          ];
+                          const PALETTE_DOT = [
+                            "bg-blue-400","bg-emerald-400","bg-amber-400","bg-violet-400",
+                            "bg-rose-400","bg-cyan-400","bg-orange-400","bg-pink-400",
+                          ];
+                          return previewResult.results.map((seg, idx) => {
+                            const isActive = activeSegIdxs.has(idx);
+                            const colorBorder = PALETTE_BORDER[idx % 8]!;
+                            const colorActiveBg = PALETTE_ACTIVE_BG[idx % 8]!;
+                            const colorDot = PALETTE_DOT[idx % 8]!;
+                            return (
+                              <button
+                                key={`${idx}-${seg.line}-${seg.rate}`}
+                                type="button"
+                                onClick={() => {
+                                  lastClickedSegIdxRef.current = idx;
+                                  setActiveSegIdxs((prev) => {
+                                    const next = new Set(prev);
+                                    if (multiSelectMode) {
+                                      // toggle in set
+                                      if (next.has(idx)) next.delete(idx);
+                                      else next.add(idx);
+                                    } else {
+                                      // single select: replace
+                                      if (next.has(idx) && next.size === 1) next.clear();
+                                      else { next.clear(); next.add(idx); }
+                                    }
+                                    return next;
+                                  });
+                                }}
+                                className={[
+                                  "w-full rounded-[10px] border-l-4 p-3 text-left transition",
+                                  colorBorder,
+                                  isActive
+                                    ? `${colorActiveBg} shadow-sm ring-1 ring-inset ring-slate-200`
+                                    : "border border-[#e4edf8] border-l-4 bg-white hover:bg-slate-50",
+                                ].join(" ")}
+                              >
+                                <div className="mb-1 flex items-center gap-2 text-[12px] font-bold text-[#1d6fb8]">
+                                  <span
+                                    className={`inline-block h-2 w-2 shrink-0 rounded-full ${colorDot}`}
+                                  />
+                                  <span>#{idx + 1}</span>
+                                  {seg.isWP && (
+                                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] text-blue-700">
+                                      WP
+                                    </span>
+                                  )}
+                                  {seg.lane === "A" && (
+                                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-800">
+                                      A
+                                    </span>
+                                  )}
+                                  {seg.lane === "B" && (
+                                    <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] text-violet-800">
+                                      B
+                                    </span>
+                                  )}
+                                  {(seg.lane === "AB" ||
+                                    (!seg.lane && seg.isDouble)) && (
+                                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700">
+                                      AB
+                                    </span>
+                                  )}
+                                  <span className="ml-auto text-[10px] font-normal text-gray-400">
+                                    {isActive
+                                      ? "click to deselect"
+                                      : multiSelectMode
+                                        ? "click to add"
+                                        : "click to highlight"}
+                                  </span>
+                                </div>
+                                <p className="font-mono text-[12px] text-[#222] whitespace-pre-wrap wrap-break-word">
+                                  {seg.line}
+                                </p>
+                                <p className="mt-1 text-[12px] text-gray-600">
+                                  {seg.count} × {seg.rate} ={" "}
+                                  <span className="font-extrabold text-[#1d6fb8]">
+                                    {seg.lineTotal}
+                                  </span>
+                                </p>
+                              </button>
+                            );
+                          });
+                        })()}
                       </div>
                     )}
 

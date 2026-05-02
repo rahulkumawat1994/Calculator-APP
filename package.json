@@ -2,6 +2,7 @@
   "name": "number-calculator",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "fcm:sw": "node scripts/write-fcm-sw.mjs",
     "predev": "npm run fcm:sw",
