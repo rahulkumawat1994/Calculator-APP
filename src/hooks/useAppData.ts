@@ -11,6 +11,7 @@ import {
   loadSessionsByDate, loadSessionsByMonth, loadSessionDatesForMonth,
   savePaymentDoc, deletePaymentDoc, deletePaymentsByContactDate,
   loadPaymentsByDate, loadPaymentsByMonth,
+  saveGameResult, loadGameResultsByDate,
   migrateOldFirestoreData,
   logCalculationAudit,
   syncPaymentSlotNamesToMatchSlots,
@@ -141,6 +142,7 @@ export function useAppData() {
     loadSessionsByDate, loadSessionsByMonth, loadSessionDatesForMonth,
     savePaymentDoc,    deletePaymentDoc, deletePaymentsByContactDate,
     loadPaymentsByDate, loadPaymentsByMonth,
+    saveGameResult, loadGameResultsByDate,
     logCalculationAudit,
   };
 }

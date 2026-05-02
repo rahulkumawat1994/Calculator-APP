@@ -10,15 +10,13 @@ import {
   TabSuspenseFallback,
 } from "./ui";
 
-const History = lazy(() => import("./History"));
 const GamesView = lazy(() => import("./GamesView"));
 const SlotsSettings = lazy(() => import("./SlotsSettings"));
 
-type Tab = "calculator" | "history" | "games" | "settings";
+type Tab = "calculator" | "games" | "settings";
 
 const TABS: { id: Tab; icon: string; label: string }[] = [
   { id: "calculator", icon: "🧮", label: "Calculate" },
-  { id: "history", icon: "📅", label: "History" },
   { id: "games", icon: "💰", label: "Payments" },
   { id: "settings", icon: "⚙️", label: "Settings" },
 ];
@@ -43,6 +41,8 @@ export default function App() {
     deletePaymentsByContactDate,
     loadPaymentsByDate,
     loadPaymentsByMonth,
+    saveGameResult,
+    loadGameResultsByDate,
     logCalculationAudit,
   } = useAppData();
 
@@ -89,18 +89,6 @@ export default function App() {
 
         {tab !== "calculator" && (
           <Suspense fallback={<TabSuspenseFallback />}>
-            {tab === "history" && (
-              <History
-                slots={slots}
-                loadSessionsByDate={loadSessionsByDate}
-                loadPaymentsByDate={loadPaymentsByDate}
-                loadSessionDatesForMonth={loadSessionDatesForMonth}
-                saveSessionDoc={saveSessionDoc}
-                deleteSessionDoc={deleteSessionDoc}
-                deletePaymentsByContactDate={deletePaymentsByContactDate}
-              />
-            )}
-
             {tab === "games" && (
               <GamesView
                 slots={slots}
@@ -111,6 +99,11 @@ export default function App() {
                 loadPaymentsByDate={loadPaymentsByDate}
                 loadPaymentsByMonth={loadPaymentsByMonth}
                 savePaymentDoc={savePaymentDoc}
+                loadGameResultsByDate={loadGameResultsByDate}
+                saveGameResult={saveGameResult}
+                saveSessionDoc={saveSessionDoc}
+                deleteSessionDoc={deleteSessionDoc}
+                deletePaymentsByContactDate={deletePaymentsByContactDate}
               />
             )}
 

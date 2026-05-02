@@ -76,3 +76,14 @@ export interface PaymentRecord {
   createdAt: number;
   updatedAt: number;
 }
+
+export interface GameResult {
+  id: string;        // `${slotId}|${date}` (Firestore-safe encoded)
+  slotId: string;
+  slotName: string;
+  date: string;      // "DD/MM/YYYY"
+  dateISO: string;   // "YYYY-MM-DD"
+  winningNumber: string;
+  createdAt: number;
+  updatedAt: number;
+}

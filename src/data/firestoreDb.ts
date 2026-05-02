@@ -36,6 +36,7 @@ import type {
   GameSlot,
   AppSettings,
   PaymentRecord,
+  GameResult,
 } from "../types";
 import { DEFAULT_SETTINGS, toDateISO } from "../lib/calcUtils";
 
@@ -327,6 +328,36 @@ export async function loadPaymentsByMonth(
   } catch (e) {
     toastApiError(e, "Could not load payments for this month.", {
       toastId: "load-month-ledger",
+    });
+    return [];
+  }
+}
+
+// ─── Game results (winning numbers) ──────────────────────────────────────────
+
+export async function saveGameResult(result: GameResult): Promise<void> {
+  const docId = toDocId(result.id);
+  try {
+    const payload = stripUndefinedDeep({ ...result }) as DocumentData;
+    await setDoc(doc(db, "game_results", docId), payload);
+  } catch (e) {
+    console.error("saveGameResult failed:", docId, e);
+    throw e;
+  }
+}
+
+export async function loadGameResultsByDate(
+  date: string
+): Promise<GameResult[]> {
+  try {
+    const snap = await withFirestoreRetry(() =>
+      getDocs(query(collection(db, "game_results"), where("date", "==", date)))
+    );
+    return snap.docs.map((d) => d.data() as GameResult);
+  } catch (e) {
+    console.error("loadGameResultsByDate failed:", e);
+    toastApiError(e, "Could not load game results for this day.", {
+      toastId: "load-game-results",
     });
     return [];
   }
