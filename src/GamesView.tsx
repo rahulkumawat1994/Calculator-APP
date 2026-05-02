@@ -1412,17 +1412,18 @@ export default function GamesView({
                                             ? `Owes ₹${pending}`
                                             : `Extra ₹${Math.abs(pending)}`}
                                         </span>
-                                        <span className="text-gray-300 text-[18px] shrink-0 group-hover:opacity-0 transition-opacity">
+                                        <span className="text-gray-300 text-[18px] shrink-0 sm:transition-opacity sm:group-hover:opacity-0">
                                           ›
                                         </span>
                                       </button>
-                                      {/* Delete icon — visible on hover */}
+                                      {/* Delete: always visible on touch widths; hover-reveal from sm+ */}
                                       <button
+                                        type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setDirectDeleteSessionId(user.sessionId);
                                         }}
-                                        className="absolute right-3 opacity-0 group-hover:opacity-100 transition-opacity w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-100 text-gray-300 hover:text-red-500 text-[16px]"
+                                        className="absolute right-2 z-10 flex h-9 w-9 items-center justify-center rounded-full text-[16px] text-gray-400 opacity-100 active:bg-red-100 active:text-red-600 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:hover:bg-red-100 sm:hover:text-red-500"
                                         title="Delete entry"
                                       >
                                         🗑
@@ -1780,7 +1781,7 @@ export default function GamesView({
       <Modal
         open={userModal !== null}
         onBackdropClick={closeUserModal}
-        overlayClassName="p-0 items-end sm:items-center sm:p-4"
+        overlayClassName="p-0 min-h-0 w-full items-end justify-center sm:items-center sm:p-4"
       >
         {userModal &&
           (() => {
@@ -1808,7 +1809,8 @@ export default function GamesView({
             );
             return (
               <div
-                className="w-full max-w-[520px] bg-white rounded-t-[24px] sm:rounded-[24px] max-h-[92vh] overflow-y-auto"
+                className="w-full max-w-[520px] min-h-0 bg-white rounded-t-[24px] sm:rounded-[24px] max-h-[min(92vh,92dvh)] overflow-y-auto overscroll-y-contain [touch-action:pan-y]"
+                style={{ WebkitOverflowScrolling: "touch" }}
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Handle bar for mobile */}

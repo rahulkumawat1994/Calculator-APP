@@ -27,7 +27,8 @@ let openCount = 0;
 
 /**
  * Full-viewport modal overlay, portaled to `document.body` with a stable z-index.
- * Locks background scroll while open.
+ * Locks background scroll while open (`overflow: hidden` on `body` only —
+ * avoids `touch-action: none`, which breaks touch scrolling inside modals on iOS).
  */
 export function Modal({
   open,
@@ -43,7 +44,6 @@ export function Modal({
       openCount++;
       if (openCount === 1) {
         document.body.style.overflow = "hidden";
-        document.body.style.touchAction = "none";
       }
     }
     return () => {
@@ -51,7 +51,6 @@ export function Modal({
         openCount = Math.max(0, openCount - 1);
         if (openCount === 0) {
           document.body.style.overflow = "";
-          document.body.style.touchAction = "";
         }
       }
     };
