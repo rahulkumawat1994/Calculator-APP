@@ -3,6 +3,32 @@ import { calculateTotal } from "./pasteAndTotal";
 
 // ─── WhatsApp message parser ───────────────────────────────────────────────────
 
+/**
+ * If a WhatsApp message timestamp is before 06:00 AM, the message belongs to the
+ * **previous** calendar date (the overnight portion of the same game day).
+ * Returns the adjusted date string (DD/MM/YYYY) or the original if no change needed.
+ */
+function adjustWADateForOvernight(date: string, timestamp: string): string {
+  if (!date) return date;
+  const timeM = timestamp.match(/(\d{1,2}):(\d{2})(?:\s*([ap]m))?/i);
+  if (!timeM) return date;
+  let hours = parseInt(timeM[1]!, 10);
+  const meridiem = timeM[3]?.toLowerCase();
+  if (meridiem === "am" && hours === 12) hours = 0;   // 12:xx am = midnight
+  if (meridiem === "pm" && hours !== 12) hours += 12; // 1–11 pm
+  if (hours >= 6) return date; // Normal working-hour message, no adjustment
+  // Before 06:00 AM → shift back one calendar day
+  const parts = date.split("/");
+  if (parts.length !== 3) return date;
+  const dt = new Date(
+    parseInt(parts[2]!, 10),
+    parseInt(parts[1]!, 10) - 1,
+    parseInt(parts[0]!, 10),
+  );
+  dt.setDate(dt.getDate() - 1);
+  return `${String(dt.getDate()).padStart(2, "0")}/${String(dt.getMonth() + 1).padStart(2, "0")}/${dt.getFullYear()}`;
+}
+
 export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
   if (!/\[[^\]]*\]\s*[^:\n]+:/.test(input)) return null;
 
@@ -46,7 +72,7 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
     messages.push({
       id: `${h.contact}|${h.date}|${h.timestamp}|${i}`,
       contact: h.contact,
-      date: h.date,
+      date: adjustWADateForOvernight(h.date, h.timestamp),
       timestamp: h.timestamp,
       text,
       result: calculateTotal(text),

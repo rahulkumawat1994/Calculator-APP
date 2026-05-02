@@ -1,10 +1,14 @@
 /**
- * `YYYY-MM-DD` in the browser’s local calendar (for date filters on `createdAt`).
+ * `YYYY-MM-DD` in the browser's local calendar (for date filters on `createdAt`).
+ * Timestamps before 06:00 AM local time are attributed to the **previous** calendar date
+ * (overnight game sessions — e.g. Disawar 3 AM — belong to the prior game day).
  * Duplicated in Admin/Audit only where needed for display; this module owns range filtering.
  */
 function localDateKeyFromTimestamp(ts: number | undefined): string {
   if (ts == null || !Number.isFinite(ts)) return "";
   const d = new Date(ts);
+  // Treat anything before 06:00 AM as the previous game day.
+  if (d.getHours() < 6) d.setDate(d.getDate() - 1);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");

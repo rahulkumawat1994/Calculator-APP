@@ -12,16 +12,15 @@ import {
   splitPlainTextByMarketSlots,
   detectSlotFromMarketLine,
   ledgerDateStringForSlot,
-  slotUsesSameCalendarDayLedger,
 } from "./calcUtils";
 
 const marketTestSlots: GameSlot[] = [
-  { id: "db", name: "Delhi DB", time: "10:00", emoji: "1", enabled: true },
-  { id: "sg", name: "Shri Ganesh SG", time: "11:00", emoji: "2", enabled: true },
-  { id: "fb", name: "Faridabad", time: "12:00", emoji: "3", enabled: true },
-  { id: "gl", name: "Gali GL", time: "13:00", emoji: "4", enabled: true },
-  { id: "gb", name: "Ghaziabad GB", time: "14:00", emoji: "5", enabled: true },
-  { id: "ds", name: "Disawar DS", time: "15:00", emoji: "6", enabled: true },
+  { id: "db", name: "Delhi DB", time: "14:50", emoji: "1", enabled: true },
+  { id: "sg", name: "Shri Ganesh SG", time: "16:25", emoji: "2", enabled: true },
+  { id: "fb", name: "Faridabad", time: "17:50", emoji: "3", enabled: true },
+  { id: "gl", name: "Gali GL", time: "23:17", emoji: "4", enabled: true },
+  { id: "gb", name: "Ghaziabad GB", time: "21:15", emoji: "5", enabled: true },
+  { id: "ds", name: "Disawar DS", time: "03:00", emoji: "6", enabled: true },
 ];
 
 const fallbackGl = marketTestSlots.find((s) => s.id === "gl")!;
@@ -525,25 +524,22 @@ describe("market slot hints (plain paste)", () => {
   });
 });
 
-describe("ledgerDateStringForSlot (day markets vs Disawar)", () => {
+describe("ledgerDateStringForSlot (slot result-time determines same vs previous day)", () => {
   const op = new Date(2026, 3, 21); // 21 Apr 2026 local
 
-  it("uses previous calendar day for Gali / Faridabad-style slots", () => {
-    expect(ledgerDateStringForSlot(marketTestSlots[3], op)).toBe("20/04/2026");
-    expect(ledgerDateStringForSlot(marketTestSlots[2], op)).toBe("20/04/2026");
+  it("day/evening slots (result time ≥ 06:00) use the SAME calendar day", () => {
+    // Gali 23:17, Faridabad 17:50, Delhi Bazaar 14:50 — all afternoon/evening
+    expect(ledgerDateStringForSlot(marketTestSlots[3], op)).toBe("21/04/2026");
+    expect(ledgerDateStringForSlot(marketTestSlots[2], op)).toBe("21/04/2026");
+    expect(ledgerDateStringForSlot(marketTestSlots[0], op)).toBe("21/04/2026");
   });
 
-  it("uses the same calendar day for Disawar / DS (and common spellings)", () => {
-    expect(ledgerDateStringForSlot(marketTestSlots[5], op)).toBe("21/04/2026");
-    expect(
-      slotUsesSameCalendarDayLedger({
-        id: "x",
-        name: "Deasawer Night",
-        time: "03:00",
-        emoji: "🌙",
-        enabled: true,
-      })
-    ).toBe(true);
+  it("overnight slots (result time < 06:00) use the PREVIOUS calendar day", () => {
+    // Disawar 03:00 — overnight draw, game started the previous afternoon
+    expect(ledgerDateStringForSlot(marketTestSlots[5], op)).toBe("20/04/2026");
+    // Same rule at 3:30 AM the next calendar day — still "yesterday's game"
+    const earlyMorning = new Date(2026, 3, 22, 3, 30); // 22 Apr 2026 03:30 AM
+    expect(ledgerDateStringForSlot(marketTestSlots[5], earlyMorning)).toBe("21/04/2026");
   });
 });
 

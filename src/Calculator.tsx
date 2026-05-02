@@ -816,7 +816,6 @@ export default function Calculator({
   }, [userResults]);
 
   const grandTotal = userResults?.reduce((s, u) => s + u.result.total, 0) ?? 0;
-  const anyWAMode = userResults?.some((u) => u.isWAMode) ?? false;
   const reportPrefill = blocks
     .map((b) => b.text.trim())
     .filter(Boolean)
@@ -1135,7 +1134,7 @@ export default function Calculator({
       )}
 
       {userResults && userResults.length > 0 && (
-        <div className="w-full max-w-[520px] mt-5 space-y-3">
+        <div className={`w-full max-w-[520px] mt-5 space-y-3${canSaveBeforeClear ? " pb-28 sm:pb-24" : ""}`}>
           <div className="px-1">
             <h2 className="text-[17px] font-bold text-[#222]">
               Results by user
@@ -1274,7 +1273,7 @@ export default function Calculator({
           </div>
 
           <div className="mt-1">
-            {isSaved && savedInfo ? (
+            {isSaved && savedInfo && (
               <div className="bg-green-50 border-2 border-green-200 rounded-[16px] px-4 py-3.5">
                 <div className="text-[15px] font-bold text-green-700 mb-1">
                   ✅ Saved to History!
@@ -1293,23 +1292,66 @@ export default function Calculator({
                   <span className="font-bold">Payments</span> tab to review.
                 </div>
               </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void handleSave()}
-                disabled={saving || !canPersistToHistory}
-                className={`w-full py-4 text-[17px] font-bold rounded-[16px] border-2 transition-all active:opacity-80 disabled:opacity-50 ${
-                  anyWAMode
-                    ? "bg-green-600 text-white border-green-600 shadow-sm"
-                    : "bg-white text-green-700 border-green-300"
-                }`}
-              >
-                {saving ? "⏳ Saving…" : "💾 Save to History"}
-              </button>
             )}
           </div>
         </div>
       )}
+
+      {/* Floating save bar — full-width sticky bottom, best for mobile */}
+      {canSaveBeforeClear ? (
+        <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-40 bg-white p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:p-4 sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">
+          <div className="pointer-events-auto mx-auto w-full max-w-[520px] overflow-hidden rounded-2xl bg-white shadow-[0_12px_48px_-8px_rgba(15,23,42,0.22),0_0_0_1px_rgba(15,23,42,0.06)]">
+            <div className="grid grid-cols-2 gap-px bg-slate-100">
+              <button
+                type="button"
+                onClick={() => void handleSave()}
+                disabled={saving || !canPersistToHistory}
+                className="flex items-center justify-center gap-2 bg-green-600 px-4 py-4 text-[15px] font-bold text-white transition hover:bg-green-700 active:bg-green-800 disabled:opacity-50"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2}
+                  stroke="currentColor"
+                  className="h-5 w-5 shrink-0"
+                  aria-hidden
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z"
+                  />
+                </svg>
+                {saving ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={requestClear}
+                disabled={saving}
+                className="flex items-center justify-center gap-2 bg-white px-4 py-4 text-[15px] font-bold text-red-600 transition hover:bg-red-50 active:bg-red-100 disabled:opacity-50"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2}
+                  stroke="currentColor"
+                  className="h-5 w-5 shrink-0"
+                  aria-hidden
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+                  />
+                </svg>
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

@@ -66,21 +66,11 @@ export function pickSlotByMarketHints(
 }
 
 /**
- * Disawar / DS (late draw, often ~3am): History uses the **same** local calendar day
- * as when you save. All other markets default to the **previous** day (day games).
+ * All game slots — including overnight draws like Disawar (3 AM) — belong to the
+ * **previous** calendar date.  The game day runs from ~2:50 PM through 3:00 AM the
+ * next calendar night; recording always happens after the fact, so every slot uses
+ * operationDay − 1.  WhatsApp saves use the date from the chat header instead.
  */
-const SAME_DAY_LEDGER_HINTS = [
-  "दिसावर",
-  "disawar",
-  "disawer",
-  "deasawer",
-  "ds",
-] as const;
-
-export function slotUsesSameCalendarDayLedger(slot: GameSlot): boolean {
-  return SAME_DAY_LEDGER_HINTS.some((h) => hintMatchesSlot(slot, h));
-}
-
 function formatLocalLedgerDate(d: Date): string {
   return `${String(d.getDate()).padStart(2, "0")}/${String(
     d.getMonth() + 1,
@@ -89,8 +79,14 @@ function formatLocalLedgerDate(d: Date): string {
 
 /**
  * `DD/MM/YYYY` for History / Games when saving **manual** (non‑WhatsApp) Calculator
- * rows on `operationDay` (local date bucket). Day markets → previous calendar day;
- * Disawar (name/id hints) → same day. WhatsApp saves use the date from the chat header.
+ * rows on `operationDay` (local date bucket).
+ *
+ * Rule: if the slot's **result time** is before 06:00 (i.e. it is an overnight draw
+ * like Disawar 3 AM), the game belongs to the **previous** calendar date because the
+ * game day started the prior afternoon.  All other slots (day / evening games) use the
+ * **same** calendar date as `operationDay`.
+ *
+ * WhatsApp saves use the date from the chat header instead.
  */
 export function ledgerDateStringForSlot(
   slot: GameSlot,
@@ -101,10 +97,10 @@ export function ledgerDateStringForSlot(
     operationDay.getMonth(),
     operationDay.getDate(),
   );
-  if (slotUsesSameCalendarDayLedger(slot)) {
-    return formatLocalLedgerDate(cal);
+  // Overnight draw: result time before 06:00 AM → game belongs to the previous date.
+  if (slotMinutes(slot.time) < 6 * 60) {
+    cal.setDate(cal.getDate() - 1);
   }
-  cal.setDate(cal.getDate() - 1);
   return formatLocalLedgerDate(cal);
 }
 
