@@ -13,6 +13,7 @@ import {
   detectSlotFromMarketLine,
   ledgerDateStringForSlot,
 } from "./calcUtils";
+import { parseWhatsAppMessages } from "../calc/whatsapp";
 
 const marketTestSlots: GameSlot[] = [
   { id: "db", name: "Delhi DB", time: "14:50", emoji: "1", enabled: true },
@@ -118,7 +119,7 @@ describe("calculateTotal regression scenarios", () => {
     expect(processLine("B.1111x9999x50")[0]?.lane).toBe("B");
   });
 
-  it("WhatsApp sample: into / intu / ijto lines all parse (markers Sg/Fd/Gb may fail)", () => {
+  it("WhatsApp sample: into / intu / ijto lines all parse (Sg/Fd/Gb stamps skipped)", () => {
     const raw = `[16/04, 3:27 pm] GC MALHOTRA PLAYER: 15-51into10
 13-31-32-23-05-50into5
 75-57intu10
@@ -138,7 +139,7 @@ Gb
 Gb`;
     const r = calculateTotal(raw);
     expect(r.total).toBe(260);
-    expect(r.failedLines?.sort()).toEqual(["Fd", "Gb", "Gb", "Sg", "Sg"]);
+    expect(r.failedLines ?? []).toEqual([]);
   });
 
   it("Indian rs rate: Fb/Gb labels, space rsN and .rsN", () => {
@@ -207,6 +208,44 @@ Gb`;
     expect(r.failedLines ?? []).toEqual([]);
     expect(r.total).toBe(8 * 70);
     expect(r.results).toHaveLength(1);
+  });
+
+  it("WhatsApp: single '=' between jodis, multi '=' before stake (03=87=…=====5)", () => {
+    const raw = `[02/05, 3:55 pm] K S: 03=87=04=55=43=22=====5
+[02/05, 3:57 pm] K S: 42=28=05=35=96=92===5
+[02/05, 3:57 pm] K S: 24=82====5
+[02/05, 3:58 pm] K S: 10=42=28=====10`;
+    const r = calculateTotal(raw);
+    expect(r.failedLines ?? []).toEqual([]);
+    // 6×5 + 6×5 + 2×5 + 3×10
+    expect(r.total).toBe(100);
+  });
+
+  it("dot jodi list + =rate + Hindi market suffix (no triple equals on line)", () => {
+    const r = calculateTotal("10.01.15.51.60.06=10 गली दिसावर");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBeGreaterThan(0);
+  });
+
+  it("LAL CHAND 3-line block (dot rows + Hindi rate line) parses", () => {
+    const raw = `20.02.70.07.25.52.75.57
+40.04.45.54.90.09.95.59
+10.01.15.51.60.06=10 गली दिसावर`;
+    const r = calculateTotal(raw);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBeGreaterThan(0);
+  });
+
+  it("WhatsApp K S paste: per-message parse + fullwidth colon + spaced equals", () => {
+    const raw = `[02/05, 3:55 pm] K S: 03=87=04=55=43=22=====5
+[02/05, 3:57 pm] K S\uFF1A 42=28=05=35=96=92===5
+[02/05, 3:57 pm] K S: 24 = 82 ====5
+[02/05, 3:58 pm] K S: 10=42=28=====10`;
+    const msgs = parseWhatsAppMessages(raw);
+    expect(msgs).not.toBeNull();
+    const sum = msgs!.reduce((s, m) => s + m.result.total, 0);
+    expect(msgs!.flatMap((m) => m.result.failedLines ?? [])).toEqual([]);
+    expect(sum).toBe(100);
   });
 
   it("slash pair/rate (NN/10) lines from WhatsApp — 43/10, 07/20 parse as NN×rate, not as junk", () => {

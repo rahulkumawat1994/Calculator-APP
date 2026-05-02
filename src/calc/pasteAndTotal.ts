@@ -18,6 +18,21 @@ function isSeparatorOnlyLine(line: string): boolean {
   return !/[0-9A-Za-z\u0900-\u0FFF]/.test(line);
 }
 
+/** WhatsApp chat lines that are not bets (promos, receipts, game stamps, section labels). */
+function isWhatsAppNoiseLine(line: string): boolean {
+  const t = line.trim();
+  if (!t) return false;
+  if (/^total\s*amount\s*=/i.test(t)) return true;
+  if (/phonepe|phon\.pe/i.test(t)) return true;
+  if (/^explore the app now/i.test(t)) return true;
+  if (/^under\s*\/\s*bahar$/i.test(t)) return true;
+  // Standalone market / game stamp on its own line (often after a screenshot block).
+  if (/^(fd|db|sg|gb|gali|ds|fb|gl|desawr|harf|hrf)\s*$/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * After the last x/=/\* rate on a line, users sometimes paste another number row without its own rate
  * (e.g. `DS.65..x15 49.53..02.`). Split so merge / inherit-rate logic can attach the right ×rate.
@@ -224,6 +239,7 @@ export function calculateTotal(text: string): CalculationResult {
   const rawLines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
   const logicalLines: string[] = [];
   for (const rawLine of rawLines) {
+    if (isWhatsAppNoiseLine(rawLine)) continue;
     const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
     const labelStripped = stripLeadingGameLabels(afterLoose);
     const line = normalizeTrailingDashRate(
@@ -488,6 +504,7 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
   const logicalPairs: TL[] = [];
   for (let ri = 0; ri < rawLines.length; ri++) {
     const rawLine = rawLines[ri]!;
+    if (isWhatsAppNoiseLine(rawLine)) continue;
     const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
     const labelStripped = stripLeadingGameLabels(afterLoose);
     const line = normalizeTrailingDashRate(

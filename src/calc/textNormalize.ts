@@ -1,7 +1,12 @@
 // ─── Pasted text cleanup (typos, WhatsApp) — used by `processLine` and `calculateTotal` ─
 
 export function preprocessText(text: string): string {
-  return text.replace(/\[[^\]]*\]\s*[^:]+:\s*/g, "\n").trim();
+  let t = text.replace(/^\uFEFF/, "").normalize("NFKC");
+  // WhatsApp / iOS sometimes inserts bidi marks around names or colons.
+  t = t.replace(/[\u200E\u200F\u202A-\u202E]/g, "");
+  // Bracketed header: allow ASCII `:` or fullwidth `：` after contact (mobile keyboards).
+  t = t.replace(/\[[^\]]*\]\s*[^:\n\uFF1A]+\s*[\uFF1A:]\s*/g, "\n");
+  return t.trim();
 }
 
 /**
@@ -31,6 +36,16 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/\b(\d{2})\.([1-9])\b/g, "$1x$2");
   // Between digits: `;` `|` `/` `\` or tabs often used instead of space (keep `,` for comma-rate lines)
   t = t.replace(/(?<=\d)[\t]*[;|/\\]+[\t]*(?=\d)/g, " ");
+  // Matka / WhatsApp: `03=87=04=55=43=22=====5` — single `=` between jodis, multi-`=` before stake.
+  // **Only** rewrite when the line has a multi-equals rate (`===`, `====`, …); otherwise
+  // `60.06=10` or `41=30` must stay as NN×rate (do not treat `06=10` as two jodis).
+  if (/={3,}\s*\d/.test(t)) {
+    let prevJodiEq = "";
+    while (t !== prevJodiEq) {
+      prevJodiEq = t;
+      t = t.replace(/\b(\d{2})\s*=\s*(\d{2})\b/g, "$1 $2");
+    }
+  }
   // Same-digit run (3+ identical digits) then AB / A / B then rate, with no x/=/*
   // (common paste: "000B100", "000A100", "000AB100"). Rewrites so SEP_RATE_RE applies;
   // suffix letter is preserved for solidRunAbMultiplier (A/B = 1×, AB = 2×).

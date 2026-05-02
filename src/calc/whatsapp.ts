@@ -30,9 +30,9 @@ function adjustWADateForOvernight(date: string, timestamp: string): string {
 }
 
 export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
-  if (!/\[[^\]]*\]\s*[^:\n]+:/.test(input)) return null;
+  if (!/\[[^\]]*\]\s*[^:\n\uFF1A]+[\uFF1A:]/.test(input)) return null;
 
-  const headerRegex = /\[([^\]]*)\]\s*([^:\n]+):\s*/g;
+  const headerRegex = /\[([^\]]*)\]\s*([^:\n\uFF1A]+)\s*[\uFF1A:]\s*/g;
   const headers: Array<{ index: number; end: number; contact: string; date: string; timestamp: string }> = [];
 
   let match: RegExpExecArray | null;
@@ -88,9 +88,9 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
  * contact so the UI can open separate text areas. Otherwise `null` (keep one area).
  */
 export function splitWhatsAppInputByContact(input: string): { contact: string; text: string }[] | null {
-  if (!/\[[^\]]*\]\s*[^:\n]+:/.test(input)) return null;
+  if (!/\[[^\]]*\]\s*[^:\n\uFF1A]+[\uFF1A:]/.test(input)) return null;
 
-  const headerRegex = /\[([^\]]*)\]\s*([^:\n]+):\s*/g;
+  const headerRegex = /\[([^\]]*)\]\s*([^:\n\uFF1A]+)\s*[\uFF1A:]\s*/g;
   const headers: Array<{ index: number; end: number; contact: string }> = [];
 
   let match: RegExpExecArray | null;
