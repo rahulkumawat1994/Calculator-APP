@@ -96,7 +96,11 @@ function getWinningSegments(
 ): Array<{ seg: Segment; matchedNumber: string; isUlta: boolean }> {
   if (!winningNum) return [];
   const rev = reverseNumStr(winningNum);
-  const results: Array<{ seg: Segment; matchedNumber: string; isUlta: boolean }> = [];
+  const results: Array<{
+    seg: Segment;
+    matchedNumber: string;
+    isUlta: boolean;
+  }> = [];
   for (const seg of segments) {
     const nums = extractLineNumbers(seg.line);
     for (const n of nums) {
@@ -272,7 +276,10 @@ const MONTH_NAMES = [
 const DAY_LABELS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
 function makeDateStr(year: number, month: number, day: number): string {
-  return `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}`;
+  return `${String(day).padStart(2, "0")}/${String(month).padStart(
+    2,
+    "0"
+  )}/${year}`;
 }
 
 function buildCalendarCells(year: number, month: number): (number | null)[] {
@@ -345,7 +352,10 @@ export default function GamesView({
   const [viewMode, setViewMode] = useState<ViewMode>("daily");
   const [selectedDate, setSelectedDate] = useState(today);
   /** Calendar month shown in the daily calendar widget */
-  const [cal, setCal] = useState({ year: nowDate.getFullYear(), month: nowDate.getMonth() + 1 });
+  const [cal, setCal] = useState({
+    year: nowDate.getFullYear(),
+    month: nowDate.getMonth() + 1,
+  });
   /** Dates (DD/MM/YYYY) that have session data — used for calendar dots */
   const [activeDates, setActiveDates] = useState<Set<string>>(new Set());
   const [initialJumpDone, setInitialJumpDone] = useState(false);
@@ -361,14 +371,19 @@ export default function GamesView({
   });
 
   /** slotId → saved winning number (from Firestore) */
-  const [gameResults, setGameResults] = useState<Map<string, string>>(new Map());
+  const [gameResults, setGameResults] = useState<Map<string, string>>(
+    new Map()
+  );
   /** slotId → draft input (not yet saved) */
   const [winDraft, setWinDraft] = useState<Map<string, string>>(new Map());
   /** slotId → currently saving */
   const [winSaving, setWinSaving] = useState<Set<string>>(new Set());
 
   /** Currently open user detail bottom-sheet modal */
-  const [userModal, setUserModal] = useState<{ slot: GameSlot; user: UserRow } | null>(null);
+  const [userModal, setUserModal] = useState<{
+    slot: GameSlot;
+    user: UserRow;
+  } | null>(null);
   /** Which slot's winning-number modal is open (slotId) */
   const [winNumModal, setWinNumModal] = useState<string | null>(null);
   /** Bet row selection inside the user modal */
@@ -385,7 +400,9 @@ export default function GamesView({
   } | null>(null);
   const [confirmClearAll, setConfirmClearAll] = useState(false);
   /** Session id to delete directly from the row (without opening the modal) */
-  const [directDeleteSessionId, setDirectDeleteSessionId] = useState<string | null>(null);
+  const [directDeleteSessionId, setDirectDeleteSessionId] = useState<
+    string | null
+  >(null);
 
   // Lazily loaded data
   const [daySessions, setDaySessions] = useState<SavedSession[]>([]);
@@ -446,7 +463,9 @@ export default function GamesView({
           setInitialJumpDone(true);
         }
       })
-      .catch(() => {/* non-fatal */});
+      .catch(() => {
+        /* non-fatal */
+      });
   }, [cal.year, cal.month]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load daily data — paint from cache if any, always refetch; top bar during fetch
@@ -695,7 +714,12 @@ export default function GamesView({
 
   /** Set amount paid = game total for every player in this slot (selected day). */
   const markAllFullyPaidForSlot = async (slot: GameSlot) => {
-    const users = buildSlotUsers(daySessions, dayPayments, slot.id, selectedDate);
+    const users = buildSlotUsers(
+      daySessions,
+      dayPayments,
+      slot.id,
+      selectedDate
+    );
     const targets = users.filter((u) => u.amountPaid !== u.betTotal);
     if (targets.length === 0) return;
     setModalPayEdit(null);
@@ -715,12 +739,16 @@ export default function GamesView({
           commissionPct,
         });
       }
-      const saves = targets.map((u) => updated.find((p) => p.id === u.paymentId)!);
+      const saves = targets.map(
+        (u) => updated.find((p) => p.id === u.paymentId)!
+      );
       await Promise.all(saves.map((p) => savePaymentDoc(p)));
       setDayPayments(updated);
       putDayDataCache(selectedDate, daySessions, updated);
       toast.success(
-        `Saved ${targets.length} payment${targets.length === 1 ? "" : "s"} — ${slot.name} fully settled for this day.`
+        `Saved ${targets.length} payment${targets.length === 1 ? "" : "s"} — ${
+          slot.name
+        } fully settled for this day.`
       );
     } catch (err) {
       toastApiError(err, "Could not save all payments. Try again.");
@@ -732,7 +760,12 @@ export default function GamesView({
 
   /** Reset recorded paid amounts to blank for every player in this slot/day. */
   const resetPaymentsForSlot = async (slot: GameSlot) => {
-    const users = buildSlotUsers(daySessions, dayPayments, slot.id, selectedDate);
+    const users = buildSlotUsers(
+      daySessions,
+      dayPayments,
+      slot.id,
+      selectedDate
+    );
     const targets = users.filter((u) => u.amountPaid !== null);
     if (targets.length === 0) return;
     setModalPayEdit(null);
@@ -752,12 +785,16 @@ export default function GamesView({
           commissionPct,
         });
       }
-      const saves = targets.map((u) => updated.find((p) => p.id === u.paymentId)!);
+      const saves = targets.map(
+        (u) => updated.find((p) => p.id === u.paymentId)!
+      );
       await Promise.all(saves.map((p) => savePaymentDoc(p)));
       setDayPayments(updated);
       putDayDataCache(selectedDate, daySessions, updated);
       toast.success(
-        `Reset ${targets.length} payment${targets.length === 1 ? "" : "s"} — ${slot.name} cleared for this day.`
+        `Reset ${targets.length} payment${targets.length === 1 ? "" : "s"} — ${
+          slot.name
+        } cleared for this day.`
       );
     } catch (err) {
       toastApiError(err, "Could not reset payments. Try again.");
@@ -844,11 +881,18 @@ export default function GamesView({
     setModalConfirmRowDelete(null);
   };
 
-  const handleResultChange = async (sessionId: string, slotKey: string, result: CalculationResult) => {
+  const handleResultChange = async (
+    sessionId: string,
+    slotKey: string,
+    result: CalculationResult
+  ) => {
     const updated = daySessions.map((s) => {
       if (s.id !== sessionId) return s;
       const { overrideResult: _legacy, ...rest } = s;
-      return { ...rest, slotOverrides: { ...rest.slotOverrides, [slotKey]: result } };
+      return {
+        ...rest,
+        slotOverrides: { ...rest.slotOverrides, [slotKey]: result },
+      };
     });
     setDaySessions(updated);
     putDayDataCache(selectedDate, updated, dayPayments);
@@ -862,12 +906,17 @@ export default function GamesView({
     }
   };
 
-  const pruneResultsByIndices = (result: CalculationResult, remove: Set<number>): CalculationResult => {
+  const pruneResultsByIndices = (
+    result: CalculationResult,
+    remove: Set<number>
+  ): CalculationResult => {
     const results = result.results.filter((_, i) => !remove.has(i));
     return {
       results,
       total: results.reduce((s, r) => s + r.lineTotal, 0),
-      ...(result.failedLines?.length ? { failedLines: result.failedLines } : {}),
+      ...(result.failedLines?.length
+        ? { failedLines: result.failedLines }
+        : {}),
     };
   };
 
@@ -876,9 +925,15 @@ export default function GamesView({
     const { sessionId, slotKey, indices } = modalConfirmRowDelete;
     const session = daySessions.find((s) => s.id === sessionId);
     setModalConfirmRowDelete(null);
-    if (!session) { setModalBetRowSel(new Set()); return; }
+    if (!session) {
+      setModalBetRowSel(new Set());
+      return;
+    }
     const ledger = sessionLedgerForSlotKey(session, slotKey);
-    if (!ledger) { setModalBetRowSel(new Set()); return; }
+    if (!ledger) {
+      setModalBetRowSel(new Set());
+      return;
+    }
     const newResult = pruneResultsByIndices(ledger, new Set(indices));
     setModalBetRowSel(new Set());
     await handleResultChange(sessionId, slotKey, newResult);
@@ -888,13 +943,19 @@ export default function GamesView({
     const session = daySessions.find((s) => s.id === id);
     try {
       await deleteSessionDoc(id);
-      if (session) await deletePaymentsByContactDate(session.contact, session.date);
+      if (session)
+        await deletePaymentsByContactDate(session.contact, session.date);
     } catch (err) {
-      toastApiError(err, "Delete failed. Please check your internet connection and try again.");
+      toastApiError(
+        err,
+        "Delete failed. Please check your internet connection and try again."
+      );
       return;
     }
     const remaining = daySessions.filter((s) => s.id !== id);
-    const nextPayments = dayPayments.filter((p) => !(session && p.contact === session.contact));
+    const nextPayments = dayPayments.filter(
+      (p) => !(session && p.contact === session.contact)
+    );
     setDaySessions(remaining);
     setDayPayments(nextPayments);
     putDayDataCache(selectedDate, remaining, nextPayments);
@@ -906,11 +967,17 @@ export default function GamesView({
     try {
       await Promise.all(
         daySessions.map((s) =>
-          Promise.all([deleteSessionDoc(s.id), deletePaymentsByContactDate(s.contact, s.date)])
+          Promise.all([
+            deleteSessionDoc(s.id),
+            deletePaymentsByContactDate(s.contact, s.date),
+          ])
         )
       );
     } catch (err) {
-      toastApiError(err, "Clear all failed. Please check your internet connection and try again.");
+      toastApiError(
+        err,
+        "Clear all failed. Please check your internet connection and try again."
+      );
       setConfirmClearAll(false);
       return;
     }
@@ -932,9 +999,16 @@ export default function GamesView({
 
   const shiftCal = (delta: number) => {
     setCal((prev) => {
-      let m = prev.month + delta, y = prev.year;
-      if (m > 12) { m = 1; y++; }
-      if (m < 1) { m = 12; y--; }
+      let m = prev.month + delta,
+        y = prev.year;
+      if (m > 12) {
+        m = 1;
+        y++;
+      }
+      if (m < 1) {
+        m = 12;
+        y--;
+      }
       return { year: y, month: m };
     });
   };
@@ -1024,7 +1098,10 @@ export default function GamesView({
 
             <div className="grid grid-cols-7 px-3 pt-2.5">
               {DAY_LABELS.map((d) => (
-                <div key={d} className="text-center text-[11px] font-bold text-gray-400 pb-1">
+                <div
+                  key={d}
+                  className="text-center text-[11px] font-bold text-gray-400 pb-1"
+                >
                   {d}
                 </div>
               ))}
@@ -1064,10 +1141,12 @@ export default function GamesView({
 
             <div className="flex items-center gap-4 px-4 pb-3 text-[11px] text-gray-400">
               <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-[#1d6fb8] inline-block" /> Has entries
+                <span className="w-2 h-2 rounded-full bg-[#1d6fb8] inline-block" />{" "}
+                Has entries
               </span>
               <span className="flex items-center gap-1">
-                <span className="inline-block w-4 h-4 rounded-[6px] bg-[#dceeff] ring-2 ring-[#1d6fb8]" /> Today
+                <span className="inline-block w-4 h-4 rounded-[6px] bg-[#dceeff] ring-2 ring-[#1d6fb8]" />{" "}
+                Today
               </span>
             </div>
           </Card>
@@ -1157,16 +1236,13 @@ export default function GamesView({
                   const savedWinNum = gameResults.get(slot.id) ?? "";
                   const winnerCount = savedWinNum
                     ? users.filter(
-                        (u) => getWinningSegments(u.segments, savedWinNum).length > 0
+                        (u) =>
+                          getWinningSegments(u.segments, savedWinNum).length > 0
                       ).length
                     : 0;
 
                   return (
-                    <Card
-                      key={slot.id}
-                      overflow="hidden"
-                      padding="none"
-                    >
+                    <Card key={slot.id} overflow="hidden" padding="none">
                       <button
                         onClick={() => toggleSlot(slot.id)}
                         className="w-full flex items-center gap-4 px-5 py-4 hover:bg-[#f5f9ff] active:bg-[#eef4ff] transition-colors text-left"
@@ -1238,7 +1314,9 @@ export default function GamesView({
                         <div className="border-t-2 border-[#eef2f8]">
                           {/* Compact winning number row */}
                           <div className="flex items-center justify-between px-4 py-3 border-b border-[#f0f4f8]">
-                            <span className="text-[13px] font-bold text-gray-500">🏆 Result</span>
+                            <span className="text-[13px] font-bold text-gray-500">
+                              🏆 Result
+                            </span>
                             {savedWinNum ? (
                               <button
                                 onClick={() => setWinNumModal(slot.id)}
@@ -1252,9 +1330,13 @@ export default function GamesView({
                                     🎉 {winnerCount}W
                                   </span>
                                 ) : users.length > 0 ? (
-                                  <span className="text-[11px] text-gray-400">No winners</span>
+                                  <span className="text-[11px] text-gray-400">
+                                    No winners
+                                  </span>
                                 ) : null}
-                                <span className="text-[11px] text-[#1d6fb8] underline ml-1">Edit</span>
+                                <span className="text-[11px] text-[#1d6fb8] underline ml-1">
+                                  Edit
+                                </span>
                               </button>
                             ) : (
                               <button
@@ -1291,7 +1373,8 @@ export default function GamesView({
                                       <button
                                         type="button"
                                         disabled={
-                                          bulkSavingSlotId === slot.id || dayLoading
+                                          bulkSavingSlotId === slot.id ||
+                                          dayLoading
                                         }
                                         onClick={() =>
                                           setConfirmState({
@@ -1299,9 +1382,12 @@ export default function GamesView({
                                             message:
                                               `Date: ${selectedDate}\n\n` +
                                               `"Received" will be set to each person's game total.`,
-                                            confirmLabel: "Yes, Mark Fully Paid",
+                                            confirmLabel:
+                                              "Yes, Mark Fully Paid",
                                             run: () => {
-                                              void markAllFullyPaidForSlot(slot);
+                                              void markAllFullyPaidForSlot(
+                                                slot
+                                              );
                                             },
                                           })
                                         }
@@ -1312,11 +1398,14 @@ export default function GamesView({
                                           : "✓ Mark all full paid"}
                                       </button>
                                     )}
-                                    {users.some((u) => u.amountPaid !== null) && (
+                                    {users.some(
+                                      (u) => u.amountPaid !== null
+                                    ) && (
                                       <button
                                         type="button"
                                         disabled={
-                                          bulkSavingSlotId === slot.id || dayLoading
+                                          bulkSavingSlotId === slot.id ||
+                                          dayLoading
                                         }
                                         onClick={() =>
                                           setConfirmState({
@@ -1346,12 +1435,16 @@ export default function GamesView({
                               <div className="divide-y divide-[#f5f7fb]">
                                 {users.map((user) => {
                                   const isWinner = savedWinNum
-                                    ? getWinningSegments(user.segments, savedWinNum).length > 0
+                                    ? getWinningSegments(
+                                        user.segments,
+                                        savedWinNum
+                                      ).length > 0
                                     : false;
                                   const pending =
                                     user.betTotal - (user.amountPaid ?? 0);
                                   const notRecorded = user.amountPaid === null;
-                                  const fullyPaid = !notRecorded && pending === 0;
+                                  const fullyPaid =
+                                    !notRecorded && pending === 0;
                                   const hasDebt = !notRecorded && pending > 0;
                                   const overpaid = !notRecorded && pending < 0;
                                   return (
@@ -1376,7 +1469,8 @@ export default function GamesView({
                                               : "bg-[#e8f0fc] text-[#1d6fb8]"
                                           }`}
                                         >
-                                          {user.contact[0]?.toUpperCase() ?? "?"}
+                                          {user.contact[0]?.toUpperCase() ??
+                                            "?"}
                                         </div>
                                         <div className="flex-1 min-w-0">
                                           <div className="text-[15px] font-extrabold text-[#1a1a1a] truncate leading-tight">
@@ -1385,7 +1479,8 @@ export default function GamesView({
                                           </div>
                                           <div className="text-[12px] text-gray-400 mt-0.5">
                                             {user.slotLedger.results.length} bet
-                                            {user.slotLedger.results.length !== 1
+                                            {user.slotLedger.results.length !==
+                                            1
                                               ? "s"
                                               : ""}{" "}
                                             · ₹{user.betTotal}
@@ -1421,7 +1516,9 @@ export default function GamesView({
                                         type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          setDirectDeleteSessionId(user.sessionId);
+                                          setDirectDeleteSessionId(
+                                            user.sessionId
+                                          );
                                         }}
                                         className="absolute right-2 z-10 flex h-9 w-9 items-center justify-center rounded-full text-[16px] text-gray-400 opacity-100 active:bg-red-100 active:text-red-600 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:hover:bg-red-100 sm:hover:text-red-500"
                                         title="Delete entry"
@@ -1640,10 +1737,7 @@ export default function GamesView({
               </div>
 
               {monthDays.length === 0 ? (
-                <Card
-                  padding="none"
-                  className="px-5 py-12 text-center"
-                >
+                <Card padding="none" className="px-5 py-12 text-center">
                   <div className="text-[40px] mb-3">📭</div>
                   <div className="text-[17px] font-bold text-gray-400">
                     No payments recorded
@@ -1795,7 +1889,8 @@ export default function GamesView({
             const fullyPaid = !notRecorded && pending === 0;
             const hasDebt = !notRecorded && pending > 0;
             const overpaid = !notRecorded && pending < 0;
-            const effectivePct = liveUser.commissionPct ?? settings.commissionPct;
+            const effectivePct =
+              liveUser.commissionPct ?? settings.commissionPct;
             const isEditing = modalPayEdit?.id === liveUser.paymentId;
             const savedWinNum = gameResults.get(slot.id) ?? "";
             const winningMatches = savedWinNum
@@ -1809,294 +1904,260 @@ export default function GamesView({
             );
             return (
               <div
-                className="w-full max-w-[520px] min-h-0 bg-white rounded-t-[24px] sm:rounded-[24px] max-h-[min(92vh,92dvh)] overflow-y-auto overscroll-y-contain [touch-action:pan-y]"
-                style={{ WebkitOverflowScrolling: "touch" }}
+                className="flex w-full max-w-[520px] min-h-0 max-h-[min(92vh,92dvh)] flex-col overflow-hidden bg-white rounded-t-[24px] sm:rounded-[24px]"
                 onClick={(e) => e.stopPropagation()}
               >
-                {/* Handle bar for mobile */}
-                <div className="flex justify-center pt-3 pb-1 sm:hidden">
-                  <div className="w-10 h-1 rounded-full bg-gray-200" />
+                {/* Handle + title row stay visible while body scrolls */}
+                <div className="shrink-0 bg-white">
+                  <div className="flex justify-center pt-3 pb-1 sm:hidden">
+                    <div className="w-10 h-1 rounded-full bg-gray-200" />
+                  </div>
+                  <div className="flex items-start justify-between px-5 pt-4 pb-3 border-b border-gray-100">
+                    <div>
+                      <div className="text-[20px] font-extrabold text-[#1a1a1a] leading-tight">
+                        {isWinner && "🏆 "}
+                        {liveUser.contact}
+                      </div>
+                      <div className="text-[13px] text-gray-400 mt-0.5">
+                        {slot.emoji} {slot.name} · {selectedDate}
+                      </div>
+                    </div>
+                    <button
+                      onClick={closeUserModal}
+                      className="mt-1 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-600 text-[18px] transition-colors"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
 
-                {/* Header */}
-                <div className="flex items-start justify-between px-5 pt-4 pb-3 border-b border-gray-100">
-                  <div>
-                    <div className="text-[20px] font-extrabold text-[#1a1a1a] leading-tight">
-                      {isWinner && "🏆 "}
-                      {liveUser.contact}
-                    </div>
-                    <div className="text-[13px] text-gray-400 mt-0.5">
-                      {slot.emoji} {slot.name} · {selectedDate}
-                    </div>
-                  </div>
-                  <button
-                    onClick={closeUserModal}
-                    className="mt-1 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-600 text-[18px] transition-colors"
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                {/* Winner banner */}
-                {isWinner && (
-                  <div className="mx-5 mt-4 bg-amber-50 border border-amber-200 rounded-[16px] p-3">
-                    <div className="text-[13px] font-extrabold text-amber-800 mb-2">
-                      🎉 Winner! Winning bets:
-                    </div>
-                    <div className="space-y-1">
-                      {winningMatches.map(({ seg, matchedNumber, isUlta }, wi) => (
-                        <div key={wi} className="text-[12px] text-amber-900">
-                          <span className="font-bold">{seg.line}</span>
-                          {" @ ₹"}
-                          {seg.rate}
-                          {isUlta && (
-                            <span className="ml-1 text-amber-700 font-semibold">
-                              (ulta {matchedNumber})
-                            </span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Bets accordion */}
-                <div className="px-5 pt-3 pb-2">
-                  <button
-                    onClick={() => setModalBetsOpen((v) => !v)}
-                    className="w-full flex items-center justify-between bg-gray-50 border border-gray-200 rounded-[14px] px-4 py-3 text-left hover:bg-[#f0f6ff] active:bg-[#e8f0fc] transition-colors"
-                  >
-                    <span className="text-[14px] font-extrabold text-gray-700">
-                      Bets ·{" "}
-                      {liveUser.slotLedger.results.length} line
-                      {liveUser.slotLedger.results.length !== 1 ? "s" : ""} · ₹
-                      {liveUser.betTotal}
-                    </span>
-                    <span className="text-[12px] font-bold text-[#1d6fb8]">
-                      {modalBetsOpen ? "▲ Hide" : "▼ Show"}
-                    </span>
-                  </button>
-
-                  {modalBetsOpen && (
-                    <div className="mt-2">
-                      {filteredSel.size > 0 && (
-                        <div className="flex justify-end mb-2">
-                          <button
-                            onClick={() =>
-                              setModalConfirmRowDelete({
-                                sessionId: liveUser.sessionId,
-                                slotKey: slot.id,
-                                indices: [...filteredSel].sort((a, b) => a - b),
-                              })
-                            }
-                            className="text-[12px] font-bold text-white bg-red-500 px-2.5 py-1 rounded-[8px]"
-                          >
-                            Delete {filteredSel.size}
-                          </button>
-                        </div>
-                      )}
-                      <div className="bg-gray-50 border border-gray-100 rounded-[14px] px-3 py-3">
-                        <EditableBreakdown
-                          compact
-                          confirmRowDelete
-                          result={liveUser.slotLedger}
-                          rowSelection={{
-                            selectedIndices: filteredSel,
-                            onToggleRowSelect: (idx) =>
-                              setModalBetRowSel((prev) => {
-                                const n = new Set(prev);
-                                n.has(idx) ? n.delete(idx) : n.add(idx);
-                                return n;
-                              }),
-                          }}
-                          onChange={(r) => {
-                            setModalBetRowSel(new Set());
-                            void handleResultChange(liveUser.sessionId, slot.id, r);
-                          }}
-                        />
+                <div
+                  className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain [touch-action:pan-y]"
+                  style={{ WebkitOverflowScrolling: "touch" }}
+                >
+                  {/* Winner banner */}
+                  {isWinner && (
+                    <div className="mx-5 mt-4 bg-amber-50 border border-amber-200 rounded-[16px] p-3">
+                      <div className="text-[13px] font-extrabold text-amber-800 mb-2">
+                        🎉 Winner! Winning bets:
+                      </div>
+                      <div className="space-y-1">
+                        {winningMatches.map(
+                          ({ seg, matchedNumber, isUlta }, wi) => (
+                            <div
+                              key={wi}
+                              className="text-[12px] text-amber-900"
+                            >
+                              <span className="font-bold">{seg.line}</span>
+                              {" @ ₹"}
+                              {seg.rate}
+                              {isUlta && (
+                                <span className="ml-1 text-amber-700 font-semibold">
+                                  (ulta {matchedNumber})
+                                </span>
+                              )}
+                            </div>
+                          )
+                        )}
                       </div>
                     </div>
                   )}
-                </div>
 
-                <div className="h-px bg-gray-100 mx-5 my-2" />
+                  {/* Bets accordion */}
+                  <div className="px-5 pt-3 pb-2">
+                    <button
+                      onClick={() => setModalBetsOpen((v) => !v)}
+                      className="w-full flex items-center justify-between bg-gray-50 border border-gray-200 rounded-[14px] px-4 py-3 text-left hover:bg-[#f0f6ff] active:bg-[#e8f0fc] transition-colors"
+                    >
+                      <span className="text-[14px] font-extrabold text-gray-700">
+                        Bets · {liveUser.slotLedger.results.length} line
+                        {liveUser.slotLedger.results.length !== 1 ? "s" : ""} ·
+                        ₹{liveUser.betTotal}
+                      </span>
+                      <span className="text-[12px] font-bold text-[#1d6fb8]">
+                        {modalBetsOpen ? "▲ Hide" : "▼ Show"}
+                      </span>
+                    </button>
 
-                {/* Payment section */}
-                <div className="px-5 pt-3 pb-4">
-                  <div className="text-[14px] font-extrabold text-gray-700 mb-3">
-                    Payment
-                  </div>
-                  {isEditing ? (
-                    <div className="bg-[#f0f6ff] border-2 border-[#1d6fb8] rounded-[14px] p-4">
-                      <div className="text-[14px] font-semibold text-gray-600 mb-2">
-                        How much did you receive? (₹)
+                    {modalBetsOpen && (
+                      <div className="mt-2">
+                        {filteredSel.size > 0 && (
+                          <div className="flex justify-end mb-2">
+                            <button
+                              onClick={() =>
+                                setModalConfirmRowDelete({
+                                  sessionId: liveUser.sessionId,
+                                  slotKey: slot.id,
+                                  indices: [...filteredSel].sort(
+                                    (a, b) => a - b
+                                  ),
+                                })
+                              }
+                              className="text-[12px] font-bold text-white bg-red-500 px-2.5 py-1 rounded-[8px]"
+                            >
+                              Delete {filteredSel.size}
+                            </button>
+                          </div>
+                        )}
+                        <div className="bg-gray-50 border border-gray-100 rounded-[14px] px-3 py-3">
+                          <EditableBreakdown
+                            compact
+                            confirmRowDelete
+                            result={liveUser.slotLedger}
+                            rowSelection={{
+                              selectedIndices: filteredSel,
+                              onToggleRowSelect: (idx) =>
+                                setModalBetRowSel((prev) => {
+                                  const n = new Set(prev);
+                                  n.has(idx) ? n.delete(idx) : n.add(idx);
+                                  return n;
+                                }),
+                            }}
+                            onChange={(r) => {
+                              setModalBetRowSel(new Set());
+                              void handleResultChange(
+                                liveUser.sessionId,
+                                slot.id,
+                                r
+                              );
+                            }}
+                          />
+                        </div>
                       </div>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min="0"
-                        value={modalPayEdit!.value}
-                        onChange={(e) =>
-                          setModalPayEdit((s) =>
-                            s ? { ...s, value: e.target.value } : s
-                          )
-                        }
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter")
-                            void saveEdit(
-                              liveUser.paymentId,
-                              liveUser.contact,
-                              slot.id,
-                              slot.name
-                            );
-                          if (e.key === "Escape") setModalPayEdit(null);
-                        }}
-                        autoFocus
-                        placeholder={String(liveUser.betTotal)}
-                        className="w-full text-[26px] font-extrabold text-center border-2 border-[#1d6fb8] rounded-[12px] px-4 py-3 outline-none mb-3 bg-white"
-                      />
-                      <button
-                        onClick={() =>
-                          setModalPayEdit((s) =>
-                            s ? { ...s, showPct: !s.showPct } : s
-                          )
-                        }
-                        className="text-[12px] text-gray-400 underline mb-2 block"
-                      >
-                        {modalPayEdit!.showPct ? "▲ Hide" : "▼ Change"} commission
-                        % (currently {modalPayEdit!.pct}%)
-                      </button>
-                      {modalPayEdit!.showPct && (
-                        <div className="flex items-center gap-2 mb-3">
-                          <input
-                            type="number"
-                            inputMode="decimal"
-                            min="0"
-                            max="100"
-                            step="0.5"
-                            value={modalPayEdit!.pct}
-                            onChange={(e) =>
-                              setModalPayEdit((s) =>
-                                s ? { ...s, pct: e.target.value } : s
+                    )}
+                  </div>
+
+                  <div className="h-px bg-gray-100 mx-5 my-2" />
+
+                  {/* Payment section */}
+                  <div className="px-5 pt-3 pb-4">
+                    <div className="text-[14px] font-extrabold text-gray-700 mb-3">
+                      Payment
+                    </div>
+                    {isEditing ? (
+                      <div className="bg-[#f0f6ff] border-2 border-[#1d6fb8] rounded-[14px] p-4">
+                        <div className="text-[14px] font-semibold text-gray-600 mb-2">
+                          How much did you receive? (₹)
+                        </div>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min="0"
+                          value={modalPayEdit!.value}
+                          onChange={(e) =>
+                            setModalPayEdit((s) =>
+                              s ? { ...s, value: e.target.value } : s
+                            )
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter")
+                              void saveEdit(
+                                liveUser.paymentId,
+                                liveUser.contact,
+                                slot.id,
+                                slot.name
+                              );
+                            if (e.key === "Escape") setModalPayEdit(null);
+                          }}
+                          autoFocus
+                          placeholder={String(liveUser.betTotal)}
+                          className="w-full text-[26px] font-extrabold text-center border-2 border-[#1d6fb8] rounded-[12px] px-4 py-3 outline-none mb-3 bg-white"
+                        />
+                        <button
+                          onClick={() =>
+                            setModalPayEdit((s) =>
+                              s ? { ...s, showPct: !s.showPct } : s
+                            )
+                          }
+                          className="text-[12px] text-gray-400 underline mb-2 block"
+                        >
+                          {modalPayEdit!.showPct ? "▲ Hide" : "▼ Change"}{" "}
+                          commission % (currently {modalPayEdit!.pct}%)
+                        </button>
+                        {modalPayEdit!.showPct && (
+                          <div className="flex items-center gap-2 mb-3">
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              min="0"
+                              max="100"
+                              step="0.5"
+                              value={modalPayEdit!.pct}
+                              onChange={(e) =>
+                                setModalPayEdit((s) =>
+                                  s ? { ...s, pct: e.target.value } : s
+                                )
+                              }
+                              className="w-24 text-center text-[18px] font-bold border-2 border-[#c5cfe0] focus:border-[#1d6fb8] rounded-[10px] px-2 py-2 outline-none"
+                            />
+                            <span className="text-[16px] font-bold text-gray-500">
+                              %
+                            </span>
+                            <span className="text-[12px] text-gray-400">
+                              for this payment only
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() =>
+                              void saveEdit(
+                                liveUser.paymentId,
+                                liveUser.contact,
+                                slot.id,
+                                slot.name
                               )
                             }
-                            className="w-24 text-center text-[18px] font-bold border-2 border-[#c5cfe0] focus:border-[#1d6fb8] rounded-[10px] px-2 py-2 outline-none"
-                          />
-                          <span className="text-[16px] font-bold text-gray-500">
-                            %
-                          </span>
-                          <span className="text-[12px] text-gray-400">
-                            for this payment only
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() =>
-                            void saveEdit(
-                              liveUser.paymentId,
-                              liveUser.contact,
-                              slot.id,
-                              slot.name
-                            )
-                          }
-                          className="flex-1 py-2.5 bg-green-600 text-white text-[14px] font-bold rounded-[10px] active:opacity-80"
-                        >
-                          ✓ Save
-                        </button>
-                        <button
-                          onClick={() => setModalPayEdit(null)}
-                          className="px-4 py-2.5 bg-gray-100 text-gray-500 text-[14px] font-semibold rounded-[10px] active:opacity-80"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : notRecorded ? (
-                    <div className="rounded-[14px] border-2 border-[#dfe8f8] bg-[#f8fbff] p-3">
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          onClick={() =>
-                            startEdit(
-                              liveUser.paymentId,
-                              null,
-                              liveUser.commissionPct
-                            )
-                          }
-                          className="py-2.5 bg-[#1d6fb8] text-white text-[13px] font-bold rounded-[10px] flex items-center justify-center gap-2 active:opacity-80 shadow-sm"
-                        >
-                          Enter amount
-                        </button>
-                        <button
-                          onClick={() =>
-                            void markUserFullyPaid(
-                              liveUser.paymentId,
-                              liveUser.contact,
-                              slot,
-                              liveUser.betTotal,
-                              liveUser.commissionPct
-                            )
-                          }
-                          className="py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-[10px] flex items-center justify-center gap-2 active:opacity-80 shadow-sm"
-                        >
-                          Paid fully
-                        </button>
-                      </div>
-                    </div>
-                  ) : fullyPaid ? (
-                    <div className="flex items-center justify-between bg-green-50 border-2 border-green-200 rounded-[14px] px-4 py-3">
-                      <div>
-                        <div className="text-[13px] text-gray-500">
-                          You received:
-                        </div>
-                        <div className="text-[22px] font-extrabold text-green-700">
-                          ₹{liveUser.amountPaid}
-                        </div>
-                        <div className="text-[11px] text-gray-400 mt-0.5">
-                          Commission: {effectivePct}%
+                            className="flex-1 py-2.5 bg-green-600 text-white text-[14px] font-bold rounded-[10px] active:opacity-80"
+                          >
+                            ✓ Save
+                          </button>
+                          <button
+                            onClick={() => setModalPayEdit(null)}
+                            className="px-4 py-2.5 bg-gray-100 text-gray-500 text-[14px] font-semibold rounded-[10px] active:opacity-80"
+                          >
+                            Cancel
+                          </button>
                         </div>
                       </div>
-                      <div className="flex flex-col items-end gap-1.5">
-                        <span className="text-[13px] font-bold text-green-700 bg-green-100 px-3 py-1 rounded-full">
-                          ✅ Fully Paid
-                        </span>
-                        <div className="flex items-center gap-2">
+                    ) : notRecorded ? (
+                      <div className="rounded-[14px] border-2 border-[#dfe8f8] bg-[#f8fbff] p-3">
+                        <div className="grid grid-cols-2 gap-2">
                           <button
                             onClick={() =>
                               startEdit(
                                 liveUser.paymentId,
-                                liveUser.amountPaid,
+                                null,
                                 liveUser.commissionPct
                               )
                             }
-                            className="text-[12px] text-gray-400 underline"
+                            className="py-2.5 bg-[#1d6fb8] text-white text-[13px] font-bold rounded-[10px] flex items-center justify-center gap-2 active:opacity-80 shadow-sm"
                           >
-                            Edit
+                            Enter amount
                           </button>
                           <button
                             onClick={() =>
-                              void clearUserReceivedAmount(
+                              void markUserFullyPaid(
                                 liveUser.paymentId,
                                 liveUser.contact,
                                 slot,
+                                liveUser.betTotal,
                                 liveUser.commissionPct
                               )
                             }
-                            className="text-[12px] text-rose-600 underline"
+                            className="py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-[10px] flex items-center justify-center gap-2 active:opacity-80 shadow-sm"
                           >
-                            Remove
+                            Paid fully
                           </button>
                         </div>
                       </div>
-                    </div>
-                  ) : hasDebt ? (
-                    <div className="rounded-[14px] border-2 border-orange-200 overflow-hidden">
-                      <div className="flex items-center justify-between bg-orange-50 px-4 py-3">
+                    ) : fullyPaid ? (
+                      <div className="flex items-center justify-between bg-green-50 border-2 border-green-200 rounded-[14px] px-4 py-3">
                         <div>
                           <div className="text-[13px] text-gray-500">
                             You received:
                           </div>
-                          <div className="text-[22px] font-extrabold text-[#1d6fb8]">
+                          <div className="text-[22px] font-extrabold text-green-700">
                             ₹{liveUser.amountPaid}
                           </div>
                           <div className="text-[11px] text-gray-400 mt-0.5">
@@ -2104,98 +2165,146 @@ export default function GamesView({
                           </div>
                         </div>
                         <div className="flex flex-col items-end gap-1.5">
-                          <button
-                            onClick={() =>
-                              startEdit(
-                                liveUser.paymentId,
-                                liveUser.amountPaid,
-                                liveUser.commissionPct
-                              )
-                            }
-                            className="text-[13px] text-gray-400 underline"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() =>
-                              void clearUserReceivedAmount(
-                                liveUser.paymentId,
-                                liveUser.contact,
-                                slot,
-                                liveUser.commissionPct
-                              )
-                            }
-                            className="text-[12px] text-rose-600 underline"
-                          >
-                            Remove
-                          </button>
+                          <span className="text-[13px] font-bold text-green-700 bg-green-100 px-3 py-1 rounded-full">
+                            ✅ Fully Paid
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() =>
+                                startEdit(
+                                  liveUser.paymentId,
+                                  liveUser.amountPaid,
+                                  liveUser.commissionPct
+                                )
+                              }
+                              className="text-[12px] text-gray-400 underline"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() =>
+                                void clearUserReceivedAmount(
+                                  liveUser.paymentId,
+                                  liveUser.contact,
+                                  slot,
+                                  liveUser.commissionPct
+                                )
+                              }
+                              className="text-[12px] text-rose-600 underline"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </div>
                       </div>
-                      <div className="bg-orange-100 px-4 py-2.5 text-center">
-                        <span className="text-[15px] font-extrabold text-orange-700">
-                          ⚠️ Still Owes: ₹{pending}
-                        </span>
-                      </div>
-                    </div>
-                  ) : overpaid ? (
-                    <div className="flex items-center justify-between bg-blue-50 border-2 border-blue-200 rounded-[14px] px-4 py-3">
-                      <div>
-                        <div className="text-[13px] text-gray-500">
-                          You received:
+                    ) : hasDebt ? (
+                      <div className="rounded-[14px] border-2 border-orange-200 overflow-hidden">
+                        <div className="flex items-center justify-between bg-orange-50 px-4 py-3">
+                          <div>
+                            <div className="text-[13px] text-gray-500">
+                              You received:
+                            </div>
+                            <div className="text-[22px] font-extrabold text-[#1d6fb8]">
+                              ₹{liveUser.amountPaid}
+                            </div>
+                            <div className="text-[11px] text-gray-400 mt-0.5">
+                              Commission: {effectivePct}%
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-1.5">
+                            <button
+                              onClick={() =>
+                                startEdit(
+                                  liveUser.paymentId,
+                                  liveUser.amountPaid,
+                                  liveUser.commissionPct
+                                )
+                              }
+                              className="text-[13px] text-gray-400 underline"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() =>
+                                void clearUserReceivedAmount(
+                                  liveUser.paymentId,
+                                  liveUser.contact,
+                                  slot,
+                                  liveUser.commissionPct
+                                )
+                              }
+                              className="text-[12px] text-rose-600 underline"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </div>
-                        <div className="text-[22px] font-extrabold text-blue-700">
-                          ₹{liveUser.amountPaid}
-                        </div>
-                        <div className="text-[11px] text-gray-400 mt-0.5">
-                          Commission: {effectivePct}%
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-1.5">
-                        <span className="text-[13px] font-bold text-blue-700 bg-blue-100 px-3 py-1 rounded-full">
-                          Extra: ₹{Math.abs(pending)}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() =>
-                              startEdit(
-                                liveUser.paymentId,
-                                liveUser.amountPaid,
-                                liveUser.commissionPct
-                              )
-                            }
-                            className="text-[12px] text-gray-400 underline"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() =>
-                              void clearUserReceivedAmount(
-                                liveUser.paymentId,
-                                liveUser.contact,
-                                slot,
-                                liveUser.commissionPct
-                              )
-                            }
-                            className="text-[12px] text-rose-600 underline"
-                          >
-                            Remove
-                          </button>
+                        <div className="bg-orange-100 px-4 py-2.5 text-center">
+                          <span className="text-[15px] font-extrabold text-orange-700">
+                            ⚠️ Still Owes: ₹{pending}
+                          </span>
                         </div>
                       </div>
-                    </div>
-                  ) : null}
-                </div>
+                    ) : overpaid ? (
+                      <div className="flex items-center justify-between bg-blue-50 border-2 border-blue-200 rounded-[14px] px-4 py-3">
+                        <div>
+                          <div className="text-[13px] text-gray-500">
+                            You received:
+                          </div>
+                          <div className="text-[22px] font-extrabold text-blue-700">
+                            ₹{liveUser.amountPaid}
+                          </div>
+                          <div className="text-[11px] text-gray-400 mt-0.5">
+                            Commission: {effectivePct}%
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1.5">
+                          <span className="text-[13px] font-bold text-blue-700 bg-blue-100 px-3 py-1 rounded-full">
+                            Extra: ₹{Math.abs(pending)}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() =>
+                                startEdit(
+                                  liveUser.paymentId,
+                                  liveUser.amountPaid,
+                                  liveUser.commissionPct
+                                )
+                              }
+                              className="text-[12px] text-gray-400 underline"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() =>
+                                void clearUserReceivedAmount(
+                                  liveUser.paymentId,
+                                  liveUser.contact,
+                                  slot,
+                                  liveUser.commissionPct
+                                )
+                              }
+                              className="text-[12px] text-rose-600 underline"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
 
-                <div className="h-px bg-gray-100 mx-5" />
+                  <div className="h-px bg-gray-100 mx-5" />
 
-                {/* Delete entry */}
-                <div className="px-5 py-4 pb-6">
-                  <button
-                    onClick={() => setModalConfirmDelete(true)}
-                    className="w-full py-3 text-[14px] font-bold text-red-600 border-2 border-red-100 rounded-[14px] hover:bg-red-50 active:bg-red-100 transition-colors"
-                  >
-                    🗑 Delete this entry
-                  </button>
+                  {/* Delete entry */}
+                  <div className="px-5 py-4 pb-6">
+                    <button
+                      onClick={() => setModalConfirmDelete(true)}
+                      className="w-full py-3 text-[14px] font-bold text-red-600 border-2 border-red-100 rounded-[14px] hover:bg-red-50 active:bg-red-100 transition-colors"
+                    >
+                      🗑 Delete this entry
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -2244,7 +2353,9 @@ export default function GamesView({
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         onClick={() => {
-                          setWinDraft((p) => new Map(p).set(winNumModal!, savedNum));
+                          setWinDraft((p) =>
+                            new Map(p).set(winNumModal!, savedNum)
+                          );
                           setGameResults((p) => {
                             const n = new Map(p);
                             n.delete(winNumModal!);
@@ -2342,7 +2453,9 @@ export default function GamesView({
         titleId="gv-multi-row-title"
         title={
           modalConfirmRowDelete
-            ? `Delete ${modalConfirmRowDelete.indices.length} selected line${modalConfirmRowDelete.indices.length === 1 ? "" : "s"}?`
+            ? `Delete ${modalConfirmRowDelete.indices.length} selected line${
+                modalConfirmRowDelete.indices.length === 1 ? "" : "s"
+              }?`
             : ""
         }
         message={

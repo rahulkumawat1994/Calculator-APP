@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useEffect } from "react";
+import { useEffect, useId } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 export type ModalBackdrop = "dim" | "blurred";
@@ -21,9 +21,24 @@ export interface ModalProps {
 const OVERLAY_BASE =
   "fixed inset-0 z-[20000] flex items-center justify-center overscroll-contain";
 
-/** Tracks how many Modal instances are currently open so scroll-lock is
- *  released only when the last one closes (handles stacked modals). */
-let openCount = 0;
+/** One entry per open Modal instance; avoids counter drift under Strict Mode or stacked dialogs. */
+const scrollLockOwners = new Set<string>();
+
+function lockBodyScroll(ownerId: string) {
+  if (typeof document === "undefined") return;
+  scrollLockOwners.add(ownerId);
+  if (scrollLockOwners.size === 1) {
+    document.body.style.overflow = "hidden";
+  }
+}
+
+function unlockBodyScroll(ownerId: string) {
+  if (typeof document === "undefined") return;
+  scrollLockOwners.delete(ownerId);
+  if (scrollLockOwners.size === 0) {
+    document.body.style.removeProperty("overflow");
+  }
+}
 
 /**
  * Full-viewport modal overlay, portaled to `document.body` with a stable z-index.
@@ -37,24 +52,13 @@ export function Modal({
   backdrop = "dim",
   overlayClassName = "p-4",
 }: ModalProps) {
-  // Scroll lock — runs whenever `open` changes or on unmount.
+  const scrollLockId = useId();
+
   useEffect(() => {
-    if (typeof document === "undefined") return;
-    if (open) {
-      openCount++;
-      if (openCount === 1) {
-        document.body.style.overflow = "hidden";
-      }
-    }
-    return () => {
-      if (open) {
-        openCount = Math.max(0, openCount - 1);
-        if (openCount === 0) {
-          document.body.style.overflow = "";
-        }
-      }
-    };
-  }, [open]);
+    if (!open) return;
+    lockBodyScroll(scrollLockId);
+    return () => unlockBodyScroll(scrollLockId);
+  }, [open, scrollLockId]);
 
   if (!open || typeof document === "undefined") return null;
 

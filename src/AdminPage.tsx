@@ -143,7 +143,9 @@ export default function AdminPage() {
     null
   );
   /** For each segment in previewResult, the raw input lines (pre-normalisation) that produced it. */
-  const [segmentSourceIndices, setSegmentSourceIndices] = useState<number[][] | null>(null);
+  const [segmentSourceIndices, setSegmentSourceIndices] = useState<
+    number[][] | null
+  >(null);
   /** The rawLines array that corresponds to segmentSourceIndices (flat, WA-offset-adjusted). */
   const [previewRawLines, setPreviewRawLines] = useState<string[] | null>(null);
   /** Which segment indices are currently highlighted (single or multi-select). */
@@ -366,8 +368,7 @@ export default function AdminPage() {
         setError(bannerParts.join(" "));
       }
     } catch (e) {
-      const msg =
-        e instanceof Error ? e.message : "Failed to load admin data.";
+      const msg = e instanceof Error ? e.message : "Failed to load admin data.";
       setError(msg);
       toastApiError(e, msg);
     } finally {
@@ -396,7 +397,8 @@ export default function AdminPage() {
       !inputPreRef.current ||
       !segmentSourceIndices ||
       !previewRawLines
-    ) return;
+    )
+      return;
 
     const container = inputPreRef.current;
     const srcIdxs = segmentSourceIndices[segIdx];
@@ -404,13 +406,15 @@ export default function AdminPage() {
 
     // Find the first input line index that belongs to this segment
     const firstRawIdx = srcIdxs.slice().sort((a, b) => a - b)[0]!;
-    const hlSpan = container.querySelector<HTMLElement>(`[data-hl-line="${firstRawIdx}"]`);
+    const hlSpan = container.querySelector<HTMLElement>(
+      `[data-hl-line="${firstRawIdx}"]`
+    );
     if (!hlSpan) return;
 
     const containerRect = container.getBoundingClientRect();
     const hlRect = hlSpan.getBoundingClientRect();
     container.scrollTop += hlRect.top - containerRect.top - 24;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSegIdxs]);
 
   useEffect(() => {
@@ -424,15 +428,6 @@ export default function AdminPage() {
     window.addEventListener(REPORT_PUSH_CHANGED_EVENT, sync);
     return () => window.removeEventListener(REPORT_PUSH_CHANGED_EVENT, sync);
   }, []);
-
-  useEffect(() => {
-    if (!previewAudit) return;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [previewAudit]);
 
   useEffect(() => {
     if (typeof Notification === "undefined") return;
@@ -769,17 +764,21 @@ export default function AdminPage() {
       const allRawLines: string[] = [];
       const allSourceIndices: number[][] = [];
       for (const m of waMessages) {
-        const { segmentSourceIndices: msgIdxs, rawLines: msgRaw } = calculateTotalWithSources(m.text);
+        const { segmentSourceIndices: msgIdxs, rawLines: msgRaw } =
+          calculateTotalWithSources(m.text);
         const offset = allRawLines.length;
         allRawLines.push(...msgRaw);
-        for (const idxs of msgIdxs) allSourceIndices.push(idxs.map((i) => i + offset));
+        for (const idxs of msgIdxs)
+          allSourceIndices.push(idxs.map((i) => i + offset));
       }
       setPreviewRawLines(allRawLines);
       setSegmentSourceIndices(allSourceIndices);
     } else {
-      const { result, segmentSourceIndices: srcIdxs, rawLines } = calculateTotalWithSources(
-        row.input ?? "",
-      );
+      const {
+        result,
+        segmentSourceIndices: srcIdxs,
+        rawLines,
+      } = calculateTotalWithSources(row.input ?? "");
       setPreviewResult(result);
       setPreviewRawLines(rawLines);
       setSegmentSourceIndices(srcIdxs);
@@ -802,7 +801,11 @@ export default function AdminPage() {
           results: waMessages.flatMap((m) => m.result.results),
           total: waMessages.reduce((s, m) => s + m.result.total, 0),
           ...(waMessages.flatMap((m) => m.result.failedLines ?? []).length > 0
-            ? { failedLines: waMessages.flatMap((m) => m.result.failedLines ?? []) }
+            ? {
+                failedLines: waMessages.flatMap(
+                  (m) => m.result.failedLines ?? []
+                ),
+              }
             : {}),
         }
       : calculateTotal(row.input ?? "");
@@ -1038,7 +1041,10 @@ export default function AdminPage() {
                         </div>
                         {auditSavedVersusParserDiffers ? (
                           <>
-                            <div className="h-8 w-px bg-slate-200" aria-hidden />
+                            <div
+                              className="h-8 w-px bg-slate-200"
+                              aria-hidden
+                            />
                             <div
                               className="rounded-lg border border-amber-100/80 bg-amber-50/50 px-2.5 py-1.5 sm:px-3"
                               title="Sum of what the current parser produces on each row’s stored input (today’s engine)."
@@ -1769,7 +1775,10 @@ export default function AdminPage() {
                       Original input
                       {activeSegIdxs.size > 0 && (
                         <span className="ml-2 text-[11px] font-normal text-gray-400">
-                          — {activeSegIdxs.size === 1 ? "matching lines highlighted" : `${activeSegIdxs.size} segments highlighted`}
+                          —{" "}
+                          {activeSegIdxs.size === 1
+                            ? "matching lines highlighted"
+                            : `${activeSegIdxs.size} segments highlighted`}
                         </span>
                       )}
                     </p>
@@ -1783,27 +1792,46 @@ export default function AdminPage() {
                       Copy input
                     </button>
                   </div>
-                  <pre ref={inputPreRef} className="max-h-[52vh] overflow-y-auto overscroll-contain rounded-[10px] border border-[#e4edf8] bg-white p-3 font-mono text-[11px] whitespace-pre-wrap wrap-break-word">
+                  <pre
+                    ref={inputPreRef}
+                    className="max-h-[52vh] overflow-y-auto overscroll-contain rounded-[10px] border border-[#e4edf8] bg-white p-3 font-mono text-[11px] whitespace-pre-wrap wrap-break-word"
+                  >
                     {(() => {
                       const PALETTE_HL = [
-                        "#dbeafe","#d1fae5","#fef3c7","#ede9fe",
-                        "#ffe4e6","#cffafe","#ffedd5","#fce7f3",
+                        "#dbeafe",
+                        "#d1fae5",
+                        "#fef3c7",
+                        "#ede9fe",
+                        "#ffe4e6",
+                        "#cffafe",
+                        "#ffedd5",
+                        "#fce7f3",
                       ];
                       const input = previewAudit.input ?? "";
                       const inputLines = input.split("\n");
-                      if (activeSegIdxs.size === 0 || !segmentSourceIndices || !previewRawLines) {
+                      if (
+                        activeSegIdxs.size === 0 ||
+                        !segmentSourceIndices ||
+                        !previewRawLines
+                      ) {
                         return input;
                       }
                       // Forward-scan: map each rawLine index → the input line it came from.
                       // Scanning in order ensures duplicate rawLine content maps to the
                       // correct positional occurrence, not always the first.
-                      const rawLineToInputIdx = new Array<number>(previewRawLines.length).fill(-1);
+                      const rawLineToInputIdx = new Array<number>(
+                        previewRawLines.length
+                      ).fill(-1);
                       let scanPtr = 0;
                       for (let ri = 0; ri < previewRawLines.length; ri++) {
                         const target = previewRawLines[ri]!;
                         while (scanPtr < inputLines.length) {
                           const t = inputLines[scanPtr]!.trim();
-                          if (t === target || t.endsWith(target) || t.includes(target)) {
+                          if (
+                            t === target ||
+                            t.endsWith(target) ||
+                            t.includes(target)
+                          ) {
                             rawLineToInputIdx[ri] = scanPtr;
                             scanPtr++;
                             break;
@@ -1812,14 +1840,21 @@ export default function AdminPage() {
                         }
                       }
                       // Build inputLine → { hlColor, rawLineIdx } map from all active segments
-                      const lineHighlights = new Map<number, { color: string; ri: number }>();
+                      const lineHighlights = new Map<
+                        number,
+                        { color: string; ri: number }
+                      >();
                       for (const segIdx of activeSegIdxs) {
                         const srcIdxs = segmentSourceIndices[segIdx];
                         if (!srcIdxs) continue;
                         const hlColor = PALETTE_HL[segIdx % PALETTE_HL.length]!;
                         for (const ri of srcIdxs) {
                           const li = rawLineToInputIdx[ri];
-                          if (li !== undefined && li >= 0 && !lineHighlights.has(li)) {
+                          if (
+                            li !== undefined &&
+                            li >= 0 &&
+                            !lineHighlights.has(li)
+                          ) {
                             lineHighlights.set(li, { color: hlColor, ri });
                           }
                         }
@@ -1831,7 +1866,14 @@ export default function AdminPage() {
                             key={li}
                             className="block"
                             {...(hl ? { "data-hl-line": String(hl.ri) } : {})}
-                            style={hl ? { backgroundColor: hl.color, borderRadius: "3px" } : undefined}
+                            style={
+                              hl
+                                ? {
+                                    backgroundColor: hl.color,
+                                    borderRadius: "3px",
+                                  }
+                                : undefined
+                            }
                           >
                             {rawLine}
                           </span>
@@ -1855,7 +1897,9 @@ export default function AdminPage() {
                           if (multiSelectMode) {
                             // switching back to single: keep at most one selection
                             const first = activeSegIdxs.values().next().value;
-                            setActiveSegIdxs(first !== undefined ? new Set([first]) : new Set());
+                            setActiveSegIdxs(
+                              first !== undefined ? new Set([first]) : new Set()
+                            );
                           }
                         }}
                         className={[
@@ -1873,7 +1917,10 @@ export default function AdminPage() {
                           onClick={() => setActiveSegIdxs(new Set())}
                           className="text-[11px] text-gray-400 underline hover:text-gray-600"
                         >
-                          Clear{activeSegIdxs.size > 1 ? ` (${activeSegIdxs.size})` : ""}
+                          Clear
+                          {activeSegIdxs.size > 1
+                            ? ` (${activeSegIdxs.size})`
+                            : ""}
                         </button>
                       )}
                     </div>
@@ -1887,16 +1934,34 @@ export default function AdminPage() {
                       <div className="space-y-2">
                         {(() => {
                           const PALETTE_BORDER = [
-                            "border-l-blue-400","border-l-emerald-400","border-l-amber-400","border-l-violet-400",
-                            "border-l-rose-400","border-l-cyan-400","border-l-orange-400","border-l-pink-400",
+                            "border-l-blue-400",
+                            "border-l-emerald-400",
+                            "border-l-amber-400",
+                            "border-l-violet-400",
+                            "border-l-rose-400",
+                            "border-l-cyan-400",
+                            "border-l-orange-400",
+                            "border-l-pink-400",
                           ];
                           const PALETTE_ACTIVE_BG = [
-                            "bg-blue-50","bg-emerald-50","bg-amber-50","bg-violet-50",
-                            "bg-rose-50","bg-cyan-50","bg-orange-50","bg-pink-50",
+                            "bg-blue-50",
+                            "bg-emerald-50",
+                            "bg-amber-50",
+                            "bg-violet-50",
+                            "bg-rose-50",
+                            "bg-cyan-50",
+                            "bg-orange-50",
+                            "bg-pink-50",
                           ];
                           const PALETTE_DOT = [
-                            "bg-blue-400","bg-emerald-400","bg-amber-400","bg-violet-400",
-                            "bg-rose-400","bg-cyan-400","bg-orange-400","bg-pink-400",
+                            "bg-blue-400",
+                            "bg-emerald-400",
+                            "bg-amber-400",
+                            "bg-violet-400",
+                            "bg-rose-400",
+                            "bg-cyan-400",
+                            "bg-orange-400",
+                            "bg-pink-400",
                           ];
                           return previewResult.results.map((seg, idx) => {
                             const isActive = activeSegIdxs.has(idx);
@@ -1917,8 +1982,12 @@ export default function AdminPage() {
                                       else next.add(idx);
                                     } else {
                                       // single select: replace
-                                      if (next.has(idx) && next.size === 1) next.clear();
-                                      else { next.clear(); next.add(idx); }
+                                      if (next.has(idx) && next.size === 1)
+                                        next.clear();
+                                      else {
+                                        next.clear();
+                                        next.add(idx);
+                                      }
                                     }
                                     return next;
                                   });
@@ -1961,8 +2030,8 @@ export default function AdminPage() {
                                     {isActive
                                       ? "click to deselect"
                                       : multiSelectMode
-                                        ? "click to add"
-                                        : "click to highlight"}
+                                      ? "click to add"
+                                      : "click to highlight"}
                                   </span>
                                 </div>
                                 <p className="font-mono text-[12px] text-[#222] whitespace-pre-wrap wrap-break-word">
@@ -2073,9 +2142,7 @@ export default function AdminPage() {
       )}
 
       {activeTab === "audit" && selectedAuditIds.size > 0 ? (
-        <div
-          className="pointer-events-none fixed bottom-0 right-0 z-40 max-w-[min(100vw,1300px)] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pl-6 sm:p-4 sm:pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pl-8"
-        >
+        <div className="pointer-events-none fixed bottom-0 right-0 z-40 max-w-[min(100vw,1300px)] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pl-6 sm:p-4 sm:pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pl-8">
           <div
             className="pointer-events-auto ml-auto w-[min(100%,17.5rem)] overflow-hidden rounded-2xl bg-white shadow-[0_12px_48px_-8px_rgba(15,23,42,0.22),0_0_0_1px_rgba(15,23,42,0.06)] ring-1 ring-slate-900/4"
             role="toolbar"
