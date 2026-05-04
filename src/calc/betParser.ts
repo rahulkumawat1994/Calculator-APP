@@ -3,6 +3,7 @@ import {
   normalizeIntoRateMarker,
   normalizeTrailingDashRate,
   normalizeTypoTolerantInput,
+  tryParseArithmeticSumDivide,
 } from "./textNormalize";
 
 // ─── Number helpers ────────────────────────────────────────────────────────────
@@ -294,6 +295,19 @@ export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segm
     // (rate  (only opening paren, nothing after digits — add closing)
     .replace(/\(\s*(\d+)\s*$/g, '($1)');
   if (!trimmed) return [];
+  const arith = tryParseArithmeticSumDivide(trimmed);
+  if (arith) {
+    return [
+      {
+        line: arith.displayLine,
+        rate: 1,
+        isWP: false,
+        isDouble: false,
+        count: arith.lineTotal,
+        lineTotal: arith.lineTotal,
+      },
+    ];
+  }
   if (!opts?.skipMultiX) {
     const multi = tryParseMultiXSameDigitChain(trimmed, s => processLine(s, { skipMultiX: true }));
     if (multi) return multi;

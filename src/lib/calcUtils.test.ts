@@ -78,6 +78,15 @@ describe("calculateTotal regression scenarios", () => {
     { id: "solid-equals-b", input: "999=B100", expectedTotal: 100 },
     // Two-digit jodi + "." + single-digit stake (same as 40x5)
     { id: "jodi-dot-single-rate", input: "40.5", expectedTotal: 5 },
+    // WhatsApp sum then ÷ (// or / at end); preserved through normalize so total is not 0
+    { id: "arith-double-slash", input: "75+57//5", expectedTotal: 26 },
+    { id: "arith-slash-chain", input: "01+02+03+04+05+06+07+08+09+10/5", expectedTotal: 11 },
+    {
+      id: "arith-long-palyr",
+      input:
+        "06+96+69+05+95+93+09+76+16+50+71+13+31+15+51+97+04+40+26+62+55+91+19+39//5",
+      expectedTotal: 225,
+    },
   ] as const;
 
   it.each(rows)("$id -> total $expectedTotal", (row) => {
