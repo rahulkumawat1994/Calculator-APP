@@ -65,6 +65,16 @@ export function normalizeTypoTolerantInput(s: string): string {
     /\b(\d{2})\/(5|10|15|20|25|30|40|50|100|120)\b/g,
     "$1x$2",
   );
+  // Same whitelist as NN/stake above — avoids rewriting second jodis like `75-57intu10` (57 is not a stake).
+  // After {@link normalizeIntoRateMarker}, chains like `05-50into5` become `05-50 x5`; `\b` appears after `50`
+  // before the space. Second pass through this function (from `processLine`) must not rewrite that to `05x50`.
+  // `(?!\s+x\s*\d)` skips when the stake is immediately followed by the ×rate from an into-split.
+  t = t.replace(
+    /\b(\d{2})-(5|10|15|20|25|30|40|50|100|120)\b(?!\s+x\s*\d)/g,
+    "$1x$2",
+  );
+  // Single-digit stake after "-" (e.g. `27-5` same as `27=5` / `27x5`); run after whitelist so `27-10` stays one token.
+  t = t.replace(/\b(\d{2})-([1-9])\b(?!\s+x\s*\d)/g, "$1x$2");
   // Two-digit jodi + "." + single-digit rate (same meaning as 40x5 / 40=5; avoids breaking NN.MM dates with two-digit months)
   t = t.replace(/\b(\d{2})\.([1-9])\b/g, "$1x$2");
   // Between digits: `;` `|` `/` `\` or tabs often used instead of space (keep `,` for comma-rate lines)
@@ -147,8 +157,11 @@ function looksLikeIntoTypo(letters: string): boolean {
  */
 export function normalizeIntoRateMarker(s: string): string {
   let out = s
-    .replace(/\s*ij\s*to(?=\s*\d)/gi, " x")
-    .replace(/\s*in\s*t[ou](?=\s*\d)/gi, " x");
+    // `…42-into5` — stray hyphen before `into` when `into` stayed on the same line (narrow wrap).
+    .replace(/[-–—]+\s*(into|ijto)\s*(\d{1,5})\s*$/i, "into$2")
+    // Must follow a digit — otherwise a standalone `Into5` line (continuation on next row) becomes orphan `x5`.
+    .replace(/(?<=\d)\s*ij\s*to(?=\s*\d)/gi, " x")
+    .replace(/(?<=\d)\s*in\s*t[ou](?=\s*\d)/gi, " x");
   // After a digit: [letters typo "into"] [rate] at end of string → xrate
   out = out.replace(
     /(?<=\d)([a-zA-Z]{2,})\s*(\d{1,5})\s*$/gi,

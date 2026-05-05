@@ -13,6 +13,35 @@ import {
 } from "./textNormalize";
 import type { CalculationResult, Segment } from "../types";
 
+/**
+ * Narrow-screen pastes break a dash-separated jodi row before the final `into` rate, e.g.
+ *   `25-52-02-20-`
+ *   `Into5`
+ * Join before per-line `normalizeIntoRateMarker` so we get `…20into5` not orphan `x5`.
+ */
+export type MergedRawChunk = { text: string; rawIndices: number[] };
+
+export function mergeTrailingDashWithIntoContinuation(rawLines: string[]): MergedRawChunk[] {
+  const out: MergedRawChunk[] = [];
+  let i = 0;
+  while (i < rawLines.length) {
+    const cur = rawLines[i]!;
+    const next = i + 1 < rawLines.length ? rawLines[i + 1]! : "";
+    const curT = cur.trim();
+    const nextT = next.trim();
+    const intoNext = /^\s*(?:into|ijto)\s*(\d{1,5})\s*$/i.exec(nextT);
+    if (/[-–—]\s*$/.test(curT) && intoNext) {
+      const base = curT.replace(/[-–—]+\s*$/, "");
+      out.push({ text: `${base}into${intoNext[1]}`, rawIndices: [i, i + 1] });
+      i += 2;
+      continue;
+    }
+    out.push({ text: cur, rawIndices: [i] });
+    i += 1;
+  }
+  return out;
+}
+
 /** Lines with no letters and no digits (e.g. ".", "---") — never stash or merge. */
 function isSeparatorOnlyLine(line: string): boolean {
   return !/[0-9A-Za-z\u0900-\u0FFF]/.test(line);
@@ -27,7 +56,7 @@ function isWhatsAppNoiseLine(line: string): boolean {
   if (/^explore the app now/i.test(t)) return true;
   if (/^under\s*\/\s*bahar$/i.test(t)) return true;
   // Standalone market / game stamp on its own line (often after a screenshot block).
-  if (/^(fd|db|sg|gb|gali|ds|fb|gl|desawr|harf|hrf)\s*$/i.test(t)) {
+  if (/^(fd|db|sg|sh|gb|gali|ds|fb|gl|desawr|harf|hrf)\s*$/i.test(t)) {
     return true;
   }
   return false;
@@ -237,8 +266,10 @@ function stripLooseSlotMarketPrefixForNumberLine(line: string): string {
 export function calculateTotal(text: string): CalculationResult {
   const cleaned = preprocessText(text);
   const rawLines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
+  const mergedChunks = mergeTrailingDashWithIntoContinuation(rawLines);
   const logicalLines: string[] = [];
-  for (const rawLine of rawLines) {
+  for (const chunk of mergedChunks) {
+    const rawLine = chunk.text;
     if (isWhatsAppNoiseLine(rawLine)) continue;
     const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
     const labelStripped = stripLeadingGameLabels(afterLoose);
@@ -499,11 +530,12 @@ function _mergeTrailingCommaListWithXOnLaterLineTL(pairs: TL[]): TL[] {
 export function calculateTotalWithSources(text: string): CalculationResultWithSources {
   const cleaned = preprocessText(text);
   const rawLines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
+  const mergedChunks = mergeTrailingDashWithIntoContinuation(rawLines);
 
   // Phase 1 — normalise each raw line, track its index in rawLines
   const logicalPairs: TL[] = [];
-  for (let ri = 0; ri < rawLines.length; ri++) {
-    const rawLine = rawLines[ri]!;
+  for (const chunk of mergedChunks) {
+    const rawLine = chunk.text;
     if (isWhatsAppNoiseLine(rawLine)) continue;
     const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
     const labelStripped = stripLeadingGameLabels(afterLoose);
@@ -512,7 +544,7 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
     );
     if (isSeparatorOnlyLine(line)) continue;
     for (const s of splitTrailingNumberRunAfterLastRate(line)) {
-      logicalPairs.push({ line: s, src: [ri] });
+      logicalPairs.push({ line: s, src: chunk.rawIndices });
     }
   }
 

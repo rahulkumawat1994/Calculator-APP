@@ -17,7 +17,13 @@ import { parseWhatsAppMessages } from "../calc/whatsapp";
 
 const marketTestSlots: GameSlot[] = [
   { id: "db", name: "Delhi DB", time: "14:50", emoji: "1", enabled: true },
-  { id: "sg", name: "Shri Ganesh SG", time: "16:25", emoji: "2", enabled: true },
+  {
+    id: "sg",
+    name: "Shri Ganesh SG",
+    time: "16:25",
+    emoji: "2",
+    enabled: true,
+  },
   { id: "fb", name: "Faridabad", time: "17:50", emoji: "3", enabled: true },
   { id: "gl", name: "Gali GL", time: "23:17", emoji: "4", enabled: true },
   { id: "gb", name: "Ghaziabad GB", time: "21:15", emoji: "5", enabled: true },
@@ -45,7 +51,11 @@ describe("calculateTotal regression scenarios", () => {
     { id: "multix-b", input: "B.1111x9999x50", expectedTotal: 100 },
     { id: "multix-noprefix", input: "1111x2222x10", expectedTotal: 20 },
     { id: "label-harf", input: "Harf.B.1111x9999x50", expectedTotal: 100 },
-    { id: "label-harf-typo-seps", input: "Harf.B..2222.x7777x50", expectedTotal: 100 },
+    {
+      id: "label-harf-typo-seps",
+      input: "Harf.B..2222.x7777x50",
+      expectedTotal: 100,
+    },
     { id: "label-db", input: "DB. 29.09.11x10", expectedTotal: 30 },
     // Dot jodi line: 9103 → two pairs 91+03 (same as 91.03). Tail is .30x5 → jodi 30, rate 5 (not x30).
     {
@@ -61,10 +71,18 @@ describe("calculateTotal regression scenarios", () => {
     },
     { id: "paren-solid", input: "44444(20)AB", expectedTotal: 40 },
     { id: "comma-rate", input: "12,34,56,10", expectedTotal: 30 },
-    { id: "space-dash-rate", input: "20 37 28 39 - 28\n22 17 22 33 - 5", expectedTotal: 132 },
+    {
+      id: "space-dash-rate",
+      input: "20 37 28 39 - 28\n22 17 22 33 - 5",
+      expectedTotal: 132,
+    },
     { id: "typo-separators", input: "12;34|56,10", expectedTotal: 30 },
     { id: "typo-fullwidth", input: "２０　３７x10", expectedTotal: 20 },
-    { id: "typo-wp", input: "56 74 50 w.p\n13 31 15 palatel\n22 33 10 w p", expectedTotal: 250 },
+    {
+      id: "typo-wp",
+      input: "56 74 50 w.p\n13 31 15 palatel\n22 33 10 w p",
+      expectedTotal: 250,
+    },
     // WhatsApp-style "into" rate with common typos (intu / ijto)
     { id: "into-typo-intu", input: "75-57intu10", expectedTotal: 20 },
     { id: "into-typo-ijto", input: "48-84-16-61ijto10", expectedTotal: 40 },
@@ -78,9 +96,19 @@ describe("calculateTotal regression scenarios", () => {
     { id: "solid-equals-b", input: "999=B100", expectedTotal: 100 },
     // Two-digit jodi + "." + single-digit stake (same as 40x5)
     { id: "jodi-dot-single-rate", input: "40.5", expectedTotal: 5 },
+    // Dash as rate separator (WA shorthand): same stakes as slash whitelist + trailing single digit
+    {
+      id: "jodi-dash-rate-multiline",
+      input: "27-5\n17-5\n52-5\n53-5",
+      expectedTotal: 20,
+    },
     // WhatsApp sum then ÷ (// or / at end); preserved through normalize so total is not 0
     { id: "arith-double-slash", input: "75+57//5", expectedTotal: 26 },
-    { id: "arith-slash-chain", input: "01+02+03+04+05+06+07+08+09+10/5", expectedTotal: 11 },
+    {
+      id: "arith-slash-chain",
+      input: "01+02+03+04+05+06+07+08+09+10/5",
+      expectedTotal: 11,
+    },
     {
       id: "arith-long-palyr",
       input:
@@ -103,7 +131,19 @@ describe("calculateTotal regression scenarios", () => {
     const parts = list.split(", ");
     expect(parts).toHaveLength(13);
     expect(parts).toEqual([
-      "83", "45", "94", "34", "13", "02", "20", "38", "27", "19", "91", "03", "30",
+      "83",
+      "45",
+      "94",
+      "34",
+      "13",
+      "02",
+      "20",
+      "38",
+      "27",
+      "19",
+      "91",
+      "03",
+      "30",
     ]);
   });
 
@@ -126,6 +166,25 @@ describe("calculateTotal regression scenarios", () => {
     expect(processLine("444x20B")[0]?.lane).toBe("B");
     expect(processLine("333,,,100ab")[0]?.lane).toBe("AB");
     expect(processLine("B.1111x9999x50")[0]?.lane).toBe("B");
+  });
+
+  it("GC MALHOTRA: hyphen line break before Into rate — merge rows (no orphan x5)", () => {
+    const raw = `[03/05, 3:17 pm] GC MALHOTRA PLAYER: 75-57into10
+25-52-02-20-
+Into5
+18-81-08-80into5
+05-50into10
+Sg
+Db
+[03/05, 3:18 pm] GC MALHOTRA PLAYER: 07-70into5
+03-30into5
+17-71-18-81into10
+34-43-24-42-into5
+32-23into10
+Sh`;
+    const r = calculateTotal(raw);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(180);
   });
 
   it("WhatsApp sample: into / intu / ijto lines all parse (Sg/Fd/Gb stamps skipped)", () => {
@@ -205,8 +264,13 @@ Gb`;
     const r = calculateTotal(raw);
     expect(r.failedLines ?? []).toEqual([]);
     expect(r.total).toBe(315);
-    const harfSeg = r.results.find(x => x.line.includes("6666"));
-    expect(harfSeg).toMatchObject({ isDouble: true, count: 2, rate: 50, lineTotal: 100 });
+    const harfSeg = r.results.find((x) => x.line.includes("6666"));
+    expect(harfSeg).toMatchObject({
+      isDouble: true,
+      count: 2,
+      rate: 50,
+      lineTotal: 100,
+    });
   });
 
   it("WhatsApp: comma list broken with trailing comma, rate ×N on next line (FB…)", () => {
@@ -272,7 +336,11 @@ Gb`;
     const r = calculateTotal("27/120\n73/20");
     expect(r.failedLines ?? []).toEqual([]);
     expect(r.results).toHaveLength(2);
-    expect(r.results[0]).toMatchObject({ line: "27", rate: 120, lineTotal: 120 });
+    expect(r.results[0]).toMatchObject({
+      line: "27",
+      rate: 120,
+      lineTotal: 120,
+    });
     expect(r.results[1]).toMatchObject({ line: "73", rate: 20, lineTotal: 20 });
     expect(r.total).toBe(140);
   });
@@ -377,21 +445,45 @@ describe("parser structure checks", () => {
   it("parses multi-x same-digit chain into two segments", () => {
     const out = processLine("Harf.B.1111x9999x50");
     expect(out).toHaveLength(2);
-    expect(out[0]).toMatchObject({ line: "B.1111", rate: 50, count: 1, lineTotal: 50 });
-    expect(out[1]).toMatchObject({ line: "B.9999", rate: 50, count: 1, lineTotal: 50 });
+    expect(out[0]).toMatchObject({
+      line: "B.1111",
+      rate: 50,
+      count: 1,
+      lineTotal: 50,
+    });
+    expect(out[1]).toMatchObject({
+      line: "B.9999",
+      rate: 50,
+      count: 1,
+      lineTotal: 50,
+    });
   });
 
   it("parses multi-x chain with extra separators around x", () => {
     const out = processLine("Harf.B..2222.x7777x50");
     expect(out).toHaveLength(2);
-    expect(out[0]).toMatchObject({ line: "B.2222", rate: 50, count: 1, lineTotal: 50 });
-    expect(out[1]).toMatchObject({ line: "B.7777", rate: 50, count: 1, lineTotal: 50 });
+    expect(out[0]).toMatchObject({
+      line: "B.2222",
+      rate: 50,
+      count: 1,
+      lineTotal: 50,
+    });
+    expect(out[1]).toMatchObject({
+      line: "B.7777",
+      rate: 50,
+      count: 1,
+      lineTotal: 50,
+    });
   });
 
   it("supports trailing dash-rate style", () => {
     const out = calculateTotal("20 37 28 39 - 28\n22 17 22 33 - 5");
     expect(out.results).toHaveLength(2);
-    expect(out.results[0]).toMatchObject({ count: 4, rate: 28, lineTotal: 112 });
+    expect(out.results[0]).toMatchObject({
+      count: 4,
+      rate: 28,
+      lineTotal: 112,
+    });
     expect(out.results[1]).toMatchObject({ count: 4, rate: 5, lineTotal: 20 });
     expect(out.total).toBe(132);
   });
@@ -444,7 +536,11 @@ GL 83×10`;
     const out = calculateTotal(text);
     expect(out.failedLines ?? []).toEqual([]);
     expect(out.results).toHaveLength(1);
-    expect(out.results[0]).toMatchObject({ count: 16, rate: 30, lineTotal: 480 });
+    expect(out.results[0]).toMatchObject({
+      count: 16,
+      rate: 30,
+      lineTotal: 480,
+    });
   });
 });
 
@@ -498,7 +594,19 @@ describe("session ledger (History / GamesView)", () => {
         },
       ],
       slotOverrides: {
-        usa: { results: [{ line: "99", rate: 1, isWP: false, isDouble: false, count: 1, lineTotal: 42 }], total: 42 },
+        usa: {
+          results: [
+            {
+              line: "99",
+              rate: 1,
+              isWP: false,
+              isDouble: false,
+              count: 1,
+              lineTotal: 42,
+            },
+          ],
+          total: 42,
+        },
       },
     };
     expect(sessionLedgerForSlotKey(session, "usa")?.total).toBe(42);
@@ -529,7 +637,19 @@ describe("session ledger (History / GamesView)", () => {
         },
       ],
       slotOverrides: {
-        usa: { results: [{ line: "1", rate: 1, isWP: false, isDouble: false, count: 1, lineTotal: 7 }], total: 7 },
+        usa: {
+          results: [
+            {
+              line: "1",
+              rate: 1,
+              isWP: false,
+              isDouble: false,
+              count: 1,
+              lineTotal: 7,
+            },
+          ],
+          total: 7,
+        },
       },
     };
     const indiaTotal = calculateTotal("11 22 x5").total;
@@ -560,11 +680,7 @@ describe("market slot hints (plain paste)", () => {
       marketTestSlots,
       fallbackGl
     );
-    expect(chunks.map((c) => c.slotId)).toEqual([
-      "gl",
-      "fb",
-      "gl",
-    ]);
+    expect(chunks.map((c) => c.slotId)).toEqual(["gl", "fb", "gl"]);
     expect(chunks[0].touchedByMarketLabel).toBe(false);
     expect(chunks[1].touchedByMarketLabel).toBe(true);
     expect(chunks[1].text).toContain("30");
@@ -587,7 +703,9 @@ describe("ledgerDateStringForSlot (slot result-time determines same vs previous 
     expect(ledgerDateStringForSlot(marketTestSlots[5], op)).toBe("20/04/2026");
     // Same rule at 3:30 AM the next calendar day — still "yesterday's game"
     const earlyMorning = new Date(2026, 3, 22, 3, 30); // 22 Apr 2026 03:30 AM
-    expect(ledgerDateStringForSlot(marketTestSlots[5], earlyMorning)).toBe("21/04/2026");
+    expect(ledgerDateStringForSlot(marketTestSlots[5], earlyMorning)).toBe(
+      "21/04/2026"
+    );
   });
 });
 
@@ -604,13 +722,13 @@ describe("computePatternAccuracy", () => {
     expect(r.failedLines?.length).toBeGreaterThan(0);
     const a = computePatternAccuracy(r);
     expect(a.scorePercent).toBeLessThan(100);
-    expect(a.reasons.some(x => x.includes("not matched"))).toBe(true);
+    expect(a.reasons.some((x) => x.includes("not matched"))).toBe(true);
   });
 
   it("deducts for WA slot fallbacks", () => {
     const r = calculateTotal("11 22 x10");
     const a = computePatternAccuracy(r, { waSlotFallbackCount: 2 });
     expect(a.scorePercent).toBe(99.7);
-    expect(a.reasons.some(x => x.includes("fallback"))).toBe(true);
+    expect(a.reasons.some((x) => x.includes("fallback"))).toBe(true);
   });
 });
