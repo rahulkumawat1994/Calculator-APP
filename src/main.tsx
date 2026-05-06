@@ -10,9 +10,14 @@ import { useReportIssuePush } from "@/hooks/useReportIssuePush";
 
 const StatementPage = lazy(() => import("./StatementPage"));
 
-const path = window.location.pathname;
-const isAdminPath = path === '/admin' || path === '/audit';
-const isStatementPath = path === '/statement';
+function normalizeAppPathname(p: string): string {
+  if (p === "/") return "/";
+  return p.endsWith("/") ? p.slice(0, -1) : p;
+}
+
+const path = normalizeAppPathname(window.location.pathname);
+const isAdminPath = path === "/admin" || path === "/audit";
+const isStatementPath = path === "/statement";
 
 function ReportPushHost() {
   useReportIssuePush();
