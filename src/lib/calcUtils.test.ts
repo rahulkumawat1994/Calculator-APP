@@ -187,6 +187,20 @@ Sh`;
     expect(r.total).toBe(180);
   });
 
+  it("GC MALHOTRA: hyphen before into on same line + inyo typo + colon in jodi row", () => {
+    const raw = `[05/05, 2:00 pm] GC MALHOTRA PLAYER: 05-50-into15
+32-23into5
+01-10-28-82-18-81into5
+17-71-49-08-80-94inyo5
+Db
+[05/05, 3:16 pm] GC MALHOTRA PLAYER: 05-50-into10
+32-:23-34-43-17-71into5
+Sg`;
+    const r = calculateTotal(raw);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(150);
+  });
+
   it("WhatsApp sample: into / intu / ijto lines all parse (Sg/Fd/Gb stamps skipped)", () => {
     const raw = `[16/04, 3:27 pm] GC MALHOTRA PLAYER: 15-51into10
 13-31-32-23-05-50into5

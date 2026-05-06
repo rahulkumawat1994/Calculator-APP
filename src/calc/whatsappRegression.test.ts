@@ -22,6 +22,6 @@ describe("WhatsApp bulk regression fixture", () => {
 
     expect(msgs!.length).toBe(156);
     expect(failed.length).toBe(0);
-    expect(grandTotal).toMatchInlineSnapshot(`28531`);
+    expect(grandTotal).toMatchInlineSnapshot(`28181`);
   });
 });

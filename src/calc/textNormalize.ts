@@ -44,6 +44,8 @@ export function tryParseArithmeticSumDivide(s: string): { lineTotal: number; dis
  */
 export function normalizeTypoTolerantInput(s: string): string {
   let t = s.normalize("NFKC");
+  // WhatsApp / OCR: stray colon after a dash in jodi runs (`32-:23` → `32-23`).
+  t = t.replace(/-\s*:\s*(?=\d)/g, "-");
   // Multiplication sign from WhatsApp/keyboards -> ASCII x for rate parsing.
   t = t.replace(/×/g, "x");
   // "Rs" / "rs" (rupees) as rate, common in market lines: "55 rs10", "20.02.rs5"
@@ -69,8 +71,9 @@ export function normalizeTypoTolerantInput(s: string): string {
   // After {@link normalizeIntoRateMarker}, chains like `05-50into5` become `05-50 x5`; `\b` appears after `50`
   // before the space. Second pass through this function (from `processLine`) must not rewrite that to `05x50`.
   // `(?!\s+x\s*\d)` skips when the stake is immediately followed by the ×rate from an into-split.
+  // `(?!-\d{2})` skips when another jodi follows (`01-10-28-…` is three pairs, not `01` at rate `10`).
   t = t.replace(
-    /\b(\d{2})-(5|10|15|20|25|30|40|50|100|120)\b(?!\s+x\s*\d)/g,
+    /\b(\d{2})-(5|10|15|20|25|30|40|50|100|120)\b(?!\s+x\s*\d)(?!-\d{2})/g,
     "$1x$2",
   );
   // Single-digit stake after "-" (e.g. `27-5` same as `27=5` / `27x5`); run after whitelist so `27-10` stays one token.
@@ -150,6 +153,16 @@ function looksLikeIntoTypo(letters: string): boolean {
   return targets.some((target) => levenshtein(t, target) <= 2);
 }
 
+/** Whole trimmed line is only an into-typo marker + rate (e.g. `Into5`, `inyo5`). */
+export function parseStandaloneIntoTypoRateDigits(line: string): string | null {
+  const t = line.trim();
+  const plain = /^\s*(?:into|ijto)\s*(\d{1,5})\s*$/i.exec(t);
+  if (plain) return plain[1]!;
+  const m = /^\s*([a-zA-Z]{2,})\s*(\d{1,5})\s*$/i.exec(t);
+  if (m && looksLikeIntoTypo(m[1]!)) return m[2]!;
+  return null;
+}
+
 /**
  * Hindi-style "into" (often written "in to") means ×rate. Tolerate common phone typos
  * ("intu", "ijto", "ilto", "olto", …) via explicit patterns + fuzzy end-of-line match.
@@ -157,15 +170,16 @@ function looksLikeIntoTypo(letters: string): boolean {
  */
 export function normalizeIntoRateMarker(s: string): string {
   let out = s
-    // `…42-into5` — stray hyphen before `into` when `into` stayed on the same line (narrow wrap).
-    .replace(/[-–—]+\s*(into|ijto)\s*(\d{1,5})\s*$/i, "into$2")
+    // `…42-into5` / `05-50-into15` — hyphen before `into`; emit spaced ` xN` so later NN-stake
+    // rules do not treat `05-50` as jodi×50 when a real `into` rate follows on the same line.
+    .replace(/[-–—]+\s*(into|ijto)\s*(\d{1,5})\s*$/i, " x$2")
     // Must follow a digit — otherwise a standalone `Into5` line (continuation on next row) becomes orphan `x5`.
     .replace(/(?<=\d)\s*ij\s*to(?=\s*\d)/gi, " x")
     .replace(/(?<=\d)\s*in\s*t[ou](?=\s*\d)/gi, " x");
   // After a digit: [letters typo "into"] [rate] at end of string → xrate
   out = out.replace(
     /(?<=\d)([a-zA-Z]{2,})\s*(\d{1,5})\s*$/gi,
-    (full, letters: string, rate: string) => (looksLikeIntoTypo(letters) ? `x${rate}` : full),
+    (full, letters: string, rate: string) => (looksLikeIntoTypo(letters) ? ` x${rate}` : full),
   );
   // Standalone "10.intu" / "10 into" lines where the rate number PRECEDES "into" (no rate after).
   // Converts the whole line to a rate-only token so pending pairs can inherit it.

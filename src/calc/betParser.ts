@@ -280,7 +280,7 @@ export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segm
   //   (rate/suffix   (rate\suffix   (rate|suffix   (rate.suffix
   //   (rate suffix)  (ratesuffix)   ( rate )       (rate        ← missing close
   const trimmed = normalizeTrailingDashRate(
-    normalizeIntoRateMarker(normalizeTypoTolerantInput(stripLeadingGameLabels(line))),
+    normalizeTypoTolerantInput(normalizeIntoRateMarker(stripLeadingGameLabels(line))),
   )
     // After merges, stray leading ". " from skipped separator lines
     .replace(/^[\s.]+/, "")
@@ -451,7 +451,9 @@ export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segm
       // Remove keyword; if "x" was glued directly to the keyword ("harufx20") a space
       // appears — SEP_RATE_RE will still find it since the preceding char is now a space.
       const noHarf = trimmed.replace(/\b(?:haruf|harf|hrf)\b\s*/gi, ' ').replace(/ +/g, ' ').trim();
-      const cleaned = normalizeTrailingDashRate(normalizeIntoRateMarker(noHarf));
+      const cleaned = normalizeTrailingDashRate(
+        normalizeTypoTolerantInput(normalizeIntoRateMarker(noHarf)),
+      );
       const sepM = [...cleaned.matchAll(SEP_RATE_RE)];
       if (sepM.length > 0) {
         const last = sepM[sepM.length - 1]!;

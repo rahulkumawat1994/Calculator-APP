@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import ReactDOM from 'react-dom/client';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -7,8 +7,11 @@ import App from "./App";
 import AdminPage from "./AdminPage";
 import { useReportIssuePush } from "@/hooks/useReportIssuePush";
 
+const StatementPage = lazy(() => import("./StatementPage"));
+
 const path = window.location.pathname;
 const isAdminPath = path === '/admin' || path === '/audit';
+const isStatementPath = path === '/statement';
 
 function ReportPushHost() {
   useReportIssuePush();
@@ -19,7 +22,21 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
     <>
       <ReportPushHost />
-      {isAdminPath ? <AdminPage /> : <App />}
+      {isAdminPath ? (
+        <AdminPage />
+      ) : isStatementPath ? (
+        <Suspense
+          fallback={
+            <div className="min-h-screen flex items-center justify-center bg-[#eef2f7] text-gray-600">
+              Loading…
+            </div>
+          }
+        >
+          <StatementPage />
+        </Suspense>
+      ) : (
+        <App />
+      )}
       <ToastContainer
         position="top-center"
         newestOnTop

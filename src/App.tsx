@@ -57,6 +57,14 @@ export default function App() {
         items={TABS}
         value={tab}
         onChange={setTab}
+        trailing={
+          <a
+            href="/statement"
+            className="flex shrink-0 items-center justify-center self-center px-2 py-1 text-[11px] font-bold tracking-wide text-[#1d6fb8] hover:underline"
+          >
+            Statement
+          </a>
+        }
       />
 
       {dbError && (

@@ -9,6 +9,7 @@ import {
   normalizeIntoRateMarker,
   normalizeTrailingDashRate,
   normalizeTypoTolerantInput,
+  parseStandaloneIntoTypoRateDigits,
   preprocessText,
 } from "./textNormalize";
 import type { CalculationResult, Segment } from "../types";
@@ -17,7 +18,7 @@ import type { CalculationResult, Segment } from "../types";
  * Narrow-screen pastes break a dash-separated jodi row before the final `into` rate, e.g.
  *   `25-52-02-20-`
  *   `Into5`
- * Join before per-line `normalizeIntoRateMarker` so we get `…20into5` not orphan `x5`.
+ * Join before per-line normalization so we get `…20 x5` (explicit ×) not orphan `x5`.
  */
 export type MergedRawChunk = { text: string; rawIndices: number[] };
 
@@ -29,10 +30,11 @@ export function mergeTrailingDashWithIntoContinuation(rawLines: string[]): Merge
     const next = i + 1 < rawLines.length ? rawLines[i + 1]! : "";
     const curT = cur.trim();
     const nextT = next.trim();
-    const intoNext = /^\s*(?:into|ijto)\s*(\d{1,5})\s*$/i.exec(nextT);
+    const intoNext =
+      /^\s*(?:into|ijto)\s*(\d{1,5})\s*$/i.exec(nextT)?.[1] ?? parseStandaloneIntoTypoRateDigits(nextT);
     if (/[-–—]\s*$/.test(curT) && intoNext) {
       const base = curT.replace(/[-–—]+\s*$/, "");
-      out.push({ text: `${base}into${intoNext[1]}`, rawIndices: [i, i + 1] });
+      out.push({ text: `${base} x${intoNext}`, rawIndices: [i, i + 1] });
       i += 2;
       continue;
     }
@@ -274,7 +276,7 @@ export function calculateTotal(text: string): CalculationResult {
     const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
     const labelStripped = stripLeadingGameLabels(afterLoose);
     const line = normalizeTrailingDashRate(
-      normalizeIntoRateMarker(normalizeTypoTolerantInput(labelStripped)),
+      normalizeTypoTolerantInput(normalizeIntoRateMarker(labelStripped)),
     );
     if (isSeparatorOnlyLine(line)) continue;
     logicalLines.push(...splitTrailingNumberRunAfterLastRate(line));
@@ -540,7 +542,7 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
     const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
     const labelStripped = stripLeadingGameLabels(afterLoose);
     const line = normalizeTrailingDashRate(
-      normalizeIntoRateMarker(normalizeTypoTolerantInput(labelStripped)),
+      normalizeTypoTolerantInput(normalizeIntoRateMarker(labelStripped)),
     );
     if (isSeparatorOnlyLine(line)) continue;
     for (const s of splitTrailingNumberRunAfterLastRate(line)) {
