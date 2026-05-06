@@ -24,10 +24,13 @@ import {
   persistSavedTransactionSearches,
   type SavedTransactionSearch,
 } from "./statement/savedTransactionSearches";
+import { isStatementDateRangeInverted } from "./statement/statementDateRangeFilter";
 import {
-  filterStatementRowsByTransactionTerms,
-  parseTransactionSearchTerms,
-} from "./statement/transactionSearchFilter";
+  filterStatementVisibleRows,
+  type StatementVisibleRowParams,
+} from "./statement/statementRowFilters";
+import { parseTransactionSearchTerms } from "./statement/transactionSearchFilter";
+import { downloadStatementExtractPdf, type StatementPdfExportSection } from "./statement/exportStatementPdf";
 import { DangerActionDialog } from "./ui";
 
 function formatInrMoney(n: number): string {
@@ -147,6 +150,9 @@ export default function StatementPage() {
   );
   const [pdfSortMode, setPdfSortMode] = useState<StatementPdfSortMode>("period-desc");
   const [transactionSearchRaw, setTransactionSearchRaw] = useState("");
+  /** `<input type="date">` values (`YYYY-MM-DD`) for Txn date column filtering. */
+  const [txnDateFrom, setTxnDateFrom] = useState("");
+  const [txnDateTo, setTxnDateTo] = useState("");
   const [savedTxnSearches, setSavedTxnSearches] = useState<SavedTransactionSearch[]>(() =>
     typeof window !== "undefined" ? loadSavedTransactionSearches() : [],
   );
@@ -228,6 +234,8 @@ export default function StatementPage() {
     setCollapsedDocIds(new Set());
     setPdfSortMode("period-desc");
     setTransactionSearchRaw("");
+    setTxnDateFrom("");
+    setTxnDateTo("");
     parseVersionByPdfRef.current = {};
     setExtractUploadByDocId({});
 
@@ -584,6 +592,38 @@ export default function StatementPage() {
     [transactionSearchRaw],
   );
 
+  const visibleRowParams = useMemo<StatementVisibleRowParams>(
+    () => ({
+      transactionTermsLower: transactionSearchTerms,
+      dateFrom: txnDateFrom,
+      dateTo: txnDateTo,
+    }),
+    [transactionSearchTerms, txnDateFrom, txnDateTo],
+  );
+
+  const statementFiltersActive = useMemo(
+    () =>
+      transactionSearchTerms.length > 0 ||
+      txnDateFrom.trim().length > 0 ||
+      txnDateTo.trim().length > 0,
+    [transactionSearchTerms.length, txnDateFrom, txnDateTo],
+  );
+
+  const dateRangeInverted = useMemo(
+    () => isStatementDateRangeInverted(txnDateFrom, txnDateTo),
+    [txnDateFrom, txnDateTo],
+  );
+
+  const dateRangeSummaryForExport = useMemo(() => {
+    const f = txnDateFrom.trim();
+    const t = txnDateTo.trim();
+    if (!f && !t) return null;
+    const inv = dateRangeInverted ? " (From was after To — range normalized)" : "";
+    if (f && !t) return `Txn date from ${f}${inv}`;
+    if (!f && t) return `Txn date through ${t}`;
+    return `Txn date ${f} to ${t}${inv}`;
+  }, [txnDateFrom, txnDateTo, dateRangeInverted]);
+
   const handleSaveQuickSearch = useCallback(() => {
     const result = addSavedTransactionSearch(savedTxnSearches, transactionSearchRaw, "");
     if (!result.ok) {
@@ -618,7 +658,7 @@ export default function StatementPage() {
     for (const doc of sortedDocuments) {
       if (doc.loading || doc.error || doc.rows.length === 0) continue;
       anyReadyWithRows = true;
-      const rows = filterStatementRowsByTransactionTerms(doc.rows, transactionSearchTerms);
+      const rows = filterStatementVisibleRows(doc.rows, visibleRowParams);
       const sums = sumStatementWdDpRows(rows);
       byDocId.set(doc.id, sums);
       grandWithdrawals += sums.withdrawals;
@@ -627,7 +667,7 @@ export default function StatementPage() {
     for (const item of cloudExtracts) {
       if (item.rows.length === 0) continue;
       anyReadyWithRows = true;
-      const rows = filterStatementRowsByTransactionTerms(item.rows, transactionSearchTerms);
+      const rows = filterStatementVisibleRows(item.rows, visibleRowParams);
       const sums = sumStatementWdDpRows(rows);
       byDocId.set(item.id, sums);
       grandWithdrawals += sums.withdrawals;
@@ -635,7 +675,7 @@ export default function StatementPage() {
     }
     const grandNet = grandDeposits - grandWithdrawals;
     return { byDocId, grandWithdrawals, grandDeposits, grandNet, anyReadyWithRows };
-  }, [sortedDocuments, cloudExtracts, transactionSearchTerms]);
+  }, [sortedDocuments, cloudExtracts, visibleRowParams]);
 
   const grandTotalsScopeLabel = useMemo(() => {
     const hasLocal = sortedDocuments.some((d) => !d.loading && !d.error && d.rows.length > 0);
@@ -651,31 +691,99 @@ export default function StatementPage() {
     for (const doc of sortedDocuments) {
       if (doc.loading || doc.error) continue;
       totalRowsAllPdfs += doc.rows.length;
-      visibleRowsAllPdfs += filterStatementRowsByTransactionTerms(
-        doc.rows,
-        transactionSearchTerms,
-      ).length;
+      visibleRowsAllPdfs += filterStatementVisibleRows(doc.rows, visibleRowParams).length;
     }
     return {
       pdfCount: sortedDocuments.length,
       totalRowsAllPdfs,
       visibleRowsAllPdfs,
     };
-  }, [sortedDocuments, transactionSearchTerms]);
+  }, [sortedDocuments, visibleRowParams]);
 
   const cloudListStats = useMemo(() => {
     let totalRows = 0;
     let visibleRows = 0;
     for (const item of cloudExtracts) {
       totalRows += item.rows.length;
-      visibleRows += filterStatementRowsByTransactionTerms(item.rows, transactionSearchTerms).length;
+      visibleRows += filterStatementVisibleRows(item.rows, visibleRowParams).length;
     }
     return {
       extractCount: cloudExtracts.length,
       totalRows,
       visibleRows,
     };
-  }, [cloudExtracts, transactionSearchTerms]);
+  }, [cloudExtracts, visibleRowParams]);
+
+  const canExportStatementPdf =
+    listStats.visibleRowsAllPdfs > 0 || cloudListStats.visibleRows > 0;
+
+  const handleExportStatementPdf = useCallback(() => {
+    const sections: StatementPdfExportSection[] = [];
+    for (const item of sortedCloudExtracts) {
+      const rows = filterStatementVisibleRows(item.rows, visibleRowParams);
+      if (rows.length === 0) continue;
+      const sums = wdDpTotals.byDocId.get(item.id);
+      if (!sums) continue;
+      sections.push({
+        source: "firebase",
+        fileName: item.fileName,
+        rows,
+        deposits: sums.deposits,
+        withdrawals: sums.withdrawals,
+      });
+    }
+    for (const doc of sortedDocuments) {
+      if (doc.loading || doc.error) continue;
+      const rows = filterStatementVisibleRows(doc.rows, visibleRowParams);
+      if (rows.length === 0) continue;
+      const sums = wdDpTotals.byDocId.get(doc.id);
+      if (!sums) continue;
+      sections.push({
+        source: "local",
+        fileName: doc.name,
+        rows,
+        deposits: sums.deposits,
+        withdrawals: sums.withdrawals,
+      });
+    }
+    if (sections.length === 0) {
+      toast.error(
+        "Nothing to export. Load PDFs with extracted rows, or widen your filters (search / dates).",
+        { toastId: "stmt-pdf-empty" },
+      );
+      return;
+    }
+    try {
+      downloadStatementExtractPdf({
+        generatedAt: new Date(),
+        transactionFilterRaw: transactionSearchRaw.trim() ? transactionSearchRaw : null,
+        dateRangeSummary: dateRangeSummaryForExport,
+        grandTotals: wdDpTotals.anyReadyWithRows
+          ? {
+              deposits: wdDpTotals.grandDeposits,
+              withdrawals: wdDpTotals.grandWithdrawals,
+              net: wdDpTotals.grandNet,
+              scopeLabel: grandTotalsScopeLabel,
+            }
+          : null,
+        sections,
+      });
+      toast.success(`Exported ${sections.length} section${sections.length === 1 ? "" : "s"} to PDF.`, {
+        toastId: "stmt-pdf-ok",
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Could not create PDF.";
+      toast.error(msg, { toastId: "stmt-pdf-err" });
+    }
+  }, [
+    dateRangeSummaryForExport,
+    grandTotalsScopeLabel,
+    sortedCloudExtracts,
+    sortedDocuments,
+    transactionSearchRaw,
+    visibleRowParams,
+    wdDpTotals,
+  ]);
 
   const activeGuideIndex = useMemo(
     () => Math.max(0, sortedDocuments.findIndex((d) => d.id === activeGuidePdfId)),
@@ -802,7 +910,7 @@ export default function StatementPage() {
                         {listStats.pdfCount} local PDF{listStats.pdfCount === 1 ? "" : "s"} ·{" "}
                         {listStats.visibleRowsAllPdfs} visible row
                         {listStats.visibleRowsAllPdfs === 1 ? "" : "s"}
-                        {transactionSearchTerms.length > 0 &&
+                        {statementFiltersActive &&
                         listStats.totalRowsAllPdfs !== listStats.visibleRowsAllPdfs
                           ? ` (${listStats.totalRowsAllPdfs} total before filter)`
                           : null}
@@ -821,7 +929,7 @@ export default function StatementPage() {
                         ) : null}
                         {cloudListStats.extractCount} from Firebase · {cloudListStats.visibleRows} visible row
                         {cloudListStats.visibleRows === 1 ? "" : "s"}
-                        {transactionSearchTerms.length > 0 &&
+                        {statementFiltersActive &&
                         cloudListStats.totalRows !== cloudListStats.visibleRows
                           ? ` (${cloudListStats.totalRows} in cloud before filter)`
                           : null}
@@ -830,6 +938,20 @@ export default function StatementPage() {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={!canExportStatementPdf}
+                    onClick={handleExportStatementPdf}
+                    title={
+                      canExportStatementPdf
+                        ? "Download visible rows (current search and date filters) as a PDF file"
+                        : "Add PDFs with rows or adjust your filters to enable export"
+                    }
+                    className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-emerald-200/90 bg-emerald-50/80 px-3 py-2 text-xs font-semibold text-emerald-900 shadow-sm transition hover:bg-emerald-100 disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    <span aria-hidden>⤓</span>
+                    Export PDF
+                  </button>
                   <button
                     type="button"
                     disabled={cloudExtractsLoading}
@@ -974,6 +1096,62 @@ export default function StatementPage() {
               </p>
 
               <div className="mt-4 rounded-xl border border-slate-200/90 bg-white p-3 shadow-sm ring-1 ring-slate-100 sm:p-4">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Txn date range</p>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                  Optional. Parsed from the <strong className="font-semibold text-slate-700">Txn date</strong> column
+                  (DD/MM/YYYY and YYYY-MM-DD). Rows with a missing or unparseable date stay visible.
+                </p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label
+                      htmlFor="stmt-date-from"
+                      className="block text-xs font-semibold text-slate-600"
+                    >
+                      From
+                    </label>
+                    <input
+                      id="stmt-date-from"
+                      type="date"
+                      value={txnDateFrom}
+                      onChange={(e) => setTxnDateFrom(e.target.value)}
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-[#1d6fb8] focus:outline-none focus:ring-2 focus:ring-[#1d6fb8]/20"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="stmt-date-to" className="block text-xs font-semibold text-slate-600">
+                      Through
+                    </label>
+                    <input
+                      id="stmt-date-to"
+                      type="date"
+                      value={txnDateTo}
+                      onChange={(e) => setTxnDateTo(e.target.value)}
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-[#1d6fb8] focus:outline-none focus:ring-2 focus:ring-[#1d6fb8]/20"
+                    />
+                  </div>
+                </div>
+                {(txnDateFrom.trim() || txnDateTo.trim()) && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTxnDateFrom("");
+                        setTxnDateTo("");
+                      }}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                    >
+                      Clear dates
+                    </button>
+                  </div>
+                )}
+                {dateRangeInverted ? (
+                  <p className="mt-2 text-xs font-medium text-amber-800">
+                    From is after Through — the range is read as between those two calendar days (earlier to later).
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="mt-4 rounded-xl border border-slate-200/90 bg-white p-3 shadow-sm ring-1 ring-slate-100 sm:p-4">
                 <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Quick saves</p>
                 <p className="mt-1 text-xs leading-relaxed text-slate-500">
                   Chip labels are shortened from the saved search text. Tap a chip to apply the full filter.
@@ -1030,7 +1208,7 @@ export default function StatementPage() {
                     }`}
                   >
                     {grandTotalsScopeLabel} · visible rows
-                    {transactionSearchTerms.length > 0 ? " (filter on)" : ""}
+                    {statementFiltersActive ? " (filters on)" : ""}
                   </p>
                   <div className="grid gap-3 p-4 sm:grid-cols-3 sm:gap-4">
                     <div className="rounded-xl bg-white/60 px-3 py-2.5 ring-1 ring-slate-900/[0.05]">
@@ -1065,7 +1243,7 @@ export default function StatementPage() {
               <div className="space-y-4">
                 {sortedCloudExtracts.map((item) => {
                   const accordionOpen = !collapsedCloudExtractIds.has(item.id);
-                  const rowsToShow = filterStatementRowsByTransactionTerms(item.rows, transactionSearchTerms);
+                  const rowsToShow = filterStatementVisibleRows(item.rows, visibleRowParams);
                   const extractSums = wdDpTotals.byDocId.get(item.id);
                   const extractNet =
                     extractSums != null ? extractSums.deposits - extractSums.withdrawals : 0;
@@ -1112,7 +1290,7 @@ export default function StatementPage() {
                               </span>
                               <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600">
                                 {item.rows.length} row{item.rows.length === 1 ? "" : "s"}
-                                {transactionSearchTerms.length > 0 && filteredCount !== item.rows.length ? (
+                                {statementFiltersActive && filteredCount !== item.rows.length ? (
                                   <span className="text-slate-500">
                                     {" "}
                                     · {filteredCount} match{filteredCount === 1 ? "" : "es"}
@@ -1161,7 +1339,7 @@ export default function StatementPage() {
                               {" "}
                               ({profitLossLabel(extractNet)})
                             </span>
-                            {transactionSearchTerms.length > 0 ? (
+                            {statementFiltersActive ? (
                               <span className="font-normal text-slate-500"> · visible rows only</span>
                             ) : null}
                           </div>
@@ -1236,13 +1414,10 @@ export default function StatementPage() {
                 })}
                 {sortedDocuments.map((doc) => {
                   const accordionOpen = !collapsedDocIds.has(doc.id);
-                  const rowsToShow = filterStatementRowsByTransactionTerms(doc.rows, transactionSearchTerms);
+                  const rowsToShow = filterStatementVisibleRows(doc.rows, visibleRowParams);
                   const docSums = wdDpTotals.byDocId.get(doc.id);
                   const pdfNet = docSums != null ? docSums.deposits - docSums.withdrawals : 0;
-                  const filteredCount = filterStatementRowsByTransactionTerms(
-                    doc.rows,
-                    transactionSearchTerms,
-                  ).length;
+                  const filteredCount = rowsToShow.length;
                   const extractUpload = extractUploadByDocId[doc.id] ?? "idle";
                   const extractUploadDisabled =
                     doc.loading ||
@@ -1301,7 +1476,7 @@ export default function StatementPage() {
                               ) : (
                                 <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600">
                                   {doc.rows.length} row{doc.rows.length === 1 ? "" : "s"}
-                                  {transactionSearchTerms.length > 0 && filteredCount !== doc.rows.length ? (
+                                  {statementFiltersActive && filteredCount !== doc.rows.length ? (
                                     <span className="text-slate-500">
                                       {" "}
                                       · {filteredCount} match{filteredCount === 1 ? "" : "es"}
@@ -1376,7 +1551,7 @@ export default function StatementPage() {
                               {" "}
                               ({profitLossLabel(pdfNet)})
                             </span>
-                            {transactionSearchTerms.length > 0 ? (
+                            {statementFiltersActive ? (
                               <span className="text-slate-500 font-normal"> · visible rows only</span>
                             ) : null}
                           </div>
