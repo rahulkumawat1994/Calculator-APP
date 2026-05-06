@@ -309,7 +309,7 @@ interface ConfirmState {
   message: string;
   confirmLabel: string;
   danger?: boolean;
-  run: () => void;
+  run: () => void | Promise<void>;
 }
 
 function SkeletonSlotCards() {
@@ -399,6 +399,15 @@ export default function GamesView({
     indices: number[];
   } | null>(null);
   const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const [clearAllDayLoading, setClearAllDayLoading] = useState(false);
+  const clearAllDayInFlight = useRef(false);
+  const [confirmDialogLoading, setConfirmDialogLoading] = useState(false);
+  const confirmDialogInFlight = useRef(false);
+  const [sessionDeleteDialogLoading, setSessionDeleteDialogLoading] =
+    useState(false);
+  const sessionDeleteDialogInFlight = useRef(false);
+  const [multiRowDeleteLoading, setMultiRowDeleteLoading] = useState(false);
+  const multiRowDeleteInFlight = useRef(false);
   /** Session id to delete directly from the row (without opening the modal) */
   const [directDeleteSessionId, setDirectDeleteSessionId] = useState<
     string | null
@@ -446,7 +455,16 @@ export default function GamesView({
     loadSessionDatesForMonth(cal.year, cal.month)
       .then((dates) => {
         setActiveDates((prev) => {
-          const next = new Set(prev);
+          const next = new Set<string>();
+          for (const d of prev) {
+            const parts = d.split("/").map(Number);
+            if (parts.length !== 3) {
+              next.add(d);
+              continue;
+            }
+            const [, mo, y] = parts;
+            if (y !== cal.year || mo !== cal.month) next.add(d);
+          }
           dates.forEach((d) => next.add(d));
           return next;
         });
@@ -493,6 +511,7 @@ export default function GamesView({
         setActiveDates((prev) => {
           const next = new Set(prev);
           if (s.length > 0) next.add(selectedDate);
+          else next.delete(selectedDate);
           return next;
         });
         const map = new Map<string, string>();
@@ -885,7 +904,7 @@ export default function GamesView({
     sessionId: string,
     slotKey: string,
     result: CalculationResult
-  ) => {
+  ): Promise<boolean> => {
     const updated = daySessions.map((s) => {
       if (s.id !== sessionId) return s;
       const { overrideResult: _legacy, ...rest } = s;
@@ -900,10 +919,13 @@ export default function GamesView({
     if (target) {
       try {
         await saveSessionDoc(target);
+        return true;
       } catch (err) {
         toastApiError(err, "Could not save your change to the database.");
+        return false;
       }
     }
+    return true;
   };
 
   const pruneResultsByIndices = (
@@ -921,22 +943,31 @@ export default function GamesView({
   };
 
   const applyMultiRowDelete = async () => {
-    if (!modalConfirmRowDelete) return;
+    if (multiRowDeleteInFlight.current || !modalConfirmRowDelete) return;
     const { sessionId, slotKey, indices } = modalConfirmRowDelete;
     const session = daySessions.find((s) => s.id === sessionId);
-    setModalConfirmRowDelete(null);
     if (!session) {
+      setModalConfirmRowDelete(null);
       setModalBetRowSel(new Set());
       return;
     }
     const ledger = sessionLedgerForSlotKey(session, slotKey);
     if (!ledger) {
+      setModalConfirmRowDelete(null);
       setModalBetRowSel(new Set());
       return;
     }
     const newResult = pruneResultsByIndices(ledger, new Set(indices));
-    setModalBetRowSel(new Set());
-    await handleResultChange(sessionId, slotKey, newResult);
+    multiRowDeleteInFlight.current = true;
+    setMultiRowDeleteLoading(true);
+    try {
+      setModalBetRowSel(new Set());
+      const ok = await handleResultChange(sessionId, slotKey, newResult);
+      if (ok) setModalConfirmRowDelete(null);
+    } finally {
+      multiRowDeleteInFlight.current = false;
+      setMultiRowDeleteLoading(false);
+    }
   };
 
   const deleteSession = async (id: string) => {
@@ -959,33 +990,66 @@ export default function GamesView({
     setDaySessions(remaining);
     setDayPayments(nextPayments);
     putDayDataCache(selectedDate, remaining, nextPayments);
+    if (remaining.length === 0) {
+      setActiveDates((prev) => {
+        const n = new Set(prev);
+        n.delete(selectedDate);
+        return n;
+      });
+    }
+    setDirectDeleteSessionId(null);
     closeUserModal();
     toast.success("Entry deleted.");
   };
 
-  const handleClearAllDay = async () => {
+  const runDeleteSessionFromDialog = async (id: string) => {
+    if (sessionDeleteDialogInFlight.current) return;
+    sessionDeleteDialogInFlight.current = true;
+    setSessionDeleteDialogLoading(true);
     try {
-      await Promise.all(
-        daySessions.map((s) =>
-          Promise.all([
-            deleteSessionDoc(s.id),
-            deletePaymentsByContactDate(s.contact, s.date),
-          ])
-        )
-      );
-    } catch (err) {
-      toastApiError(
-        err,
-        "Clear all failed. Please check your internet connection and try again."
-      );
-      setConfirmClearAll(false);
-      return;
+      await deleteSession(id);
+    } finally {
+      sessionDeleteDialogInFlight.current = false;
+      setSessionDeleteDialogLoading(false);
     }
-    setDaySessions([]);
-    setDayPayments([]);
-    putDayDataCache(selectedDate, [], []);
-    setConfirmClearAll(false);
-    toast.success("All entries cleared.");
+  };
+
+  const handleClearAllDay = async () => {
+    if (clearAllDayInFlight.current) return;
+    clearAllDayInFlight.current = true;
+    setClearAllDayLoading(true);
+    try {
+      try {
+        await Promise.all(
+          daySessions.map((s) =>
+            Promise.all([
+              deleteSessionDoc(s.id),
+              deletePaymentsByContactDate(s.contact, s.date),
+            ])
+          )
+        );
+      } catch (err) {
+        toastApiError(
+          err,
+          "Clear all failed. Please check your internet connection and try again."
+        );
+        setConfirmClearAll(false);
+        return;
+      }
+      setDaySessions([]);
+      setDayPayments([]);
+      putDayDataCache(selectedDate, [], []);
+      setActiveDates((prev) => {
+        const n = new Set(prev);
+        n.delete(selectedDate);
+        return n;
+      });
+      setConfirmClearAll(false);
+      toast.success("All entries cleared.");
+    } finally {
+      clearAllDayInFlight.current = false;
+      setClearAllDayLoading(false);
+    }
   };
 
   const toggleSlot = (id: string) =>
@@ -1384,11 +1448,8 @@ export default function GamesView({
                                               `"Received" will be set to each person's game total.`,
                                             confirmLabel:
                                               "Yes, Mark Fully Paid",
-                                            run: () => {
-                                              void markAllFullyPaidForSlot(
-                                                slot
-                                              );
-                                            },
+                                            run: () =>
+                                              markAllFullyPaidForSlot(slot),
                                           })
                                         }
                                         className="w-full py-2.5 rounded-[12px] text-[13px] font-bold border-2 border-green-600 text-green-800 bg-green-50 active:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1415,9 +1476,8 @@ export default function GamesView({
                                               `All recorded received amounts for this game will be cleared back to blank.`,
                                             confirmLabel: "Yes, Reset",
                                             danger: true,
-                                            run: () => {
-                                              void resetPaymentsForSlot(slot);
-                                            },
+                                            run: () =>
+                                              resetPaymentsForSlot(slot),
                                           })
                                         }
                                         className="w-full py-2.5 rounded-[12px] text-[13px] font-bold border-2 border-rose-300 text-rose-800 bg-rose-50 active:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1833,22 +1893,37 @@ export default function GamesView({
         message={confirmState?.message ?? ""}
         confirmLabel={confirmState?.confirmLabel ?? "Confirm"}
         danger={confirmState?.danger ?? false}
-        onCancel={() => setConfirmState(null)}
+        confirmLoading={confirmDialogLoading}
+        loadingLabel="Working…"
+        onCancel={() => {
+          if (confirmDialogLoading) return;
+          setConfirmState(null);
+        }}
         onConfirm={() => {
           const cfg = confirmState;
-          if (!cfg) return;
-          setConfirmState(null);
-          cfg.run();
+          if (!cfg || confirmDialogInFlight.current) return;
+          confirmDialogInFlight.current = true;
+          setConfirmDialogLoading(true);
+          void Promise.resolve(cfg.run())
+            .catch(() => {})
+            .finally(() => {
+              confirmDialogInFlight.current = false;
+              setConfirmDialogLoading(false);
+              setConfirmState(null);
+            });
         }}
       />
 
       {/* ── Row hover — direct delete dialog ────────────────────────────── */}
       <DangerActionDialog
         open={directDeleteSessionId !== null}
-        onClose={() => setDirectDeleteSessionId(null)}
-        onConfirm={() => {
-          if (directDeleteSessionId) void deleteSession(directDeleteSessionId);
+        onClose={() => {
+          if (sessionDeleteDialogLoading) return;
           setDirectDeleteSessionId(null);
+        }}
+        onConfirm={() => {
+          if (directDeleteSessionId)
+            void runDeleteSessionFromDialog(directDeleteSessionId);
         }}
         titleId="gv-direct-delete-title"
         title="Delete this entry?"
@@ -1858,17 +1933,24 @@ export default function GamesView({
           </p>
         }
         confirmLabel="Yes, Delete"
+        confirmLoading={sessionDeleteDialogLoading}
+        loadingLabel="Deleting…"
       />
 
       {/* ── Clear All Danger Dialog ───────────────────────────────────────── */}
       <DangerActionDialog
         open={confirmClearAll}
-        onClose={() => setConfirmClearAll(false)}
+        onClose={() => {
+          if (clearAllDayLoading) return;
+          setConfirmClearAll(false);
+        }}
         onConfirm={() => void handleClearAllDay()}
         titleId="gv-clear-all-title"
         title="Delete ALL entries for this day?"
         message={null}
         confirmLabel="Yes, Delete All"
+        confirmLoading={clearAllDayLoading}
+        loadingLabel="Deleting…"
       />
 
       {/* ── User Detail Bottom Sheet ─────────────────────────────────────────── */}
@@ -2430,10 +2512,13 @@ export default function GamesView({
       {/* ── Modal — confirm delete session ───────────────────────────────────── */}
       <DangerActionDialog
         open={modalConfirmDelete}
-        onClose={() => setModalConfirmDelete(false)}
-        onConfirm={() => {
-          if (userModal) void deleteSession(userModal.user.sessionId);
+        onClose={() => {
+          if (sessionDeleteDialogLoading) return;
           setModalConfirmDelete(false);
+        }}
+        onConfirm={() => {
+          if (userModal)
+            void runDeleteSessionFromDialog(userModal.user.sessionId);
         }}
         titleId="gv-delete-entry-title"
         title="Delete this entry?"
@@ -2443,12 +2528,17 @@ export default function GamesView({
           </p>
         }
         confirmLabel="Yes, Delete"
+        confirmLoading={sessionDeleteDialogLoading}
+        loadingLabel="Deleting…"
       />
 
       {/* ── Modal — confirm delete selected bet lines ─────────────────────── */}
       <DangerActionDialog
         open={modalConfirmRowDelete !== null}
-        onClose={() => setModalConfirmRowDelete(null)}
+        onClose={() => {
+          if (multiRowDeleteLoading) return;
+          setModalConfirmRowDelete(null);
+        }}
         onConfirm={() => void applyMultiRowDelete()}
         titleId="gv-multi-row-title"
         title={
@@ -2470,6 +2560,8 @@ export default function GamesView({
           ) : null
         }
         confirmLabel="Yes, Delete"
+        confirmLoading={multiRowDeleteLoading}
+        loadingLabel="Deleting…"
       />
     </div>
   );

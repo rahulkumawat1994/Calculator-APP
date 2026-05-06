@@ -5,6 +5,7 @@ import 'react-toastify/dist/ReactToastify.css';
 import './index.css';
 import App from "./App";
 import AdminPage from "./AdminPage";
+import { ProtectedAppSession } from "@/auth/ProtectedAppSession";
 import { useReportIssuePush } from "@/hooks/useReportIssuePush";
 
 const StatementPage = lazy(() => import("./StatementPage"));
@@ -23,7 +24,9 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <>
       <ReportPushHost />
       {isAdminPath ? (
-        <AdminPage />
+        <ProtectedAppSession>
+          <AdminPage />
+        </ProtectedAppSession>
       ) : isStatementPath ? (
         <Suspense
           fallback={
@@ -32,7 +35,9 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
             </div>
           }
         >
-          <StatementPage />
+          <ProtectedAppSession>
+            <StatementPage />
+          </ProtectedAppSession>
         </Suspense>
       ) : (
         <App />

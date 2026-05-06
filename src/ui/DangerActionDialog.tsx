@@ -38,7 +38,12 @@ export function DangerActionDialog({
   panelClassName = "max-w-[400px]",
 }: DangerActionDialogProps) {
   return (
-    <Modal open={open} onBackdropClick={onClose} backdrop="dim" overlayClassName="p-4">
+    <Modal
+      open={open}
+      onBackdropClick={confirmLoading ? undefined : onClose}
+      backdrop="dim"
+      overlayClassName="p-4"
+    >
       <Card
         surface="panel"
         className={panelClassName}
@@ -64,8 +69,19 @@ export function DangerActionDialog({
             className="flex-1 py-3 text-[15px] font-bold"
             onClick={onConfirm}
             disabled={confirmDisabled || confirmLoading}
+            aria-busy={confirmLoading}
           >
-            {confirmLoading ? loadingLabel : confirmLabel}
+            {confirmLoading ? (
+              <>
+                <span
+                  className="inline-block size-4 shrink-0 rounded-full border-2 border-white/30 border-t-white animate-spin"
+                  aria-hidden
+                />
+                <span>{loadingLabel}</span>
+              </>
+            ) : (
+              confirmLabel
+            )}
           </Button>
           <Button
             type="button"

@@ -4,4 +4,5 @@ dist/
 *.local
 .env
 .env.*
+!.env.example
 public/firebase-messaging-sw.js

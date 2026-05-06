@@ -6,6 +6,7 @@
  *   config/settings       → { commissionPct: number }
  *   sessions/{sessionId}  → SavedSession  (one doc per session)
  *   payments/{paymentId}  → PaymentRecord (one doc per payment)
+ *   statementExtracts/{fingerprint}  → extracted statement rows (no PDF), see saveStatementExtractIfNew
  *
  * Sessions and payments each carry:
  *   date:    "DD/MM/YYYY"  — used for display and exact-match queries
@@ -26,9 +27,13 @@ import {
   orderBy,
   limit,
   writeBatch,
+  serverTimestamp,
+  Timestamp,
   type DocumentData,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
+import type { StatementWdDpRow } from "../statement/extractStatementColumnsFromPdf";
+import { fingerprintStatementExtract } from "../statement/statementExtractFingerprint";
 import { toastApiError } from "../lib/toast/apiToast";
 import { withFirestoreRetry } from "../lib/firestoreRetry";
 import type {
@@ -265,6 +270,152 @@ export async function deletePaymentsByContactDate(
   } catch {
     /* Caller surfaces errors (e.g. History delete) */
   }
+}
+
+// ─── Statement extracts (PDF table rows only; never PDF bytes) ─────────────
+
+export type SaveStatementExtractResult =
+  | { status: "uploaded" }
+  | { status: "duplicate" }
+  | { status: "error"; message: string };
+
+/**
+ * Same write pattern as {@link saveSessionDoc}: `getDoc` then `setDoc` on `db` (no transaction).
+ * Stores parsed rows + metadata only.
+ */
+export async function saveStatementExtractIfNew(params: {
+  fileName: string;
+  rows: StatementWdDpRow[];
+}): Promise<SaveStatementExtractResult> {
+  const { fileName, rows } = params;
+  const trimmedName = fileName.trim();
+  if (trimmedName.length === 0) {
+    return { status: "error", message: "Missing file name." };
+  }
+  if (rows.length === 0) {
+    return { status: "error", message: "No rows to upload." };
+  }
+
+  let fingerprint: string;
+  try {
+    fingerprint = await fingerprintStatementExtract(trimmedName, rows);
+  } catch (e) {
+    return {
+      status: "error",
+      message: e instanceof Error ? e.message : "Could not fingerprint data.",
+    };
+  }
+
+  const ref = doc(db, "statementExtracts", fingerprint);
+  const payload: DocumentData = {
+    fileName: trimmedName,
+    rowCount: rows.length,
+    rows: rows.map((r) => ({
+      page: r.page,
+      txnDate: r.txnDate,
+      transaction: r.transaction,
+      withdrawals: r.withdrawals,
+      deposits: r.deposits,
+    })),
+    contentFingerprint: fingerprint,
+    uploadedAt: serverTimestamp(),
+  };
+
+  try {
+    const existing = await getDoc(ref);
+    if (existing.exists()) {
+      return { status: "duplicate" };
+    }
+    await setDoc(ref, payload);
+    return { status: "uploaded" };
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : "Upload failed.";
+    const hint =
+      /failed to fetch|networkerror|load failed|fetch.*aborted/i.test(raw) &&
+      !/CORS policy|Access-Control/i.test(raw)
+        ? " Add this origin in Firebase Console → Project settings → Your apps → Authorized domains; serve the app over http(s), not file://."
+        : "";
+    return {
+      status: "error",
+      message: raw + hint,
+    };
+  }
+}
+
+/** One saved extract document for list/detail UI. */
+export type StatementExtractListItem = {
+  id: string;
+  fileName: string;
+  rowCount: number;
+  contentFingerprint: string;
+  /** Milliseconds since epoch, or null if missing. */
+  uploadedAtMs: number | null;
+  rows: StatementWdDpRow[];
+};
+
+function firestoreTimestampToMs(value: unknown): number | null {
+  if (value instanceof Timestamp) return value.toMillis();
+  if (value && typeof value === "object" && "toMillis" in value && typeof (value as Timestamp).toMillis === "function") {
+    return (value as Timestamp).toMillis();
+  }
+  if (value && typeof value === "object" && typeof (value as { seconds?: unknown }).seconds === "number") {
+    return (value as { seconds: number }).seconds * 1000;
+  }
+  return null;
+}
+
+function coerceStatementRowFromFirestore(raw: unknown): StatementWdDpRow | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const page = typeof o.page === "number" ? o.page : Number(o.page);
+  return {
+    page: Number.isFinite(page) ? page : 0,
+    txnDate: typeof o.txnDate === "string" ? o.txnDate : "",
+    transaction: typeof o.transaction === "string" ? o.transaction : "",
+    withdrawals: typeof o.withdrawals === "string" ? o.withdrawals : "",
+    deposits: typeof o.deposits === "string" ? o.deposits : "",
+  };
+}
+
+/**
+ * Recent rows saved via {@link saveStatementExtractIfNew} (newest first).
+ * Requires an index on `uploadedAt` if Firestore prompts you when first running this query.
+ */
+export async function loadRecentStatementExtracts(
+  maxDocs = 40,
+): Promise<StatementExtractListItem[]> {
+  const snap = await withFirestoreRetry(() =>
+    getDocs(
+      query(
+        collection(db, "statementExtracts"),
+        orderBy("uploadedAt", "desc"),
+        limit(maxDocs),
+      ),
+    ),
+  );
+  return snap.docs.map((d) => {
+    const data = d.data();
+    const rawRows = Array.isArray(data.rows) ? (data.rows as unknown[]) : [];
+    const rows = rawRows
+      .map(coerceStatementRowFromFirestore)
+      .filter((r): r is StatementWdDpRow => r != null);
+    return {
+      id: d.id,
+      fileName: typeof data.fileName === "string" ? data.fileName : "Unknown file",
+      rowCount: typeof data.rowCount === "number" ? data.rowCount : rows.length,
+      contentFingerprint:
+        typeof data.contentFingerprint === "string" ? data.contentFingerprint : d.id,
+      uploadedAtMs: firestoreTimestampToMs(data.uploadedAt),
+      rows,
+    };
+  });
+}
+
+/** Permanently deletes one `statementExtracts` document (parsed rows only; never touches PDFs). */
+export async function deleteStatementExtract(extractId: string): Promise<void> {
+  const trimmed = extractId.trim();
+  if (trimmed.length === 0) throw new Error("Missing extract id.");
+  await withFirestoreRetry(() => deleteDoc(doc(db, "statementExtracts", trimmed)));
 }
 
 export async function loadPaymentsByDate(

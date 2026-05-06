@@ -5,12 +5,25 @@ export async function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * CORS / browser policy failures are not fixed by retrying and only repeat the same blocked request.
+ * (The browser console may show CORS while the thrown Error is only "Failed to fetch".)
+ */
+function isLikelyCorsOrBlockedRequest(message: string): boolean {
+  return /CORS policy|Access-Control-Allow-Origin|blocked by CORS|cross-origin|has been blocked by|not allowed by Access-Control|Response to preflight|disallowed_origin|Load failed due to access control checks/i.test(
+    message,
+  );
+}
+
+/**
  * True for transient Firestore / network conditions where a short retry often succeeds.
  */
 export function isRetryableFirestoreOrNetworkError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+
+  if (isLikelyCorsOrBlockedRequest(msg)) return false;
+
   if (e instanceof Error && e.message === "timeout") return true;
 
-  const msg = e instanceof Error ? e.message : String(e);
   if (/Failed to fetch|NetworkError|NETWORK_ERROR|ERR_NETWORK|timeout/i.test(msg)) {
     return true;
   }

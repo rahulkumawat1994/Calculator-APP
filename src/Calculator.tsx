@@ -28,6 +28,7 @@ import type {
   AppSettings,
   PaymentRecord,
 } from "@/types";
+import { useHistoryOverlay } from "@/hooks/useHistoryOverlay";
 import EditableBreakdown from "./EditableBreakdown";
 import ReportIssue from "./ReportIssue";
 import { Button, Card, Modal } from "./ui";
@@ -199,6 +200,8 @@ export default function Calculator({
   const [copied, setCopied] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  useHistoryOverlay(showReport, () => setShowReport(false));
+  useHistoryOverlay(showClearConfirm, () => setShowClearConfirm(false));
   const [saving, setSaving] = useState(false);
   const [skipAuditOnCalculate, setSkipAuditOnCalculate] = useState(
     getSkipAuditOnCalculateAll

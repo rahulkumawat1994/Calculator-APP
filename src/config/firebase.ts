@@ -1,5 +1,5 @@
 import { initializeApp, type FirebaseApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, initializeFirestore, type Firestore } from "firebase/firestore";
 import type { Messaging } from "firebase/messaging";
 
 const REQUIRED_VARS = [
@@ -24,7 +24,29 @@ const firebaseConfig = {
 };
 
 export const app: FirebaseApp = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+
+/**
+ * In the browser, force Firestore long-polling instead of the default WebChannel
+ * `Listen/channel` stream. That stream often surfaces as a CORS error in DevTools
+ * even when the project is configured correctly (see firebase-js-sdk issues around
+ * WebChannel + firestore.googleapis.com).
+ *
+ * In Node (tests), use default `getFirestore` — `experimentalForceLongPolling` is browser-only.
+ */
+function createFirestore(): Firestore {
+  if (typeof window === "undefined") {
+    return getFirestore(app);
+  }
+  try {
+    return initializeFirestore(app, {
+      experimentalForceLongPolling: true,
+    });
+  } catch {
+    return getFirestore(app);
+  }
+}
+
+export const db = createFirestore();
 
 /**
  * Fresh messaging instance (no sticky null cache if the first init failed).

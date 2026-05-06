@@ -73,7 +73,7 @@ interface ConfirmState {
   message: string;
   confirmLabel: string;
   danger?: boolean;
-  run: () => void;
+  run: () => void | Promise<void>;
 }
 
 async function copyAuditInputToClipboard(
@@ -134,6 +134,8 @@ export default function AdminPage() {
     string[] | null
   >(null);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
+  const [confirmDialogLoading, setConfirmDialogLoading] = useState(false);
+  const confirmDialogInFlight = useRef(false);
   const [bulkAuditDeleting, setBulkAuditDeleting] = useState(false);
   const [bulkReportDeleting, setBulkReportDeleting] = useState(false);
   const [previewAudit, setPreviewAudit] = useState<CalculationAuditLog | null>(
@@ -572,9 +574,7 @@ export default function AdminPage() {
         message: "This row will be permanently removed.",
         confirmLabel: "Yes, Delete",
         danger: true,
-        run: () => {
-          void deleteAudit(id, true);
-        },
+        run: () => deleteAudit(id, true),
       });
       return;
     }
@@ -606,9 +606,7 @@ export default function AdminPage() {
         message: "This cannot be undone.",
         confirmLabel: "Yes, Delete All",
         danger: true,
-        run: () => {
-          void clearAudits(true);
-        },
+        run: () => clearAudits(true),
       });
       return;
     }
@@ -636,9 +634,7 @@ export default function AdminPage() {
           "For identical pasted inputs (newest 2000 logs), only the newest row is kept and older copies are removed.\n\nThis cannot be undone.",
         confirmLabel: "Yes, Delete Duplicates",
         danger: true,
-        run: () => {
-          void pruneAuditDupes(true);
-        },
+        run: () => pruneAuditDupes(true),
       });
       return;
     }
@@ -669,9 +665,7 @@ export default function AdminPage() {
         message: "This row will be permanently removed.",
         confirmLabel: "Yes, Delete",
         danger: true,
-        run: () => {
-          void deleteReport(id, true);
-        },
+        run: () => deleteReport(id, true),
       });
       return;
     }
@@ -703,9 +697,7 @@ export default function AdminPage() {
         message: "This cannot be undone.",
         confirmLabel: "Yes, Delete All",
         danger: true,
-        run: () => {
-          void clearReports(true);
-        },
+        run: () => clearReports(true),
       });
       return;
     }
@@ -855,37 +847,45 @@ export default function AdminPage() {
                 </span>
                 user pattern reports in one place
               </p>
-              <div
-                className="mt-4 inline-flex w-full max-w-sm rounded-xl bg-slate-100/90 p-1 sm:w-auto sm:max-w-none"
-                role="tablist"
-                aria-label="Admin section"
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === "audit"}
-                  onClick={() => setActiveTab("audit")}
-                  className={`min-h-[44px] flex-1 rounded-lg px-4 py-2.5 text-[13px] font-semibold transition-all sm:min-h-0 sm:flex-none sm:py-2 ${
-                    activeTab === "audit"
-                      ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/80"
-                      : "text-slate-500 hover:text-slate-700"
-                  }`}
+              <div className="mt-4 flex w-full max-w-lg flex-wrap items-stretch gap-1 rounded-xl bg-slate-100/90 p-1 sm:w-auto sm:max-w-none">
+                <div
+                  className="flex min-w-0 flex-1 sm:flex-none"
+                  role="tablist"
+                  aria-label="Admin section"
                 >
-                  Audits
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === "report"}
-                  onClick={() => setActiveTab("report")}
-                  className={`min-h-[44px] flex-1 rounded-lg px-4 py-2.5 text-[13px] font-semibold transition-all sm:min-h-0 sm:flex-none sm:py-2 ${
-                    activeTab === "report"
-                      ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/80"
-                      : "text-slate-500 hover:text-slate-700"
-                  }`}
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === "audit"}
+                    onClick={() => setActiveTab("audit")}
+                    className={`min-h-[44px] flex-1 rounded-lg px-4 py-2.5 text-[13px] font-semibold transition-all sm:min-h-0 sm:flex-none sm:py-2 ${
+                      activeTab === "audit"
+                        ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/80"
+                        : "text-slate-500 hover:text-slate-700"
+                    }`}
+                  >
+                    Audits
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === "report"}
+                    onClick={() => setActiveTab("report")}
+                    className={`min-h-[44px] flex-1 rounded-lg px-4 py-2.5 text-[13px] font-semibold transition-all sm:min-h-0 sm:flex-none sm:py-2 ${
+                      activeTab === "report"
+                        ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/80"
+                        : "text-slate-500 hover:text-slate-700"
+                    }`}
+                  >
+                    Reports
+                  </button>
+                </div>
+                <a
+                  href="/statement"
+                  className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-lg px-4 py-2.5 text-center text-[13px] font-semibold text-slate-500 transition-all hover:bg-white/60 hover:text-slate-800 sm:min-h-0 sm:flex-none sm:py-2"
                 >
-                  Reports
-                </button>
+                  Statement
+                </a>
               </div>
             </div>
             <div className="flex w-full min-w-0 flex-col gap-3 sm:w-[min(100%,20rem)] sm:shrink-0 sm:items-stretch">
@@ -2243,12 +2243,24 @@ export default function AdminPage() {
         message={confirmState?.message ?? ""}
         confirmLabel={confirmState?.confirmLabel ?? "Confirm"}
         danger={confirmState?.danger ?? false}
-        onCancel={() => setConfirmState(null)}
+        confirmLoading={confirmDialogLoading}
+        loadingLabel="Working…"
+        onCancel={() => {
+          if (confirmDialogLoading) return;
+          setConfirmState(null);
+        }}
         onConfirm={() => {
           const cfg = confirmState;
-          if (!cfg) return;
-          setConfirmState(null);
-          cfg.run();
+          if (!cfg || confirmDialogInFlight.current) return;
+          confirmDialogInFlight.current = true;
+          setConfirmDialogLoading(true);
+          void Promise.resolve(cfg.run())
+            .catch(() => {})
+            .finally(() => {
+              confirmDialogInFlight.current = false;
+              setConfirmDialogLoading(false);
+              setConfirmState(null);
+            });
         }}
       />
 

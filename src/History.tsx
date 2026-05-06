@@ -166,6 +166,13 @@ export default function History({
   const [openSlotIds, setOpenSlotIds] = useState<Set<string>>(new Set());
   const [openPersonIds, setOpenPersonIds] = useState<Set<string>>(new Set());
   const [confirmClear, setConfirmClear] = useState(false);
+  const [clearAllLoading, setClearAllLoading] = useState(false);
+  const clearAllInFlight = useRef(false);
+  const [deleteSessionSubmitLoading, setDeleteSessionSubmitLoading] =
+    useState(false);
+  const deleteSessionSubmitInFlight = useRef(false);
+  const [multiRowDeleteLoading, setMultiRowDeleteLoading] = useState(false);
+  const multiRowDeleteInFlight = useRef(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   /** Per-person (slot:sessionId) selected breakdown row indices for bulk delete */
   const [breakdownRowSelection, setBreakdownRowSelection] = useState<
@@ -209,7 +216,16 @@ export default function History({
     loadSessionDatesForMonth(cal.year, cal.month)
       .then((dates) => {
         setActiveDates((prev) => {
-          const next = new Set(prev);
+          const next = new Set<string>();
+          for (const d of prev) {
+            const parts = d.split("/").map(Number);
+            if (parts.length !== 3) {
+              next.add(d);
+              continue;
+            }
+            const [, mo, y] = parts;
+            if (y !== cal.year || mo !== cal.month) next.add(d);
+          }
           dates.forEach((d) => next.add(d));
           return next;
         });
@@ -257,6 +273,7 @@ export default function History({
         setActiveDates((prev) => {
           const next = new Set(prev);
           if (sessions.length > 0) next.add(selectedDate);
+          else next.delete(selectedDate);
           return next;
         });
       })
@@ -365,11 +382,23 @@ export default function History({
     setConfirmDeleteId(null);
   };
 
+  const runDeleteSessionFromDialog = async (id: string) => {
+    if (deleteSessionSubmitInFlight.current) return;
+    deleteSessionSubmitInFlight.current = true;
+    setDeleteSessionSubmitLoading(true);
+    try {
+      await deleteSession(id);
+    } finally {
+      deleteSessionSubmitInFlight.current = false;
+      setDeleteSessionSubmitLoading(false);
+    }
+  };
+
   const handleResultChange = async (
     id: string,
     slotKey: string,
     result: CalculationResult
-  ) => {
+  ): Promise<boolean> => {
     const updated = daySessions.map((s) => {
       if (s.id !== id) return s;
       const { overrideResult: _legacy, ...rest } = s;
@@ -388,42 +417,53 @@ export default function History({
     if (target) {
       try {
         await saveSessionDoc(target);
+        return true;
       } catch (err) {
         console.error("handleResultChange save failed:", err);
         toastApiError(err, "Could not save your change to the database.");
+        return false;
       }
     }
+    return true;
   };
 
   const handleClearAll = async () => {
+    if (clearAllInFlight.current) return;
+    clearAllInFlight.current = true;
+    setClearAllLoading(true);
     try {
-      await Promise.all(
-        daySessions.map((s) =>
-          Promise.all([
-            deleteSessionDoc(s.id),
-            deletePaymentsByContactDate(s.contact, s.date),
-          ])
-        )
-      );
-    } catch (err) {
-      console.error("handleClearAll failed:", err);
-      toastApiError(
-        err,
-        "Clear all failed. Please check your internet connection and try again."
-      );
+      try {
+        await Promise.all(
+          daySessions.map((s) =>
+            Promise.all([
+              deleteSessionDoc(s.id),
+              deletePaymentsByContactDate(s.contact, s.date),
+            ])
+          )
+        );
+      } catch (err) {
+        console.error("handleClearAll failed:", err);
+        toastApiError(
+          err,
+          "Clear all failed. Please check your internet connection and try again."
+        );
+        setConfirmClear(false);
+        return;
+      }
+      setDaySessions([]);
+      setDayPayments([]);
+      putDayCache(selectedDate, [], []);
+      setActiveDates((prev) => {
+        const n = new Set(prev);
+        n.delete(selectedDate);
+        return n;
+      });
       setConfirmClear(false);
-      return;
+      setBreakdownRowSelection(new Map());
+    } finally {
+      clearAllInFlight.current = false;
+      setClearAllLoading(false);
     }
-    setDaySessions([]);
-    setDayPayments([]);
-    putDayCache(selectedDate, [], []);
-    setActiveDates((prev) => {
-      const n = new Set(prev);
-      n.delete(selectedDate);
-      return n;
-    });
-    setConfirmClear(false);
-    setBreakdownRowSelection(new Map());
   };
 
   const filteredBreakdownSelection = (
@@ -464,22 +504,31 @@ export default function History({
     };
 
   const applyMultiRowDelete = async () => {
-    if (!confirmMultiRowDelete) return;
+    if (multiRowDeleteInFlight.current || !confirmMultiRowDelete) return;
     const { sessionId, slotKey, indices, personKey } = confirmMultiRowDelete;
     const session = daySessions.find((s) => s.id === sessionId);
-    setConfirmMultiRowDelete(null);
     if (!session) {
+      setConfirmMultiRowDelete(null);
       clearBreakdownSelection(personKey);
       return;
     }
     const ledger = sessionLedgerForSlotKey(session, slotKey);
     if (!ledger) {
+      setConfirmMultiRowDelete(null);
       clearBreakdownSelection(personKey);
       return;
     }
     const newResult = pruneResultsByIndices(ledger, new Set(indices));
-    clearBreakdownSelection(personKey);
-    await handleResultChange(sessionId, slotKey, newResult);
+    multiRowDeleteInFlight.current = true;
+    setMultiRowDeleteLoading(true);
+    try {
+      clearBreakdownSelection(personKey);
+      const ok = await handleResultChange(sessionId, slotKey, newResult);
+      if (ok) setConfirmMultiRowDelete(null);
+    } finally {
+      multiRowDeleteInFlight.current = false;
+      setMultiRowDeleteLoading(false);
+    }
   };
 
   const cells = buildCalendarCells(cal.year, cal.month);
@@ -927,19 +976,27 @@ export default function History({
 
       <DangerActionDialog
         open={confirmClear}
-        onClose={() => setConfirmClear(false)}
+        onClose={() => {
+          if (clearAllLoading) return;
+          setConfirmClear(false);
+        }}
         onConfirm={() => void handleClearAll()}
         titleId="history-clear-all-title"
         title="Delete ALL entries for this day?"
         message={null}
         confirmLabel="Yes, Delete All"
+        confirmLoading={clearAllLoading}
+        loadingLabel="Deleting…"
       />
 
       <DangerActionDialog
         open={confirmDeleteId != null}
-        onClose={() => setConfirmDeleteId(null)}
+        onClose={() => {
+          if (deleteSessionSubmitLoading) return;
+          setConfirmDeleteId(null);
+        }}
         onConfirm={() => {
-          if (confirmDeleteId) void deleteSession(confirmDeleteId);
+          if (confirmDeleteId) void runDeleteSessionFromDialog(confirmDeleteId);
         }}
         titleId="history-delete-entry-title"
         title="Delete this entry?"
@@ -959,11 +1016,16 @@ export default function History({
           </>
         }
         confirmLabel="Yes, Delete"
+        confirmLoading={deleteSessionSubmitLoading}
+        loadingLabel="Deleting…"
       />
 
       <DangerActionDialog
         open={confirmMultiRowDelete != null}
-        onClose={() => setConfirmMultiRowDelete(null)}
+        onClose={() => {
+          if (multiRowDeleteLoading) return;
+          setConfirmMultiRowDelete(null);
+        }}
         onConfirm={() => void applyMultiRowDelete()}
         titleId="history-multi-row-title"
         title={
@@ -985,6 +1047,8 @@ export default function History({
           ) : null
         }
         confirmLabel="Yes, Delete"
+        confirmLoading={multiRowDeleteLoading}
+        loadingLabel="Deleting…"
       />
     </div>
   );

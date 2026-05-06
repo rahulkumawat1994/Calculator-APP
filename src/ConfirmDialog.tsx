@@ -9,6 +9,9 @@ interface ConfirmDialogProps {
   danger?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Primary action is in-flight (e.g. awaiting an API call). */
+  confirmLoading?: boolean;
+  loadingLabel?: string;
 }
 
 export default function ConfirmDialog({
@@ -20,9 +23,20 @@ export default function ConfirmDialog({
   danger = false,
   onConfirm,
   onCancel,
+  confirmLoading = false,
+  loadingLabel = "Working…",
 }: ConfirmDialogProps) {
+  const spinnerClass = danger
+    ? "inline-block size-4 shrink-0 rounded-full border-2 border-white/30 border-t-white animate-spin"
+    : "inline-block size-4 shrink-0 rounded-full border-2 border-[#1d6fb8]/25 border-t-[#1d6fb8] animate-spin";
+
   return (
-    <Modal open={open} onBackdropClick={onCancel} backdrop="dim" overlayClassName="p-4">
+    <Modal
+      open={open}
+      onBackdropClick={confirmLoading ? undefined : onCancel}
+      backdrop="dim"
+      overlayClassName="p-4"
+    >
       <Card
         surface="panel"
         className="max-w-[420px]"
@@ -46,13 +60,23 @@ export default function ConfirmDialog({
             variant={danger ? "danger" : "primary"}
             className="flex-1 py-3 text-[15px] font-bold"
             onClick={onConfirm}
+            disabled={confirmLoading}
+            aria-busy={confirmLoading}
           >
-            {confirmLabel}
+            {confirmLoading ? (
+              <>
+                <span className={spinnerClass} aria-hidden />
+                <span>{loadingLabel}</span>
+              </>
+            ) : (
+              confirmLabel
+            )}
           </Button>
           <Button
             variant="secondary"
             className="flex-1 py-3 text-[15px] font-bold"
             onClick={onCancel}
+            disabled={confirmLoading}
           >
             {cancelLabel}
           </Button>
