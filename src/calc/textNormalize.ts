@@ -10,32 +10,34 @@ export function preprocessText(text: string): string {
 }
 
 /**
- * WhatsApp-style running total then divide: `75+57//5`, `01+02+…+10/5`.
- * Parsed with integer division (floor). Must run before slash→space and `NN/stake`
- * rewrites in {@link normalizeTypoTolerantInput}, otherwise `//` and `/` are mangled.
+ * WhatsApp-style plus-chain rate: `75+57//5` means 2 entries at rate 5.
+ * Must run before slash→space and `NN/stake` rewrites in
+ * {@link normalizeTypoTolerantInput}, otherwise `//` and `/` are mangled.
  */
-export function tryParseArithmeticSumDivide(s: string): { lineTotal: number; displayLine: string } | null {
+export function tryParseArithmeticSumDivide(
+  s: string,
+): { count: number; rate: number; lineTotal: number; displayLine: string } | null {
   const displayLine = s.replace(/\s+/g, " ").trim();
   const compact = displayLine.replace(/\s+/g, "");
   if (!/\+/.test(compact) || /[^0-9+/]/.test(compact)) return null;
   let expr: string;
-  let divisor: number;
+  let rate: number;
   if (compact.includes("//")) {
     const i = compact.lastIndexOf("//");
     expr = compact.slice(0, i);
-    divisor = parseInt(compact.slice(i + 2), 10);
+    rate = parseInt(compact.slice(i + 2), 10);
   } else {
     const i = compact.lastIndexOf("/");
     expr = compact.slice(0, i);
-    divisor = parseInt(compact.slice(i + 1), 10);
+    rate = parseInt(compact.slice(i + 1), 10);
   }
-  if (!(divisor > 0) || !/^[\d+]+$/.test(expr)) return null;
+  if (!(rate > 0) || !/^[\d+]+$/.test(expr)) return null;
   const parts = expr.split("+");
   if (parts.length < 2 || !parts.every((p) => /^\d+$/.test(p))) return null;
-  const sum = parts.reduce((acc, p) => acc + parseInt(p, 10), 0);
-  const lineTotal = Math.floor(sum / divisor);
+  const count = parts.length;
+  const lineTotal = count * rate;
   if (!Number.isFinite(lineTotal) || lineTotal < 0) return null;
-  return { lineTotal, displayLine };
+  return { count, rate, lineTotal, displayLine };
 }
 
 /**

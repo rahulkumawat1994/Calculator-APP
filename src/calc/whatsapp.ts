@@ -67,6 +67,8 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
     const textEnd = i + 1 < headers.length ? headers[i + 1].index : input.length;
     const text = input.slice(h.end, textEnd).trim();
     if (!text) continue;
+    const result = calculateTotal(text);
+    if (result.results.length === 0 && (result.failedLines?.length ?? 0) === 0) continue;
     // Include index so messages at the same minute get unique IDs.
     // Pasting the same conversation twice will produce the same index → dedup still works.
     messages.push({
@@ -75,7 +77,7 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
       date: adjustWADateForOvernight(h.date, h.timestamp),
       timestamp: h.timestamp,
       text,
-      result: calculateTotal(text),
+      result,
     });
   }
 

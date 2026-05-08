@@ -102,18 +102,24 @@ describe("calculateTotal regression scenarios", () => {
       input: "27-5\n17-5\n52-5\n53-5",
       expectedTotal: 20,
     },
-    // WhatsApp sum then ÷ (// or / at end); preserved through normalize so total is not 0
-    { id: "arith-double-slash", input: "75+57//5", expectedTotal: 26 },
+    // WhatsApp plus-chain rate (// or / at end): count entries × rate.
+    { id: "arith-double-slash", input: "75+57//5", expectedTotal: 10 },
     {
       id: "arith-slash-chain",
       input: "01+02+03+04+05+06+07+08+09+10/5",
-      expectedTotal: 11,
+      expectedTotal: 50,
     },
     {
       id: "arith-long-palyr",
       input:
         "06+96+69+05+95+93+09+76+16+50+71+13+31+15+51+97+04+40+26+62+55+91+19+39//5",
-      expectedTotal: 225,
+      expectedTotal: 120,
+    },
+    {
+      id: "arith-long-palyr-with-reference-chain",
+      input:
+        "06+96+69+05+95+93+09+76+16+50+71+13+31+15+51+97+04+40+26+62+55+91+19+39//5\n01+02+03+04+05+06+07+08+09+10//5",
+      expectedTotal: 170,
     },
   ] as const;
 
@@ -333,6 +339,18 @@ Gb`;
     const sum = msgs!.reduce((s, m) => s + m.result.total, 0);
     expect(msgs!.flatMap((m) => m.result.failedLines ?? [])).toEqual([]);
     expect(sum).toBe(100);
+  });
+
+  it("WhatsApp Palyr paste parses plus-chain rate messages as count times rate", () => {
+    const raw = `[07/05, 8:13 pm] RAM KUMAR Palyr: 06+96+69+05+95+93+09+76+16+50+71+13+31+15+51+97+04+40+26+62+55+91+19+39//5
+[07/05, 8:13 pm] RAM KUMAR Palyr: 01+02+03+04+05+06+07+08+09+10//5`;
+    const msgs = parseWhatsAppMessages(raw);
+    expect(msgs).not.toBeNull();
+    expect(msgs).toHaveLength(2);
+    expect(msgs!.map((m) => m.result.total)).toEqual([120, 50]);
+    expect(msgs!.flatMap((m) => m.result.results)).toHaveLength(2);
+    expect(msgs!.flatMap((m) => m.result.failedLines ?? [])).toEqual([]);
+    expect(msgs!.reduce((s, m) => s + m.result.total, 0)).toBe(170);
   });
 
   it("slash pair/rate (NN/10) lines from WhatsApp — 43/10, 07/20 parse as NN×rate, not as junk", () => {

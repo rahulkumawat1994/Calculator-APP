@@ -20,7 +20,7 @@ describe("WhatsApp bulk regression fixture", () => {
     const failed = msgs!.flatMap((m) => m.result.failedLines ?? []);
     const grandTotal = msgs!.reduce((s, m) => s + m.result.total, 0);
 
-    expect(msgs!.length).toBe(156);
+    expect(msgs!.length).toBe(155);
     expect(failed.length).toBe(0);
     expect(grandTotal).toMatchInlineSnapshot(`28181`);
   });

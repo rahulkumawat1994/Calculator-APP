@@ -300,10 +300,10 @@ export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segm
     return [
       {
         line: arith.displayLine,
-        rate: 1,
+        rate: arith.rate,
         isWP: false,
         isDouble: false,
-        count: arith.lineTotal,
+        count: arith.count,
         lineTotal: arith.lineTotal,
       },
     ];
