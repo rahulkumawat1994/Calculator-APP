@@ -353,6 +353,23 @@ Gb`;
     expect(msgs!.reduce((s, m) => s + m.result.total, 0)).toBe(170);
   });
 
+  it("WhatsApp bold/markup: 59*_54* merges with *09 04(50) and does not fail first row", () => {
+    const raw = `[14/05, 5:47 pm] Jai Shree Shyam 🙏🏻: 59*_54*
+*09 04(50)
+--05--57--52--02--07*(50)wp`;
+    const r = calculateTotal(raw);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(700);
+    expect(r.results).toHaveLength(2);
+    expect(r.results[0]).toMatchObject({
+      line: "59 54 09 04",
+      rate: 50,
+      count: 4,
+      lineTotal: 200,
+    });
+    expect(r.results[1]).toMatchObject({ rate: 50, lineTotal: 500, isWP: true });
+  });
+
   it("slash pair/rate (NN/10) lines from WhatsApp — 43/10, 07/20 parse as NN×rate, not as junk", () => {
     const raw = `[27/04, 5:43 pm] JAGSIR: 43/10
 34/5

@@ -41,6 +41,23 @@ export function tryParseArithmeticSumDivide(
 }
 
 /**
+ * WhatsApp bold/markup around jodis: `59*_54*`, `*09 04(50)`, `07*(50)`.
+ * `*` before a digit is kept as a rate marker (`*20`); only decorative `*` / `_`
+ * between two-digit tokens is collapsed.
+ */
+function normalizeWhatsAppBoldJodiMarkup(t: string): string {
+  let s = t.replace(/^\s*\*+(?=\d)/, "");
+  let prev = "";
+  while (s !== prev) {
+    prev = s;
+    s = s.replace(/(\d{2})(?:\s*\*+(?!\d)\s*|\s*_+\s*)+(\d{2})(?!\d)/g, "$1 $2");
+  }
+  s = s.replace(/(?<=\d)\s*\*+(?=\s*\()/g, "");
+  s = s.replace(/(?<=\d)\s*\*+\s*$/g, "");
+  return s.replace(/ +/g, " ").trim();
+}
+
+/**
  * Best-effort cleanup for common typos / alternate keyboards before parsing.
  * Does not guess missing numbers; only normalizes separators and invisible chars.
  */
@@ -58,6 +75,7 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/[\u200B-\u200D\uFEFF]/g, "");
   // Fullwidth ASCII digits → ASCII
   t = t.replace(/[\uFF10-\uFF19]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30));
+  t = normalizeWhatsAppBoldJodiMarkup(t);
   // Sum-then-divide lines: keep `+` and `/` intact for `processLine` (see tryParseArithmeticSumDivide).
   if (tryParseArithmeticSumDivide(t) != null) {
     return t.replace(/ +/g, " ").trim();
