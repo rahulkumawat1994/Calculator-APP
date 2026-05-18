@@ -40,16 +40,31 @@ export function tryParseArithmeticSumDivide(
   return { count, rate, lineTotal, displayLine };
 }
 
+/** Typical stakes after `*` — keep `78*20` as jodi×rate; do not treat `20` as a second jodi. */
+const STAR_RATE_STAKES = new Set([5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 120]);
+
 /**
- * WhatsApp bold/markup around jodis: `59*_54*`, `*09 04(50)`, `07*(50)`.
- * `*` before a digit is kept as a rate marker (`*20`); only decorative `*` / `_`
- * between two-digit tokens is collapsed.
+ * WhatsApp bold/markup around jodis: `59*_54*`, `85*35(75)wp`, `78*73*`, `*09 04(50)`, `07*(50)`.
+ * `*` before a digit is kept as a rate marker (`*20`) when the digits are a stake, not a jodi;
+ * decorative `*` / `_` between two-digit tokens is collapsed.
  */
 function normalizeWhatsAppBoldJodiMarkup(t: string): string {
   let s = t.replace(/^\s*\*+(?=\d)/, "");
   let prev = "";
   while (s !== prev) {
     prev = s;
+    // `78*73*` / `43*93*(75)wp` — star is bold between jodis even when `*` is followed by a digit.
+    s = s.replace(/(\d{2})\*+(\d{2})(?=[\s*_,\-]|$|\(|\.\d|\d{2})/g, (full, a, b, offset, str) => {
+      const tail = str.slice(offset + full.length);
+      const stake = parseInt(b, 10);
+      if (
+        STAR_RATE_STAKES.has(stake) &&
+        (/^\s*$/.test(tail) || /^\s*(?:wp|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(tail))
+      ) {
+        return full;
+      }
+      return `${a} ${b}`;
+    });
     s = s.replace(/(\d{2})(?:\s*\*+(?!\d)\s*|\s*_+\s*)+(\d{2})(?!\d)/g, "$1 $2");
   }
   s = s.replace(/(?<=\d)\s*\*+(?=\s*\()/g, "");

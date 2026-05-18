@@ -353,6 +353,22 @@ Gb`;
     expect(msgs!.reduce((s, m) => s + m.result.total, 0)).toBe(170);
   });
 
+  it("WhatsApp bold/markup: 78*73* is two jodis (not 78×73) and merges with (75)wp row", () => {
+    const raw = `78*73*
+23--28--(75)wp`;
+    const r = calculateTotal(raw);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(600);
+    expect(r.results).toHaveLength(1);
+    expect(r.results[0]).toMatchObject({
+      line: "78 73 23--28",
+      rate: 75,
+      isWP: true,
+      count: 8,
+      lineTotal: 600,
+    });
+  });
+
   it("WhatsApp bold/markup: 59*_54* merges with *09 04(50) and does not fail first row", () => {
     const raw = `[14/05, 5:47 pm] Jai Shree Shyam 🙏🏻: 59*_54*
 *09 04(50)
@@ -464,6 +480,20 @@ Gb`;
 });
 
 describe("parser structure checks", () => {
+  it("treats glued HarfAxBx. prefix as Harf.AxB. (AB 2× on same-digit run)", () => {
+    const out = processLine("HarfAxBx.55555x50");
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      line: "55555",
+      rate: 50,
+      count: 2,
+      isDouble: true,
+      lane: "AB",
+      lineTotal: 100,
+    });
+    expect(calculateTotal("HarfAxBx.55555x50").total).toBe(100);
+  });
+
   it("treats AxB on same-digit run as AB (2×)", () => {
     const out = processLine("SG harf AxB 00000x50");
     expect(out).toHaveLength(1);
@@ -506,6 +536,34 @@ describe("parser structure checks", () => {
       count: 1,
       lineTotal: 50,
     });
+  });
+
+  it("parses Harf. ,B.. typo before multi-x same-digit chain (77777x9999x50)", () => {
+    const out = processLine("Harf. ,B.. 77777x9999x50");
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({
+      line: "B.77777",
+      rate: 50,
+      count: 1,
+      lane: "B",
+      lineTotal: 50,
+    });
+    expect(out[1]).toMatchObject({
+      line: "B.9999",
+      rate: 50,
+      count: 1,
+      lane: "B",
+      lineTotal: 50,
+    });
+    const raw = `[16/05, 2:11 pm] Ramesh Ji P: DB. 54.46.45.55.47.35.03.30.53..97.79.73.53..02.20.24.x10
+Harf. ,B.. 77777x9999x50
+[16/05, 2:21 pm] Ramesh Ji P: DB. 17.x20
+71x10`;
+    const r = calculateTotal(raw);
+    expect(r.failedLines ?? []).toEqual([]);
+    const harfSegs = r.results.filter((s) => s.line.includes("77777") || s.line.includes("9999"));
+    expect(harfSegs).toHaveLength(2);
+    expect(harfSegs.reduce((s, x) => s + x.lineTotal, 0)).toBe(100);
   });
 
   it("parses multi-x chain with extra separators around x", () => {

@@ -193,7 +193,11 @@ function trySolidRunSegment(
   if (/\d/.test(nt.slice(0, bi)) || /\d/.test(nt.slice(ai))) return null;
 
   const { count, isDouble, lane } = solidRunAbMultiplier(modifierSource);
-  const display = nt.replace(/^[\s*\-_.,:|]+|[\s*\-_.,:|]+$/g, '').trim() || run;
+  const display =
+    nt
+      .replace(/^[\s*\-_.,:|]+|[\s*\-_.,:|]+$/g, "")
+      .replace(/^(?:axb|ab)\.?\s*/i, "")
+      .trim() || run;
   return { line: display, rate, isWP: false, isDouble, lane, count, lineTotal: count * rate };
 }
 
@@ -207,12 +211,12 @@ export const SEP_RATE_RE = /(?<![A-Za-z])(?:x|=+|\*)\s*(\d+)\s*([a-zA-Z]*)/gi;
  * number chunks, and rate; otherwise null. Used by merge logic and parser.
  */
 export function parseMultiXChainStructure(trimmed: string): { pre: string; nums: string[]; rate: number } | null {
-  const lead = trimmed.match(/^(AB|A|B)\.?\s*/i);
+  const lead = trimmed.match(/^[,\s.]*?(AB|A|B)\.?\s*/i);
   const pre = lead ? `${lead[1].toUpperCase()}.` : "";
   const rest = lead ? trimmed.slice(lead[0].length).trim() : trimmed;
-  // Tolerate light separator typos between chunks (e.g. "B..2222.x7777x50").
+  // Tolerate light separator typos between chunks (e.g. "B..2222.x7777x50", ",B..77777x9999x50").
   // Keep letters intact so accidental words still fail strict chain mode below.
-  const compact = rest.replace(/[\s._|:/\\-]+/g, "");
+  const compact = rest.replace(/[\s._|:/\\,\-]+/g, "");
   // Chain mode is strict: only digits + x separators (prevents words from splitting on x).
   if (!/^[0-9xX]+$/.test(compact)) return null;
   const parts = compact.split(/x+/i).filter(Boolean);
@@ -257,7 +261,10 @@ function tryParseMultiXSameDigitChain(trimmed: string, parseOne: (s: string) => 
  * Never removes betting modifiers `A.` `B.` `AB.` or `AxB.` / `AxB ` at the current start of the line.
  */
 export function stripLeadingGameLabels(s: string): string {
-  let t = s.trim();
+  // WhatsApp typos: `HarfAxBx.55555x50` glued — must become `Harf.AxB.…` so AxB is not stripped with Harf.
+  let t = s
+    .trim()
+    .replace(/\b(haruf|harf|hrf)axbx?\./gi, "$1.AxB. ");
   let prev = "";
   while (t !== prev) {
     prev = t;
@@ -269,7 +276,8 @@ export function stripLeadingGameLabels(s: string): string {
     if (/^axb$/i.test(word)) break;
     t = t.slice(m[0].length);
   }
-  return t;
+  // `Harf. ,B.. 77777x9999x50` — comma/extra dots before lane letter after game label is stripped.
+  return t.replace(/^[,\s.]*?(AB|A|B)\s*\.+/i, (_, lane) => `${lane.toUpperCase()}. `).trim();
 }
 
 // ─── Line parser ───────────────────────────────────────────────────────────────
