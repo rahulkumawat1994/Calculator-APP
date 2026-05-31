@@ -9,6 +9,34 @@ export function preprocessText(text: string): string {
   return t.trim();
 }
 
+/** `(75(wp` / `(35(` / `(75) wp` / `(rate` at EOL → `(rate)flag` so merge logic sees an explicit rate. */
+export function normalizeParenRateTypos(s: string): string {
+  return s
+    .replace(/\(\s*(\d+)\s*[\/\\|.]\s*([a-zA-Z]*)\s*\)?/g, "($1)$2")
+    .replace(/\(\s*(\d+)\s+([a-zA-Z]+)\s*\)?/g, "($1)$2")
+    .replace(/\(\s*(\d+)\s*\(\s*([a-zA-Z]+)/g, "($1)$2")
+    // `(35(` — opening paren where closing `)` was meant (common WhatsApp typo)
+    .replace(/\(\s*(\d+)\s*\(\s*$/g, "($1)")
+    .replace(/\(\s*(\d+)([a-zA-Z]+)\s*\)?/g, "($1)$2")
+    .replace(/\(\s*(\d+)\s*\)/g, "($1)")
+    .replace(/\(\s*(\d+)\s*$/g, "($1)");
+}
+
+/** `46..45` / `20..20` — one jodi, then `..`, then rate. `45..54` stays two jodis (reverse pair). */
+export function normalizeDoubleDotJodiRate(s: string): string {
+  const t = s.trim();
+  const m = /^(\d{1,3})\.\.(\d{1,4})$/.exec(t);
+  if (!m) return s;
+  const a = m[1]!;
+  const b = m[2]!;
+  if (a.length === 2 && b.length === 2) {
+    const rev = a[1]! + a[0]!;
+    if (b === rev) return s;
+  }
+  if (a === b) return `${a}x${b}`;
+  return `${a}x${b}`;
+}
+
 /**
  * WhatsApp-style plus-chain rate: `75+57//5` means 2 entries at rate 5.
  * Must run before slash→space and `NN/stake` rewrites in
@@ -127,6 +155,10 @@ export function normalizeTypoTolerantInput(s: string): string {
       t = t.replace(/\b(\d{2})\s*=\s*(\d{2})\b/g, "$1 $2");
     }
   }
+  // `19=91=28into 5` → `19=91=28 x5` — single `=` jodi chain before into ×rate (not `41=30`).
+  t = t.replace(/^((?:\d{2}=)+\d{2})\s+x\s*(\d+)\s*$/i, (_, chain, rate) =>
+    `${chain.split("=").join(" ")} x${rate}`,
+  );
   // Same-digit run (3+ identical digits) then AB / A / B then rate, with no x/=/*
   // (common paste: "000B100", "000A100", "000AB100"). Rewrites so SEP_RATE_RE applies;
   // suffix letter is preserved for solidRunAbMultiplier (A/B = 1×, AB = 2×).
@@ -183,7 +215,7 @@ function looksLikeIntoTypo(letters: string): boolean {
   // "into" is 4 chars; shorter runs (e.g. "int") are too ambiguous vs real words
   if (t.length < 4 || t.length > 9) return false;
   // Do not treat known bet flags as "into"
-  if (/^(wp|ab|palat|palatel)$/i.test(t)) return false;
+  if (/^(wp|ab|palat|palatel|palt|palti)$/i.test(t)) return false;
   const targets = ["into", "intu"];
   return targets.some((target) => levenshtein(t, target) <= 2);
 }
@@ -205,6 +237,16 @@ export function parseStandaloneIntoTypoRateDigits(line: string): string | null {
  */
 export function normalizeIntoRateMarker(s: string): string {
   let out = s
+    // Dot-separated jodi run + "with palt(i) N into" (WhatsApp: `37.48.50.41.36.27.with palt 5intu`).
+    .replace(
+      /(\d{2}(?:\.\d{2})+)\.\s*(?:with\s+)?(?:palt(?:i)?|palat(?:e|el)?)\s*(\d{1,5})(?:\s*(?:into|ijto|intu|in\s*t[ou])|(?:into|ijto|intu|in\s*t[ou]))?\s*$/i,
+      "$1.=$2",
+    )
+    // Same shape with space before "with" (no trailing dot after last jodi).
+    .replace(
+      /(\d{2}(?:\.\d{2})+)\s+(?:with\s+)?(?:palt(?:i)?|palat(?:e|el)?)\s*(\d{1,5})(?:\s*(?:into|ijto|intu|in\s*t[ou])|(?:into|ijto|intu|in\s*t[ou]))?\s*$/i,
+      "$1.=$2",
+    )
     // `…42-into5` / `05-50-into15` — hyphen before `into`; emit spaced ` xN` so later NN-stake
     // rules do not treat `05-50` as jodi×50 when a real `into` rate follows on the same line.
     .replace(/[-–—]+\s*(into|ijto)\s*(\d{1,5})\s*$/i, " x$2")

@@ -7,6 +7,8 @@ import {
 } from "./betParser";
 import {
   normalizeIntoRateMarker,
+  normalizeDoubleDotJodiRate,
+  normalizeParenRateTypos,
   normalizeTrailingDashRate,
   normalizeTypoTolerantInput,
   parseStandaloneIntoTypoRateDigits,
@@ -237,6 +239,36 @@ function mergePendingBodyWithInheritedRate(pending: string, continuationBody: st
   return `${p}${sep}${b} x${rate}`;
 }
 
+function isPureNumbersLine(s: string): boolean {
+  return /^[\d\s\-_.,:|\/\\]+$/.test(s.trim()) && /\d/.test(s);
+}
+
+/**
+ * One message with bare numbers and no × / into / comma rate:
+ * tokens 1…n−1 are jodis, last token is the shared rate (`65` + `20`, `65 70` + `20`, `65 20 20`).
+ */
+function tryFlushAsBareNumberMessage(
+  pendingLines: string[],
+  lastInheritedRate: number | null,
+  onMerged: (line: string) => void,
+): boolean {
+  if (lastInheritedRate != null) return false;
+  if (pendingLines.length === 0 || !pendingLines.every(isPureNumbersLine)) return false;
+
+  const tokens = pendingLines.join(" ").match(/\d+/g) ?? [];
+  if (tokens.length < 2) return false;
+
+  const rate = tokens[tokens.length - 1]!;
+  const valTokens = tokens.slice(0, -1);
+  const isRate = (t: string) => t.length >= 1 && t.length <= 4 && parseInt(t, 10) > 0;
+  const isVal = (t: string) => t.length >= 1 && t.length <= 3;
+
+  if (!isRate(rate) || !valTokens.every(isVal)) return false;
+
+  for (const val of valTokens) onMerged(`${val}x${rate}`);
+  return true;
+}
+
 /**
  * Strips a leading slot code with **no** dot: `FB 31.67…` (WhatsApp). `stripLeadingGameLabels`
  * only handles `Harf.` / `Gali.`-style `Word.`, so leading `FB ` left letters on the
@@ -275,8 +307,12 @@ export function calculateTotal(text: string): CalculationResult {
     if (isWhatsAppNoiseLine(rawLine)) continue;
     const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
     const labelStripped = stripLeadingGameLabels(afterLoose);
-    const line = normalizeTrailingDashRate(
-      normalizeTypoTolerantInput(normalizeIntoRateMarker(labelStripped)),
+    const line = normalizeDoubleDotJodiRate(
+      normalizeTrailingDashRate(
+        normalizeParenRateTypos(
+          normalizeTypoTolerantInput(normalizeIntoRateMarker(labelStripped)),
+        ),
+      ),
     );
     if (isSeparatorOnlyLine(line)) continue;
     logicalLines.push(...splitTrailingNumberRunAfterLastRate(line));
@@ -329,9 +365,16 @@ export function calculateTotal(text: string): CalculationResult {
     return true;
   };
 
-  const flushPending = () => {
+  const flushPending = (opts?: { endOfMessage?: boolean }) => {
     if (!pending) return;
     if (tryFlushAsValueRatePairs()) return;
+    if (
+      opts?.endOfMessage &&
+      tryFlushAsBareNumberMessage(pendingLines, lastInheritedRate, (line) => pushMerged(line))
+    ) {
+      resetPending();
+      return;
+    }
     let toPush = pending;
     const isPurePending = /^[\d\s\-_.,:|\/\\]+$/.test(pending) && /\d/.test(pending);
     if (isPurePending && lastInheritedRate != null) {
@@ -408,7 +451,7 @@ export function calculateTotal(text: string): CalculationResult {
       }
     }
   }
-  flushPending();
+  flushPending({ endOfMessage: true });
 
   const results: Segment[] = [];
   const failedLines: string[] = [];
@@ -541,8 +584,12 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
     if (isWhatsAppNoiseLine(rawLine)) continue;
     const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
     const labelStripped = stripLeadingGameLabels(afterLoose);
-    const line = normalizeTrailingDashRate(
-      normalizeTypoTolerantInput(normalizeIntoRateMarker(labelStripped)),
+    const line = normalizeDoubleDotJodiRate(
+      normalizeTrailingDashRate(
+        normalizeParenRateTypos(
+          normalizeTypoTolerantInput(normalizeIntoRateMarker(labelStripped)),
+        ),
+      ),
     );
     if (isSeparatorOnlyLine(line)) continue;
     for (const s of splitTrailingNumberRunAfterLastRate(line)) {
@@ -587,9 +634,18 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
     return true;
   };
 
-  const flushPendingTL = () => {
+  const flushPendingTL = (opts?: { endOfMessage?: boolean }) => {
     if (!pendingTL) return;
     if (tryFlushAsValueRatePairsTL()) return;
+    if (
+      opts?.endOfMessage &&
+      tryFlushAsBareNumberMessage(pendingLineStrs, lastInheritedRateTL, (line) =>
+        pushMergedTL({ line, src: [...pendingTL!.src] }),
+      )
+    ) {
+      resetPendingTL();
+      return;
+    }
     let toPush = pendingTL.line;
     const isPurePending = /^[\d\s\-_.,:|\/\\]+$/.test(pendingTL.line) && /\d/.test(pendingTL.line);
     if (isPurePending && lastInheritedRateTL != null) {
@@ -664,7 +720,7 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
       }
     }
   }
-  flushPendingTL();
+  flushPendingTL({ endOfMessage: true });
 
   // Phase 4 — run processLine and attach rawLine indices to each produced segment
   const results: Segment[] = [];

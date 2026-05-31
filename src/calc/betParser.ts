@@ -1,6 +1,8 @@
 import type { BetLane, Segment } from "../types";
 import {
   normalizeIntoRateMarker,
+  normalizeDoubleDotJodiRate,
+  normalizeParenRateTypos,
   normalizeTrailingDashRate,
   normalizeTypoTolerantInput,
   tryParseArithmeticSumDivide,
@@ -282,27 +284,45 @@ export function stripLeadingGameLabels(s: string): string {
 
 // ─── Line parser ───────────────────────────────────────────────────────────────
 
-export function processLine(line: string, opts?: { skipMultiX?: boolean }): Segment[] {
+export function processLine(
+  line: string,
+  opts?: { skipMultiX?: boolean; skipCommaGapMulti?: boolean },
+): Segment[] {
   // ── Normalize paren typos before parsing ──────────────────────────────────
   // Handles the common variations a human might type:
   //   (rate/suffix   (rate\suffix   (rate|suffix   (rate.suffix
   //   (rate suffix)  (ratesuffix)   ( rate )       (rate        ← missing close
-  const trimmed = normalizeTrailingDashRate(
-    normalizeTypoTolerantInput(normalizeIntoRateMarker(stripLeadingGameLabels(line))),
+  const trimmed = normalizeDoubleDotJodiRate(
+    normalizeTrailingDashRate(
+      normalizeParenRateTypos(
+        normalizeTypoTolerantInput(normalizeIntoRateMarker(stripLeadingGameLabels(line))),
+      ),
+    ),
   )
     // After merges, stray leading ". " from skipped separator lines
-    .replace(/^[\s.]+/, "")
-    // (rate / \ | . suffix)  or  (rate / \ | . suffix  (any non-alpha separator)
-    .replace(/\(\s*(\d+)\s*[\/\\|.]\s*([a-zA-Z]*)\s*\)?/g, '($1)$2')
-    // (rate suffix)  or  (rate suffix  (space between rate and suffix)
-    .replace(/\(\s*(\d+)\s+([a-zA-Z]+)\s*\)?/g, '($1)$2')
-    // (ratesuffix)  or  (ratesuffix  (no separator at all)
-    .replace(/\(\s*(\d+)([a-zA-Z]+)\s*\)?/g, '($1)$2')
-    // ( rate )  (spaces inside parens, no suffix)
-    .replace(/\(\s*(\d+)\s*\)/g, '($1)')
-    // (rate  (only opening paren, nothing after digits — add closing)
-    .replace(/\(\s*(\d+)\s*$/g, '($1)');
+    .replace(/^[\s.]+/, "");
   if (!trimmed) return [];
+
+  // `95,79,98,01,,,,,,20,,,,,59,97,89,10,,,,,10` — long comma runs separate jodi groups + rates.
+  if (!opts?.skipCommaGapMulti && /,,,/.test(trimmed)) {
+    const parts = trimmed
+      .split(/,{3,}/)
+      .map((p) => p.replace(/^,+|,+$/g, "").trim())
+      .filter(Boolean);
+    if (parts.length >= 4 && parts.length % 2 === 0) {
+      const merged: Segment[] = [];
+      for (let i = 0; i < parts.length; i += 2) {
+        merged.push(
+          ...processLine(`${parts[i]},${parts[i + 1]}`, {
+            ...opts,
+            skipCommaGapMulti: true,
+          }),
+        );
+      }
+      if (merged.length) return merged;
+    }
+  }
+
   const arith = tryParseArithmeticSumDivide(trimmed);
   if (arith) {
     return [

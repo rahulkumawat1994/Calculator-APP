@@ -91,6 +91,11 @@ describe("calculateTotal regression scenarios", () => {
     { id: "into-typo-olto", input: "11-13-31olto10", expectedTotal: 30 },
     { id: "into-typo-iltu", input: "11-13-31iltu10", expectedTotal: 30 },
     { id: "into-typo-spaced", input: "11-13-31ilto 10", expectedTotal: 30 },
+    {
+      id: "dot-list-with-palt-into",
+      input: "37.48.50.41.36.27.with palt 5intu",
+      expectedTotal: 30,
+    },
     // WhatsApp: "=" before A/B lane letter on same-digit run (rate digits must not sit directly after "=" for SEP_RATE_RE)
     { id: "solid-equals-a", input: "111=A100", expectedTotal: 100 },
     { id: "solid-equals-b", input: "999=B100", expectedTotal: 100 },
@@ -172,6 +177,36 @@ describe("calculateTotal regression scenarios", () => {
     expect(processLine("444x20B")[0]?.lane).toBe("B");
     expect(processLine("333,,,100ab")[0]?.lane).toBe("AB");
     expect(processLine("B.1111x9999x50")[0]?.lane).toBe("B");
+  });
+
+  it("bare numbers in one message: jodis are tokens 1…n−1, last token is rate", () => {
+    const cases = [
+      { input: "65\n20", total: 20, segs: 1 },
+      { input: "Desawr\n65\n20", total: 20, segs: 1 },
+      { input: "Desawr\n65 70\n20", total: 40, segs: 2 },
+      { input: "Desawr\n65\n20\n20", total: 40, segs: 2 },
+      { input: "Desawr\n65 20 20", total: 40, segs: 2 },
+    ] as const;
+    for (const c of cases) {
+      const r = calculateTotal(c.input);
+      expect(r.failedLines ?? [], c.input).toEqual([]);
+      expect(r.total, c.input).toBe(c.total);
+      expect(r.results, c.input).toHaveLength(c.segs);
+    }
+  });
+
+  it("WhatsApp: bare number message then into lines in next message", () => {
+    const raw = `[29/05, 12:06 am] skgonline1979:  
+65
+20
+[29/05, 12:06 am] skgonline1979: 49-94into15
+48-84into10
+59-95into5`;
+    const msgs = parseWhatsAppMessages(raw);
+    expect(msgs).toHaveLength(2);
+    expect(msgs![0]!.result.total).toBe(20);
+    expect(msgs![1]!.result.total).toBe(60);
+    expect(msgs!.flatMap((m) => m.result.failedLines ?? [])).toEqual([]);
   });
 
   it("GC MALHOTRA: hyphen line break before Into rate — merge rows (no orphan x5)", () => {
@@ -351,6 +386,76 @@ Gb`;
     expect(msgs!.flatMap((m) => m.result.results)).toHaveLength(2);
     expect(msgs!.flatMap((m) => m.result.failedLines ?? [])).toEqual([]);
     expect(msgs!.reduce((s, m) => s + m.result.total, 0)).toBe(170);
+  });
+
+  it("equals jodi chain with into rate (19=91=28into 5)", () => {
+    const r = calculateTotal("19=91=28into 5");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(15);
+    expect(r.results[0]).toMatchObject({ line: "19 91 28", rate: 5, count: 3, lineTotal: 15 });
+  });
+
+  it("FB double-dot jodi..rate lines (46..45 and 20..20)", () => {
+    const raw = `[28/05, 5:29 pm] skgonline1979: FB 
+46..45
+20..20`;
+    const msgs = parseWhatsAppMessages(raw);
+    expect(msgs).toHaveLength(1);
+    expect(msgs![0]!.result.failedLines ?? []).toEqual([]);
+    expect(msgs![0]!.result.total).toBe(65);
+    expect(msgs![0]!.result.results).toHaveLength(2);
+    expect(msgs![0]!.result.results[0]).toMatchObject({ line: "46", rate: 45, lineTotal: 45 });
+    expect(msgs![0]!.result.results[1]).toMatchObject({ line: "20", rate: 20, lineTotal: 20 });
+  });
+
+  it("comma list: many commas separate multiple rates in one line", () => {
+    const r = calculateTotal("95,79,98,01,,,,,,20,,,,,59,97,89,10,,,,,10");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(120);
+    expect(r.results).toHaveLength(2);
+    expect(r.results[0]).toMatchObject({
+      line: "95,79,98,01",
+      rate: 20,
+      count: 4,
+      lineTotal: 80,
+    });
+    expect(r.results[1]).toMatchObject({
+      line: "59,97,89,10",
+      rate: 10,
+      count: 4,
+      lineTotal: 40,
+    });
+  });
+
+  it("paren typo: (35( at end of line parses as rate 35", () => {
+    const raw = `[29/05, 12:11 am] Jai Shree Shyam 🙏🏻: 98 94(150)wp
+77 27 72 (35(`;
+    const r = calculateTotal(raw.replace(/\[[^\]]*\]\s*[^:\n]+:\s*/g, ""));
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(705);
+    expect(r.results).toHaveLength(2);
+    expect(r.results[0]).toMatchObject({ line: "98 94", rate: 150, isWP: true, lineTotal: 600 });
+    expect(r.results[1]).toMatchObject({ line: "77 27 72", rate: 35, count: 3, lineTotal: 105 });
+  });
+
+  it("WhatsApp bold/markup: 04*54* merges with 09--59(75(wp typo paren", () => {
+    const raw = `[28/05, 9:12 pm] Jai Shree Shyam 🙏🏻: 04*54*
+09--59(75(wp
+08--58--03--53*(35)wp`;
+    const r = calculateTotal(
+      raw.replace(/\[[^\]]*\]\s*[^:\n]+:\s*/g, ""),
+    );
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(880);
+    expect(r.results).toHaveLength(2);
+    expect(r.results[0]).toMatchObject({
+      line: "04 54 09--59",
+      rate: 75,
+      isWP: true,
+      count: 8,
+      lineTotal: 600,
+    });
+    expect(r.results[1]).toMatchObject({ rate: 35, lineTotal: 280, isWP: true });
   });
 
   it("WhatsApp bold/markup: 78*73* is two jodis (not 78×73) and merges with (75)wp row", () => {
