@@ -30,6 +30,7 @@ import type {
 } from "@/types";
 import { useHistoryOverlay } from "@/hooks/useHistoryOverlay";
 import EditableBreakdown from "./EditableBreakdown";
+import NotebookBreakdown from "./NotebookBreakdown";
 import ReportIssue from "./ReportIssue";
 import { Button, Card, Modal } from "./ui";
 
@@ -73,6 +74,19 @@ function newBlockId(): string {
 }
 
 const lineCountFormatter = new Intl.NumberFormat("en-IN");
+
+const RESULT_VIEW_MODE_KEY = "calc-result-view-mode";
+type ResultViewMode = "summary" | "check";
+
+function getStoredResultViewMode(): ResultViewMode {
+  try {
+    const v = localStorage.getItem(RESULT_VIEW_MODE_KEY);
+    if (v === "check" || v === "notebook") return "check";
+    return "summary";
+  } catch {
+    return "summary";
+  }
+}
 
 /** Normalize pasted body text so duplicate segment detection is stable across OS line endings. */
 function normPasteText(s: string): string {
@@ -189,6 +203,9 @@ export default function Calculator({
     { id: newBlockId(), label: "User 1", text: "", labelLocked: false },
   ]);
   const [userResults, setUserResults] = useState<PerUserCalc[] | null>(null);
+  const [resultViewMode, setResultViewMode] = useState<ResultViewMode>(
+    getStoredResultViewMode
+  );
   /** Which user row has line-by-line breakdown open (accordion, one at a time). */
   const [expandedResultBlockId, setExpandedResultBlockId] = useState<
     string | null
@@ -819,6 +836,11 @@ export default function Calculator({
   }, [userResults]);
 
   const grandTotal = userResults?.reduce((s, u) => s + u.result.total, 0) ?? 0;
+  const uncountedFailedLines =
+    userResults?.reduce(
+      (s, u) => s + (u.result.failedLines?.length ?? 0),
+      0
+    ) ?? 0;
   const reportPrefill = blocks
     .map((b) => b.text.trim())
     .filter(Boolean)
@@ -1138,18 +1160,59 @@ export default function Calculator({
 
       {userResults && userResults.length > 0 && (
         <div className={`w-full max-w-[520px] mt-5 space-y-3${canSaveBeforeClear ? " pb-28 sm:pb-24" : ""}`}>
-          <div className="px-1">
-            <h2 className="text-[17px] font-bold text-[#222]">
-              Results by user
-            </h2>
-            <p className="text-[12px] text-gray-500 mt-0.5">
-              Tap a row to show or hide line-by-line details.
-            </p>
+          <div className="px-1 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-[17px] font-bold text-[#222]">
+                Results by user
+              </h2>
+              <p className="text-[12px] text-gray-500 mt-0.5">
+                {resultViewMode === "check"
+                  ? "Check = see your message and math side by side."
+                  : "Tap a row to show or hide line-by-line details."}
+              </p>
+            </div>
+            <div
+              className="shrink-0 flex rounded-[10px] border-2 border-[#d5e4f5] bg-white p-0.5"
+              role="group"
+              aria-label="Result view"
+            >
+              {(
+                [
+                  { id: "summary" as const, label: "Summary" },
+                  { id: "check" as const, label: "Check" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  aria-pressed={resultViewMode === opt.id}
+                  onClick={() => {
+                    setResultViewMode(opt.id);
+                    try {
+                      localStorage.setItem(RESULT_VIEW_MODE_KEY, opt.id);
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                  className={`px-2.5 py-1.5 text-[11px] font-bold rounded-[8px] transition-colors ${
+                    resultViewMode === opt.id
+                      ? "bg-[#1d6fb8] text-white"
+                      : "text-[#4a6685] hover:bg-[#f0f6fd]"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {userResults.map((u) => {
             const isOpen = expandedResultBlockId === u.blockId;
             const hasLines = u.result.results.length > 0;
+            const hasExpandable =
+              resultViewMode === "check"
+                ? hasLines || (u.result.failedLines?.length ?? 0) > 0
+                : hasLines;
             const failedLineCount = u.result.failedLines?.length ?? 0;
             const hasError = failedLineCount > 0;
             const lineCount = u.result.results.length;
@@ -1169,19 +1232,23 @@ export default function Calculator({
               >
                 <button
                   type="button"
-                  disabled={!hasLines}
-                  aria-expanded={hasLines ? isOpen : undefined}
+                  disabled={!hasExpandable}
+                  aria-expanded={hasExpandable ? isOpen : undefined}
                   aria-label={
-                    hasLines
+                    hasExpandable
                       ? `${u.label}: ${
                           hasError
                             ? `${failedLineCount} failed line${
                                 failedLineCount === 1 ? "" : "s"
                               }. `
                             : ""
-                        }${lineCountLabel}, total ${lineCountFormatter.format(
-                          u.result.total
-                        )}`
+                        }${
+                          resultViewMode === "summary" && hasLines
+                            ? `${lineCountLabel}, `
+                            : ""
+                        }total ${lineCountFormatter.format(u.result.total)}${
+                          hasError ? " (some lines not counted)" : ""
+                        }`
                       : `${u.label}: no line items${
                           hasError
                             ? `, ${failedLineCount} failed line${
@@ -1191,11 +1258,11 @@ export default function Calculator({
                         }`
                   }
                   onMouseDown={(e) => {
-                    if (!hasLines) return;
+                    if (!hasExpandable) return;
                     e.preventDefault();
                   }}
                   onClick={() => {
-                    if (!hasLines) return;
+                    if (!hasExpandable) return;
                     if (expandedResultBlockId === u.blockId) {
                       setExpandedResultBlockId(null);
                       return;
@@ -1204,7 +1271,7 @@ export default function Calculator({
                     setAccordionScrollToBlockId(u.blockId);
                   }}
                   className={`w-full flex items-center justify-between gap-3 px-4 py-3.5 bg-[#f6f9fd] text-left transition-colors ${
-                    hasLines
+                    hasExpandable
                       ? "hover:bg-[#eef4fc] cursor-pointer border-b border-[#e3edf7]"
                       : "opacity-70 cursor-default border-b border-[#e3edf7]"
                   }`}
@@ -1213,42 +1280,79 @@ export default function Calculator({
                     <span className="text-[16px] font-extrabold text-[#1a1a1a] truncate w-full">
                       {u.label}
                     </span>
-                    {hasLines ? (
-                      <span className="inline-flex items-center gap-2 rounded-[10px] bg-white border border-[#d5e4f5] px-2.5 py-1 shadow-sm">
-                        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">
-                          Lines
+                    {hasError && (
+                      <span className="inline-flex items-center rounded-[10px] bg-red-50 border border-red-200 px-2.5 py-1">
+                        <span className="text-[11px] font-bold text-red-600">
+                          {failedLineCount} not read
                         </span>
-                        <span className="text-[15px] font-black tabular-nums text-[#1d6fb8] leading-none">
-                          {lineCountFormatter.format(lineCount)}
-                        </span>
-                      </span>
-                    ) : (
-                      <span className="text-[12px] font-semibold text-gray-600">
-                        No line items to expand
                       </span>
                     )}
+                    {resultViewMode === "summary" &&
+                      (hasLines ? (
+                        <span className="inline-flex items-center gap-2 rounded-[10px] bg-white border border-[#d5e4f5] px-2.5 py-1 shadow-sm">
+                          <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">
+                            Lines
+                          </span>
+                          <span className="text-[15px] font-black tabular-nums text-[#1d6fb8] leading-none">
+                            {lineCountFormatter.format(lineCount)}
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-[12px] font-semibold text-gray-600">
+                          No line items to expand
+                        </span>
+                      ))}
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-[22px] font-black text-[#1d6fb8] tabular-nums">
-                      {u.result.total}
-                    </span>
-                    {hasLines && (
-                      <span
-                        className="text-[11px] font-bold text-[#4a6685] w-5 text-center select-none"
-                        aria-hidden
-                      >
-                        {isOpen ? "▲" : "▼"}
+                  <div className="flex flex-col items-end gap-0.5 shrink-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[22px] font-black text-[#1d6fb8] tabular-nums leading-none">
+                        {lineCountFormatter.format(u.result.total)}
+                        {hasError && (
+                          <span
+                            className="text-red-500"
+                            title={`${failedLineCount} line${
+                              failedLineCount === 1 ? "" : "s"
+                            } not counted in this total`}
+                            aria-hidden
+                          >
+                            *
+                          </span>
+                        )}
+                      </span>
+                      {hasExpandable && (
+                        <span
+                          className="text-[11px] font-bold text-[#4a6685] w-5 text-center select-none"
+                          aria-hidden
+                        >
+                          {isOpen ? "▲" : "▼"}
+                        </span>
+                      )}
+                    </div>
+                    {hasError && (
+                      <span className="text-[10px] font-semibold text-red-600 tabular-nums">
+                        {failedLineCount} line{failedLineCount === 1 ? "" : "s"}{" "}
+                        not counted
                       </span>
                     )}
                   </div>
                 </button>
-                {isOpen && hasLines && (
+                {isOpen && hasExpandable && (
                   <div className="p-4 border-t border-[#eef2f7]">
-                    <EditableBreakdown
-                      result={u.result}
-                      onChange={(r) => updateUserResult(u.blockId, r)}
-                      compact
-                    />
+                    {resultViewMode === "check" ? (
+                      <NotebookBreakdown
+                        text={u.text}
+                        result={u.result}
+                        onChange={(r) => updateUserResult(u.blockId, r)}
+                      />
+                    ) : (
+                      hasLines && (
+                        <EditableBreakdown
+                          result={u.result}
+                          onChange={(r) => updateUserResult(u.blockId, r)}
+                          compact
+                        />
+                      )
+                    )}
                   </div>
                 )}
               </div>
@@ -1261,8 +1365,25 @@ export default function Calculator({
                 All users total
               </div>
               <div className="text-[48px] font-extrabold text-white leading-none tabular-nums">
-                {grandTotal}
+                {lineCountFormatter.format(grandTotal)}
+                {uncountedFailedLines > 0 && (
+                  <span
+                    className="text-white/90"
+                    title={`${uncountedFailedLines} line${
+                      uncountedFailedLines === 1 ? "" : "s"
+                    } not counted in user totals`}
+                    aria-hidden
+                  >
+                    *
+                  </span>
+                )}
               </div>
+              {uncountedFailedLines > 0 && (
+                <div className="text-[12px] font-semibold text-white/80 mt-1.5">
+                  * {uncountedFailedLines} line
+                  {uncountedFailedLines === 1 ? "" : "s"} not counted
+                </div>
+              )}
             </div>
             <button
               type="button"

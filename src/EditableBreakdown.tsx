@@ -20,12 +20,19 @@ interface Props {
   };
 }
 
-function rebuild(results: Segment[], failedLines?: string[]): CalculationResult {
+export function rebuildCalculationResult(
+  results: Segment[],
+  failedLines?: string[],
+): CalculationResult {
   return {
     results,
     total: results.reduce((s, r) => s + r.lineTotal, 0),
     ...(failedLines && failedLines.length > 0 ? { failedLines } : {}),
   };
+}
+
+function rebuild(results: Segment[], failedLines?: string[]): CalculationResult {
+  return rebuildCalculationResult(results, failedLines);
 }
 
 /** Comma jodi list: each jodi in nowrap so digits like 0 and 3 in 03 are never split across lines. */
@@ -45,7 +52,7 @@ function JodiListDisplay({ text }: { text: string }) {
 }
 
 // Hint for the numbers field on failed lines — align with extractPairedNumbers when possible.
-function hintNumbers(line: string): string {
+export function breakdownHintNumbers(line: string): string {
   const pairs = extractPairedNumbers(line);
   if (pairs.length > 0) {
     return pairs.map((p) => p.toString().padStart(2, "0")).join(" ");
@@ -53,8 +60,12 @@ function hintNumbers(line: string): string {
   return (line.match(/(?<!\d)\d{2}(?!\d)/g) ?? []).join(" ");
 }
 
+function hintNumbers(line: string): string {
+  return breakdownHintNumbers(line);
+}
+
 // Shared edit form used for both editing existing rows and fixing failed lines
-function EditForm({
+export function BreakdownEditForm({
   line, rate, isWP, isAB,
   onLineChange, onRateChange, onWPChange, onABChange,
   onSave, onCancel, context,
@@ -241,7 +252,7 @@ export default function EditableBreakdown({
             {failedLines.map(line => (
               <div key={line}>
                 {fixingLine === line ? (
-                  <EditForm
+                  <BreakdownEditForm
                     line={fixLine} rate={fixRate} isWP={fixWP} isAB={fixAB}
                     onLineChange={setFixLine} onRateChange={setFixRate}
                     onWPChange={setFixWP} onABChange={setFixAB}
@@ -283,7 +294,7 @@ export default function EditableBreakdown({
           }`}
         >
           {editingIdx === i ? (
-            <EditForm
+            <BreakdownEditForm
               line={editLine} rate={editRate} isWP={editWP} isAB={editAB}
               onLineChange={setEditLine} onRateChange={setEditRate}
               onWPChange={setEditWP} onABChange={setEditAB}
