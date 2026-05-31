@@ -30,7 +30,11 @@ import type {
 } from "@/types";
 import { useHistoryOverlay } from "@/hooks/useHistoryOverlay";
 import EditableBreakdown from "./EditableBreakdown";
-import NotebookBreakdown from "./NotebookBreakdown";
+import NotebookBreakdown, {
+  CHECK_FONT_LEVELS,
+  getStoredCheckFontLevel,
+  persistCheckFontLevel,
+} from "./NotebookBreakdown";
 import ReportIssue from "./ReportIssue";
 import { Button, Card, Modal } from "./ui";
 
@@ -206,6 +210,7 @@ export default function Calculator({
   const [resultViewMode, setResultViewMode] = useState<ResultViewMode>(
     getStoredResultViewMode
   );
+  const [checkFontLevel, setCheckFontLevel] = useState(getStoredCheckFontLevel);
   /** Which user row has line-by-line breakdown open (accordion, one at a time). */
   const [expandedResultBlockId, setExpandedResultBlockId] = useState<
     string | null
@@ -1170,6 +1175,46 @@ export default function Calculator({
                   ? "Check = see your message and math side by side."
                   : "Tap a row to show or hide line-by-line details."}
               </p>
+              {resultViewMode === "check" && (
+                <div
+                  className="flex items-center gap-2 mt-2"
+                  role="group"
+                  aria-label="Check view text size"
+                >
+                  <span className="text-[11px] font-semibold text-gray-500">
+                    Text size
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="Smaller text"
+                    disabled={checkFontLevel <= 0}
+                    onClick={() => {
+                      const next = Math.max(0, checkFontLevel - 1);
+                      setCheckFontLevel(next);
+                      persistCheckFontLevel(next);
+                    }}
+                    className="min-w-[36px] h-8 rounded-lg border-2 border-[#d5e4f5] bg-white text-[15px] font-bold text-[#1d6fb8] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#f0f6fd]"
+                  >
+                    A−
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Bigger text"
+                    disabled={checkFontLevel >= CHECK_FONT_LEVELS.length - 1}
+                    onClick={() => {
+                      const next = Math.min(
+                        CHECK_FONT_LEVELS.length - 1,
+                        checkFontLevel + 1
+                      );
+                      setCheckFontLevel(next);
+                      persistCheckFontLevel(next);
+                    }}
+                    className="min-w-[36px] h-8 rounded-lg border-2 border-[#d5e4f5] bg-white text-[17px] font-bold text-[#1d6fb8] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#f0f6fd]"
+                  >
+                    A+
+                  </button>
+                </div>
+              )}
             </div>
             <div
               className="shrink-0 flex rounded-[10px] border-2 border-[#d5e4f5] bg-white p-0.5"
@@ -1343,6 +1388,7 @@ export default function Calculator({
                         text={u.text}
                         result={u.result}
                         onChange={(r) => updateUserResult(u.blockId, r)}
+                        fontLevel={checkFontLevel}
                       />
                     ) : (
                       hasLines && (

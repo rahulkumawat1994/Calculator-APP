@@ -16,6 +16,58 @@ interface Props {
   text: string;
   result: CalculationResult;
   onChange?: (updated: CalculationResult) => void;
+  /** 0 = 9px … 11 = 20px (see CHECK_FONT_LEVELS). */
+  fontLevel?: number;
+}
+
+export const CHECK_FONT_SIZE_KEY = "calc-check-font-size";
+export const CHECK_FONT_LEVELS = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] as const;
+const DEFAULT_FONT_LEVEL = 2; // 11px
+
+export function getStoredCheckFontLevel(): number {
+  try {
+    const raw = localStorage.getItem(CHECK_FONT_SIZE_KEY);
+    if (raw === null) return DEFAULT_FONT_LEVEL;
+    const v = parseInt(raw, 10);
+    if (!Number.isFinite(v)) return DEFAULT_FONT_LEVEL;
+
+    const levels = CHECK_FONT_LEVELS as readonly number[];
+    // Pixel stored (9–20)
+    if (v >= 9 && v <= 20) {
+      const idx = levels.indexOf(v);
+      return idx >= 0 ? idx : DEFAULT_FONT_LEVEL;
+    }
+    // Legacy: index on older scales
+    for (const legacy of [
+      [9, 11, 13, 15, 17, 20],
+      [9, 11, 13, 15],
+    ]) {
+      if (v >= 0 && v < legacy.length) {
+        const idx = levels.indexOf(legacy[v]!);
+        if (idx >= 0) return idx;
+      }
+    }
+    if (v >= 0 && v < levels.length) return v;
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_FONT_LEVEL;
+}
+
+export function persistCheckFontLevel(level: number): void {
+  try {
+    localStorage.setItem(CHECK_FONT_SIZE_KEY, String(checkFontSizePx(level)));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function checkFontSizePx(level: number): number {
+  const i = Math.min(
+    CHECK_FONT_LEVELS.length - 1,
+    Math.max(0, Math.floor(level))
+  );
+  return CHECK_FONT_LEVELS[i]!;
 }
 
 function segmentRowRight(seg: Segment): string[] {
@@ -194,12 +246,22 @@ function buildNotebookRows(text: string, result: CalculationResult) {
   return attachFailedLines(rows, failedLines);
 }
 
-export default function NotebookBreakdown({ text, result, onChange }: Props) {
+export default function NotebookBreakdown({
+  text,
+  result,
+  onChange,
+  fontLevel = DEFAULT_FONT_LEVEL,
+}: Props) {
   const rows = buildNotebookRows(text, result);
   const failedLines = result.failedLines ?? [];
   const partTotals = result.results.map((r) => r.lineTotal);
   const sumLine =
     partTotals.length > 1 ? partTotals.join(" + ") : null;
+
+  const cellPx = checkFontSizePx(fontLevel);
+  const totalPx = cellPx + 4;
+  const sumPx = Math.max(9, cellPx - 1);
+  const btnPx = Math.max(9, cellPx - 1);
 
   const [fixingLine, setFixingLine] = useState<string | null>(null);
   const [fixLine, setFixLine] = useState("");
@@ -286,11 +348,12 @@ export default function NotebookBreakdown({ text, result, onChange }: Props) {
               }`}
             >
               <div
-                className={`px-2.5 py-2 border-r font-mono text-[11px] wrap-break-word leading-relaxed ${
+                className={`px-2.5 py-2 border-r font-mono wrap-break-word leading-relaxed ${
                   row.error
                     ? "border-red-100 text-red-800"
                     : "border-[#e8eef5] text-[#333]"
                 }`}
+                style={{ fontSize: cellPx }}
               >
                 {row.left}
               </div>
@@ -298,13 +361,14 @@ export default function NotebookBreakdown({ text, result, onChange }: Props) {
                 {row.right.map((line, j) => (
                   <div
                     key={j}
-                    className={`font-mono text-[11px] leading-relaxed wrap-break-word ${
+                    className={`font-mono leading-relaxed wrap-break-word ${
                       row.error
                         ? "text-red-600 font-semibold"
                         : j === 0
                           ? "text-gray-600"
                           : "font-bold text-[#1d6fb8]"
                     }`}
+                    style={{ fontSize: cellPx }}
                   >
                     {line}
                   </div>
@@ -314,14 +378,16 @@ export default function NotebookBreakdown({ text, result, onChange }: Props) {
                     <button
                       type="button"
                       onClick={() => startFix(row.error!.failedLine)}
-                      className="text-[10px] font-semibold bg-[#1d6fb8] text-white rounded-md px-2 py-0.5 hover:bg-[#165fa3]"
+                      className="font-semibold bg-[#1d6fb8] text-white rounded-md px-2 py-0.5 hover:bg-[#165fa3]"
+                      style={{ fontSize: btnPx }}
                     >
                       Fix
                     </button>
                     <button
                       type="button"
                       onClick={() => skipFailedLine(row.error!.failedLine)}
-                      className="text-[10px] text-gray-500 border border-gray-200 rounded-md px-2 py-0.5 hover:text-red-500"
+                      className="text-gray-500 border border-gray-200 rounded-md px-2 py-0.5 hover:text-red-500"
+                      style={{ fontSize: btnPx }}
                     >
                       Skip
                     </button>
@@ -351,13 +417,24 @@ export default function NotebookBreakdown({ text, result, onChange }: Props) {
           <div className="px-2.5 py-2.5 border-r border-[#dde8f0]" />
           <div className="px-2.5 py-2.5">
             {sumLine && (
-              <div className="font-mono text-[10px] text-gray-500 mb-0.5">{sumLine}</div>
+              <div
+                className="font-mono text-gray-500 mb-0.5"
+                style={{ fontSize: sumPx }}
+              >
+                {sumLine}
+              </div>
             )}
-            <div className="font-mono text-[15px] font-extrabold text-[#1d6fb8] tabular-nums">
+            <div
+              className="font-mono font-extrabold text-[#1d6fb8] tabular-nums"
+              style={{ fontSize: totalPx }}
+            >
               Total {result.total}
             </div>
             {failedLines.length > 0 && (
-              <div className="font-mono text-[10px] text-red-500 mt-1">
+              <div
+                className="font-mono text-red-500 mt-1"
+                style={{ fontSize: sumPx }}
+              >
                 {failedLines.length} line{failedLines.length > 1 ? "s" : ""} not counted
               </div>
             )}
