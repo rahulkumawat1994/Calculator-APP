@@ -11,6 +11,7 @@ import {
   breakdownHintNumbers,
   rebuildCalculationResult,
 } from "./EditableBreakdown";
+import { findRateHighlightStart } from "./notebookRateHighlight";
 
 interface Props {
   text: string;
@@ -70,15 +71,19 @@ export function checkFontSizePx(level: number): number {
   return CHECK_FONT_LEVELS[i]!;
 }
 
-function segmentRowRight(seg: Segment): string[] {
+function segmentTagsSuffix(seg: Segment): string {
   const tags: string[] = [];
   if (seg.isWP) tags.push("WP");
   if (seg.lane === "A") tags.push("A");
   if (seg.lane === "B") tags.push("B");
   if (seg.lane === "AB" || (!seg.lane && seg.isDouble)) tags.push("AB");
+  return tags.length > 0 ? ` · ${tags.join(" ")}` : "";
+}
+
+function segmentRowRight(seg: Segment): string[] {
   const jodis = formatSegmentLineForPairListDisplay(seg);
   return [
-    tags.length > 0 ? `${jodis} · ${tags.join(" ")}` : jodis,
+    `${jodis}${segmentTagsSuffix(seg)}`,
     `${seg.count} × ${seg.rate} = ${seg.lineTotal}`,
   ];
 }
@@ -101,6 +106,8 @@ function segmentsMatchParsed(a: Segment[], b: Segment[]): boolean {
 
 interface NotebookRow {
   left: string;
+  /** Bold this rate number wherever it appears in `left`. */
+  boldRate?: number;
   right: string[];
   key: string;
   groupIndex: number | null;
@@ -108,6 +115,37 @@ interface NotebookRow {
     failedLine: string;
     isLastInGroup: boolean;
   };
+}
+
+function MessageWithBoldRate({
+  text,
+  rate,
+  fontSize,
+}: {
+  text: string;
+  rate?: number;
+  fontSize: number;
+}) {
+  if (rate == null) {
+    return <span style={{ fontSize }}>{text}</span>;
+  }
+  const start = findRateHighlightStart(text, rate);
+  if (start == null) {
+    return <span style={{ fontSize }}>{text}</span>;
+  }
+  const rateLen = String(rate).length;
+  const before = text.slice(0, start);
+  const highlighted = text.slice(start, start + rateLen);
+  const after = text.slice(start + rateLen);
+  return (
+    <span style={{ fontSize }}>
+      {before}
+      <strong className="font-extrabold text-[#1d6fb8] underline underline-offset-2">
+        {highlighted}
+      </strong>
+      {after}
+    </span>
+  );
 }
 
 const GROUP_BG = [
@@ -211,6 +249,7 @@ function buildNotebookRows(text: string, result: CalculationResult) {
       if (isLast) {
         rows.push({
           left,
+          boldRate: findRateHighlightStart(left, seg.rate) != null ? seg.rate : undefined,
           right: segmentRowRight(seg),
           key: `raw-${ri}-seg-${segIdx}`,
           groupIndex: segIdx,
@@ -223,6 +262,7 @@ function buildNotebookRows(text: string, result: CalculationResult) {
             : "↳ continues";
         rows.push({
           left,
+          boldRate: findRateHighlightStart(left, seg.rate) != null ? seg.rate : undefined,
           right: [partial],
           key: `raw-${ri}-cont`,
           groupIndex: segIdx,
@@ -234,6 +274,7 @@ function buildNotebookRows(text: string, result: CalculationResult) {
       const seg = result.results[i]!;
       rows.push({
         left: seg.line,
+        boldRate: findRateHighlightStart(seg.line, seg.rate) != null ? seg.rate : undefined,
         right: segmentRowRight(seg),
         key: `seg-${i}-${seg.line}-${seg.rate}-${seg.count}-${seg.lineTotal}`,
         groupIndex: i,
@@ -324,7 +365,7 @@ export default function NotebookBreakdown({
         <div className="grid grid-cols-2 border-b-2 border-[#c5d9ea] bg-[#f6f9fd]">
           <div className="px-2.5 py-1.5 border-r border-[#dde8f0]">
             <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500">
-              Message
+              Your message
             </span>
           </div>
           <div className="px-2.5 py-1.5">
@@ -353,9 +394,12 @@ export default function NotebookBreakdown({
                     ? "border-red-100 text-red-800"
                     : "border-[#e8eef5] text-[#333]"
                 }`}
-                style={{ fontSize: cellPx }}
               >
-                {row.left}
+                <MessageWithBoldRate
+                  text={row.left}
+                  rate={row.boldRate}
+                  fontSize={cellPx}
+                />
               </div>
               <div className="px-2.5 py-2 space-y-0.5">
                 {row.right.map((line, j) => (
