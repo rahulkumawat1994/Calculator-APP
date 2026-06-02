@@ -3,6 +3,7 @@ import {
   calculateTotalWithSources,
   extractPairedNumbers,
   formatSegmentLineForPairListDisplay,
+  parseWhatsAppMessages,
   processLine,
 } from "@/lib";
 import type { CalculationResult, Segment } from "@/types";
@@ -11,7 +12,10 @@ import {
   breakdownHintNumbers,
   rebuildCalculationResult,
 } from "./EditableBreakdown";
-import { findRateHighlightStart } from "./notebookRateHighlight";
+import {
+  findRateHighlightStart,
+  shouldBoldRateOnLine,
+} from "./notebookRateHighlight";
 
 interface Props {
   text: string;
@@ -129,7 +133,14 @@ function MessageWithBoldRate({
   if (rate == null) {
     return <span style={{ fontSize }}>{text}</span>;
   }
-  const start = findRateHighlightStart(text, rate);
+  let start = findRateHighlightStart(text, rate);
+  if (start == null) {
+    const trimmed = text.trim();
+    if (trimmed === String(rate)) {
+      const idx = text.indexOf(trimmed);
+      start = idx >= 0 ? idx : 0;
+    }
+  }
   if (start == null) {
     return <span style={{ fontSize }}>{text}</span>;
   }
@@ -170,6 +181,18 @@ function rawLineMatchesFailed(raw: string, failed: string): boolean {
   const f = failed.trim();
   if (!r || !f) return false;
   return r === f || f.includes(r) || r.includes(f);
+}
+
+function boldRateForLine(
+  left: string,
+  rate: number,
+  isLastSourceLine: boolean,
+): number | undefined {
+  return shouldBoldRateOnLine(left, rate, {
+    isLastSourceLineOfSegment: isLastSourceLine,
+  })
+    ? rate
+    : undefined;
 }
 
 function attachFailedLines(rows: NotebookRow[], failedLines: string[]): NotebookRow[] {
@@ -214,7 +237,12 @@ function attachFailedLines(rows: NotebookRow[], failedLines: string[]): Notebook
   return next;
 }
 
-function buildNotebookRows(text: string, result: CalculationResult) {
+/** Build Check rows for one paste snippet (one WA message body or full plain text). */
+export function buildNotebookRowsSingle(
+  text: string,
+  result: CalculationResult,
+  groupIndexOffset = 0,
+): NotebookRow[] {
   const { rawLines, segmentSourceIndices, result: parsedFromText } =
     calculateTotalWithSources(text);
   const useSourceLayout = segmentsMatchParsed(
@@ -223,11 +251,16 @@ function buildNotebookRows(text: string, result: CalculationResult) {
   );
 
   const rows: NotebookRow[] = [];
+  const keyPrefix =
+    groupIndexOffset > 0 ? `g${groupIndexOffset}-` : "";
 
-  if (useSourceLayout) {
+  const pushSourceLayoutRows = (
+    segments: Segment[],
+    srcIndices: number[][],
+  ) => {
     const lineToSeg = new Map<number, number>();
-    for (let segIdx = 0; segIdx < segmentSourceIndices.length; segIdx++) {
-      for (const ri of segmentSourceIndices[segIdx] ?? []) {
+    for (let segIdx = 0; segIdx < srcIndices.length; segIdx++) {
+      for (const ri of srcIndices[segIdx] ?? []) {
         lineToSeg.set(ri, segIdx);
       }
     }
@@ -236,23 +269,34 @@ function buildNotebookRows(text: string, result: CalculationResult) {
       const left = rawLines[ri]!;
       const segIdx = lineToSeg.get(ri);
       if (segIdx === undefined) {
-        rows.push({ left, right: ["—"], key: `raw-${ri}-${left}`, groupIndex: null });
+        rows.push({
+          left,
+          right: ["—"],
+          key: `${keyPrefix}raw-${ri}-${left}`,
+          groupIndex: null,
+        });
         continue;
       }
-      const srcIdxs = segmentSourceIndices[segIdx] ?? [];
+      const srcIdxs = srcIndices[segIdx] ?? [];
       const isLast = ri === Math.max(...srcIdxs);
-      const seg = result.results[segIdx];
+      const seg = segments[segIdx];
       if (!seg) {
-        rows.push({ left, right: ["—"], key: `raw-${ri}-${left}`, groupIndex: null });
+        rows.push({
+          left,
+          right: ["—"],
+          key: `${keyPrefix}raw-${ri}-${left}`,
+          groupIndex: null,
+        });
         continue;
       }
+      const gi = segIdx + groupIndexOffset;
       if (isLast) {
         rows.push({
           left,
-          boldRate: findRateHighlightStart(left, seg.rate) != null ? seg.rate : undefined,
+          boldRate: boldRateForLine(left, seg.rate, true),
           right: segmentRowRight(seg),
-          key: `raw-${ri}-seg-${segIdx}`,
-          groupIndex: segIdx,
+          key: `${keyPrefix}raw-${ri}-seg-${segIdx}`,
+          groupIndex: gi,
         });
       } else {
         const pairs = extractPairedNumbers(left);
@@ -262,24 +306,61 @@ function buildNotebookRows(text: string, result: CalculationResult) {
             : "↳ continues";
         rows.push({
           left,
-          boldRate: findRateHighlightStart(left, seg.rate) != null ? seg.rate : undefined,
+          boldRate: boldRateForLine(left, seg.rate, false),
           right: [partial],
-          key: `raw-${ri}-cont`,
-          groupIndex: segIdx,
+          key: `${keyPrefix}raw-${ri}-cont`,
+          groupIndex: gi,
         });
       }
     }
+  };
+
+  if (useSourceLayout) {
+    pushSourceLayoutRows(result.results, segmentSourceIndices);
+  } else if (segmentSourceIndices.length > 0) {
+    // Re-parse layout still matches raw lines; stored segments may differ after multi-WA merge.
+    const segments = result.results.map(
+      (seg, i) => seg ?? parsedFromText.results[i]!,
+    );
+    pushSourceLayoutRows(segments, segmentSourceIndices);
   } else {
     for (let i = 0; i < result.results.length; i++) {
       const seg = result.results[i]!;
       rows.push({
         left: seg.line,
-        boldRate: findRateHighlightStart(seg.line, seg.rate) != null ? seg.rate : undefined,
+        boldRate: boldRateForLine(seg.line, seg.rate, true),
         right: segmentRowRight(seg),
-        key: `seg-${i}-${seg.line}-${seg.rate}-${seg.count}-${seg.lineTotal}`,
-        groupIndex: i,
+        key: `${keyPrefix}seg-${i}-${seg.line}-${seg.rate}-${seg.count}-${seg.lineTotal}`,
+        groupIndex: i + groupIndexOffset,
       });
     }
+  }
+
+  return rows;
+}
+
+function buildNotebookRows(text: string, result: CalculationResult) {
+  const waMsgs = parseWhatsAppMessages(text);
+  let rows: NotebookRow[];
+
+  if (waMsgs && waMsgs.length > 0) {
+    rows = [];
+    let segOffset = 0;
+    let groupOffset = 0;
+    for (const m of waMsgs) {
+      const n = m.result.results.length;
+      const slice: CalculationResult = {
+        results: result.results.slice(segOffset, segOffset + n),
+        total: result.results
+          .slice(segOffset, segOffset + n)
+          .reduce((s, r) => s + r.lineTotal, 0),
+      };
+      rows.push(...buildNotebookRowsSingle(m.text, slice, groupOffset));
+      segOffset += n;
+      groupOffset += n;
+    }
+  } else {
+    rows = buildNotebookRowsSingle(text, result);
   }
 
   const failedLines = result.failedLines ?? [];

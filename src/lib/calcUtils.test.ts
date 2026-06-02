@@ -355,6 +355,33 @@ Gb`;
     expect(r.total).toBeGreaterThan(0);
   });
 
+  it("NN=RR rows + trailing 77.30 दिसावर keeps single-jodi stake when rate matches", () => {
+    const r = calculateTotal(`27=40
+72=40
+49=30
+94=30
+77.30  दिसावर`);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.results).toHaveLength(5);
+    expect(r.results[4]).toMatchObject({ line: "77", rate: 30, count: 1, lineTotal: 30 });
+    expect(r.total).toBe(170);
+  });
+
+  it("skgonline1979: NN=RR block + DS comma jodi and 77.30 continuation (WhatsApp)", () => {
+    const raw = `[02/06, 12:23 am] skgonline1979: 27=40
+72=40
+49=30
+94=30
+77.30  दिसावर
+[02/06, 12:23 am] skgonline1979: DS 19,62×55
+77.30`;
+    const msgs = parseWhatsAppMessages(raw);
+    expect(msgs).not.toBeNull();
+    expect(msgs!.flatMap((m) => m.result.failedLines ?? [])).toEqual([]);
+    expect(msgs![0]!.result.total).toBe(170);
+    expect(msgs![1]!.result.total).toBe(220);
+  });
+
   it("LAL CHAND 3-line block (dot rows + Hindi rate line) parses", () => {
     const raw = `20.02.70.07.25.52.75.57
 40.04.45.54.90.09.95.59

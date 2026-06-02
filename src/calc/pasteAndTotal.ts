@@ -13,6 +13,7 @@ import {
   normalizeTypoTolerantInput,
   parseStandaloneIntoTypoRateDigits,
   preprocessText,
+  stripTrailingMarketSuffix,
 } from "./textNormalize";
 import type { CalculationResult, Segment } from "../types";
 
@@ -270,6 +271,23 @@ function tryFlushAsBareNumberMessage(
 }
 
 /**
+ * If pending line is exactly `NN.RATE` and RATE already equals inherited rate,
+ * prefer single-jodi interpretation (`NNxRATE`) over `NN, RATE` at inherited rate.
+ */
+function rewriteDotRateWhenMatchesInherited(
+  pendingLine: string,
+  inheritedRate: number | null,
+): string | null {
+  if (inheritedRate == null) return null;
+  const t = pendingLine.trim();
+  const m = /^(\d{2})\.(\d{1,5})$/.exec(t);
+  if (!m) return null;
+  const rate = parseInt(m[2]!, 10);
+  if (!Number.isFinite(rate) || rate <= 0 || rate !== inheritedRate) return null;
+  return `${m[1]}x${m[2]}`;
+}
+
+/**
  * Strips a leading slot code with **no** dot: `FB 31.67…` (WhatsApp). `stripLeadingGameLabels`
  * only handles `Harf.` / `Gali.`-style `Word.`, so leading `FB ` left letters on the
  * line, broke `isPureNumbers` and pending-merge with a following `.…xN` line.
@@ -310,7 +328,9 @@ export function calculateTotal(text: string): CalculationResult {
     const line = normalizeDoubleDotJodiRate(
       normalizeTrailingDashRate(
         normalizeParenRateTypos(
-          normalizeTypoTolerantInput(normalizeIntoRateMarker(labelStripped)),
+          normalizeTypoTolerantInput(
+            normalizeIntoRateMarker(stripTrailingMarketSuffix(labelStripped)),
+          ),
         ),
       ),
     );
@@ -378,9 +398,14 @@ export function calculateTotal(text: string): CalculationResult {
     let toPush = pending;
     const isPurePending = /^[\d\s\-_.,:|\/\\]+$/.test(pending) && /\d/.test(pending);
     if (isPurePending && lastInheritedRate != null) {
-      const endsWithPartialPair = /(?<!\d)\d$/.test(pending);
-      const sep = endsWithPartialPair ? "" : " ";
-      toPush = `${pending}${sep}x${lastInheritedRate}`;
+      const dotAsSingle = rewriteDotRateWhenMatchesInherited(pending, lastInheritedRate);
+      if (dotAsSingle) {
+        toPush = dotAsSingle;
+      } else {
+        const endsWithPartialPair = /(?<!\d)\d$/.test(pending);
+        const sep = endsWithPartialPair ? "" : " ";
+        toPush = `${pending}${sep}x${lastInheritedRate}`;
+      }
     }
     if (!(isSeparatorOnlyLine(toPush) || (/^[\d\s\-_.,:|\/\\]*$/.test(toPush) && !/\d/.test(toPush)))) {
       pushMerged(toPush);
@@ -587,7 +612,9 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
     const line = normalizeDoubleDotJodiRate(
       normalizeTrailingDashRate(
         normalizeParenRateTypos(
-          normalizeTypoTolerantInput(normalizeIntoRateMarker(labelStripped)),
+          normalizeTypoTolerantInput(
+            normalizeIntoRateMarker(stripTrailingMarketSuffix(labelStripped)),
+          ),
         ),
       ),
     );
@@ -649,9 +676,17 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
     let toPush = pendingTL.line;
     const isPurePending = /^[\d\s\-_.,:|\/\\]+$/.test(pendingTL.line) && /\d/.test(pendingTL.line);
     if (isPurePending && lastInheritedRateTL != null) {
-      const endsWithPartialPair = /(?<!\d)\d$/.test(pendingTL.line);
-      const sep = endsWithPartialPair ? "" : " ";
-      toPush = `${pendingTL.line}${sep}x${lastInheritedRateTL}`;
+      const dotAsSingle = rewriteDotRateWhenMatchesInherited(
+        pendingTL.line,
+        lastInheritedRateTL,
+      );
+      if (dotAsSingle) {
+        toPush = dotAsSingle;
+      } else {
+        const endsWithPartialPair = /(?<!\d)\d$/.test(pendingTL.line);
+        const sep = endsWithPartialPair ? "" : " ";
+        toPush = `${pendingTL.line}${sep}x${lastInheritedRateTL}`;
+      }
     }
     if (!(isSeparatorOnlyLine(toPush) || (/^[\d\s\-_.,:|\/\\]*$/.test(toPush) && !/\d/.test(toPush)))) {
       pushMergedTL({ line: toPush, src: pendingTL.src });

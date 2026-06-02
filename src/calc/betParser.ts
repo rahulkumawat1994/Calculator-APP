@@ -5,6 +5,7 @@ import {
   normalizeParenRateTypos,
   normalizeTrailingDashRate,
   normalizeTypoTolerantInput,
+  stripTrailingMarketSuffix,
   tryParseArithmeticSumDivide,
 } from "./textNormalize";
 
@@ -295,7 +296,11 @@ export function processLine(
   const trimmed = normalizeDoubleDotJodiRate(
     normalizeTrailingDashRate(
       normalizeParenRateTypos(
-        normalizeTypoTolerantInput(normalizeIntoRateMarker(stripLeadingGameLabels(line))),
+        normalizeTypoTolerantInput(
+          normalizeIntoRateMarker(
+            stripTrailingMarketSuffix(stripLeadingGameLabels(line)),
+          ),
+        ),
       ),
     ),
   )

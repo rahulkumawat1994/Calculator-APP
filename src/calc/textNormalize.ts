@@ -1,5 +1,46 @@
 // ─── Pasted text cleanup (typos, WhatsApp) — used by `processLine` and `calculateTotal` ─
 
+/**
+ * Trailing Hindi/English market tags on a bet line (`…=10 गली दिसावर`, `77.30 दिसावर`).
+ * Not part of the stake; strip so digits can inherit the previous line's rate.
+ */
+const TRAILING_MARKET_SUFFIX_LABELS = [
+  "गली दिसावर",
+  "गली",
+  "दिसावर",
+  "गाजियाबाद",
+  "फरीदाबाद",
+  "दिल्ली बजार",
+  "दिल्ली",
+  "श्री गणेश",
+  "disawar",
+  "disawer",
+  "desawr",
+  "gali",
+  "ghaziabad",
+  "faridabad",
+  "delhi bazaar",
+  "delhi",
+] as const;
+
+export function stripTrailingMarketSuffix(s: string): string {
+  let t = s.replace(/[\u200B-\u200D\uFEFF]/g, "").normalize("NFKC").trim();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const label of TRAILING_MARKET_SUFFIX_LABELS) {
+      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`(?:\\s+|(?<=\\d))${escaped}\\s*$`, "iu");
+      if (re.test(t)) {
+        t = t.replace(re, "").trim();
+        changed = true;
+        break;
+      }
+    }
+  }
+  return t;
+}
+
 export function preprocessText(text: string): string {
   let t = text.replace(/^\uFEFF/, "").normalize("NFKC");
   // WhatsApp / iOS sometimes inserts bidi marks around names or colons.
