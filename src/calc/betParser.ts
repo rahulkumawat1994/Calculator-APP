@@ -2,6 +2,7 @@ import type { BetLane, Segment } from "../types";
 import {
   normalizeIntoRateMarker,
   normalizeDoubleDotJodiRate,
+  isReverseJodiPairDigits,
   normalizeParenRateTypos,
   normalizeTrailingDashRate,
   normalizeTypoTolerantInput,
@@ -283,6 +284,44 @@ export function stripLeadingGameLabels(s: string): string {
   return t.replace(/^[,\s.]*?(AB|A|B)\s*\.+/i, (_, lane) => `${lane.toUpperCase()}. `).trim();
 }
 
+/** `02..52 x10` — two jodis on one `..` row share the trailing into/× rate (not 02×52). */
+function tryParseTwoPartDoubleDotJodiRow(
+  numbersText: string,
+  trailRate: number,
+  suffix: string,
+): Segment | null {
+  const m = /^(\d{1,3})\.\.(\d{1,4})\s*$/.exec(numbersText.trim());
+  if (!m || isReverseJodiPairDigits(m[1]!, m[2]!)) return null;
+  const nums = [parseInt(m[1]!, 10), parseInt(m[2]!, 10)];
+  const { isWP, isDouble: isDoubleFlagged } = parseFlags(suffix);
+  const isDouble = isDoubleFlagged || has3DigitBet(numbersText);
+  const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
+  if (count <= 0) return null;
+  return {
+    line: `${m[1]}..${m[2]}`,
+    rate: trailRate,
+    isWP,
+    isDouble,
+    lane: laneForNonSolid(suffix, isDouble, numbersText),
+    count,
+    lineTotal: count * trailRate,
+  };
+}
+
+/** Merged `NN..RR xRATE` row (Desawr + 10.intu) — not a dot list with inline stakes. */
+function tryParseMergedDoubleDotRowWithTrailRate(trimmed: string): Segment[] | null {
+  const sepMatches = [...trimmed.matchAll(SEP_RATE_RE)];
+  if (sepMatches.length !== 1) return null;
+  const m = sepMatches[0]!;
+  const numbersText = trimmed.slice(0, m.index);
+  const twoPart = tryParseTwoPartDoubleDotJodiRow(
+    numbersText,
+    parseInt(m[1], 10),
+    m[2] ?? "",
+  );
+  return twoPart ? [twoPart] : null;
+}
+
 // ─── Line parser ───────────────────────────────────────────────────────────────
 
 export function processLine(
@@ -345,6 +384,8 @@ export function processLine(
     const multi = tryParseMultiXSameDigitChain(trimmed, s => processLine(s, { skipMultiX: true }));
     if (multi) return multi;
   }
+  const mergedDoubleDot = tryParseMergedDoubleDotRowWithTrailRate(trimmed);
+  if (mergedDoubleDot) return mergedDoubleDot;
   const results: Segment[] = [];
   let match: RegExpExecArray | null;
 

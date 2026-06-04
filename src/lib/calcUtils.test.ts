@@ -422,6 +422,49 @@ Gb`;
     expect(r.results[0]).toMatchObject({ line: "19 91 28", rate: 5, count: 3, lineTotal: 15 });
   });
 
+  it("skgonline1979: Sg/FB/dot rows + Desawr 02..52 with 10.intu (03–04 Jun)", () => {
+    const raw = `[03/06, 4:03 pm] skgonline1979: Sg.60.06.40.94.61..02.41.59.95x10
+[03/06, 5:31 pm] skgonline1979: FB.55.50.05.44..16.78.30..62.12.88x10
+[03/06, 9:00 pm] skgonline1979:
+44..04..20.09.71.79.39.41x10
+[04/06, 12:21 am] skgonline1979: Desawr 
+02..52
+10.intu`;
+    const msgs = parseWhatsAppMessages(raw);
+    expect(msgs).toHaveLength(4);
+    expect(msgs!.map((m) => m.result.total)).toEqual([90, 100, 80, 20]);
+    expect(msgs![0]!.result.results[0]).toMatchObject({ count: 9, rate: 10, lineTotal: 90 });
+    expect(msgs![1]!.result.results[0]).toMatchObject({ count: 10, rate: 10, lineTotal: 100 });
+    expect(msgs![2]!.result.results[0]).toMatchObject({ count: 8, rate: 10, lineTotal: 80 });
+    expect(msgs!.flatMap((m) => m.result.failedLines ?? [])).toEqual([]);
+  });
+
+  it("GB: value row + 30..10..10 uniform-tail rate row → 5 jodis at 10", () => {
+    const raw = `[01/06, 7:38 pm] skgonline1979: GB 
+79..78..28
+30..10..10`;
+    const r = calculateTotal(raw);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.results).toHaveLength(1);
+    expect(r.results[0]).toMatchObject({
+      line: "79 78 28 30 10",
+      rate: 10,
+      count: 5,
+      lineTotal: 50,
+    });
+    expect(r.total).toBe(50);
+  });
+
+  it("FB double-dot value/rate rows stay uniform-rate zip (54..14..08 + 10..10..10)", () => {
+    const r = calculateTotal(`FB 
+54..14..08
+10..10..10`);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(30);
+    expect(r.results).toHaveLength(3);
+    expect(r.results.map((x) => x.lineTotal)).toEqual([10, 10, 10]);
+  });
+
   it("FB double-dot jodi..rate lines (46..45 and 20..20)", () => {
     const raw = `[28/05, 5:29 pm] skgonline1979: FB 
 46..45
@@ -483,6 +526,20 @@ Gb`;
       lineTotal: 600,
     });
     expect(r.results[1]).toMatchObject({ rate: 35, lineTotal: 280, isWP: true });
+  });
+
+  it("WhatsApp bold/markup: *12..14*17...19*(50)wp → 8 WP entries at 50", () => {
+    const r = calculateTotal("*12..14*17...19*(50)wp");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(400);
+    expect(r.results).toHaveLength(1);
+    expect(r.results[0]).toMatchObject({
+      line: "12..14 17...19",
+      rate: 50,
+      isWP: true,
+      count: 8,
+      lineTotal: 400,
+    });
   });
 
   it("WhatsApp bold/markup: 78*73* is two jodis (not 78×73) and merges with (75)wp row", () => {

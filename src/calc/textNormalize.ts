@@ -63,6 +63,12 @@ export function normalizeParenRateTypos(s: string): string {
     .replace(/\(\s*(\d+)\s*$/g, "($1)");
 }
 
+/** `45..54` — palat-style reverse pair; stays two jodis, not jodi×rate. */
+export function isReverseJodiPairDigits(a: string, b: string): boolean {
+  if (a.length !== 2 || b.length !== 2) return false;
+  return b === a[1]! + a[0]!;
+}
+
 /** `46..45` / `20..20` — one jodi, then `..`, then rate. `45..54` stays two jodis (reverse pair). */
 export function normalizeDoubleDotJodiRate(s: string): string {
   const t = s.trim();
@@ -70,10 +76,7 @@ export function normalizeDoubleDotJodiRate(s: string): string {
   if (!m) return s;
   const a = m[1]!;
   const b = m[2]!;
-  if (a.length === 2 && b.length === 2) {
-    const rev = a[1]! + a[0]!;
-    if (b === rev) return s;
-  }
+  if (isReverseJodiPairDigits(a, b)) return s;
   if (a === b) return `${a}x${b}`;
   return `${a}x${b}`;
 }
@@ -123,7 +126,7 @@ function normalizeWhatsAppBoldJodiMarkup(t: string): string {
   while (s !== prev) {
     prev = s;
     // `78*73*` / `43*93*(75)wp` — star is bold between jodis even when `*` is followed by a digit.
-    s = s.replace(/(\d{2})\*+(\d{2})(?=[\s*_,\-]|$|\(|\.\d|\d{2})/g, (full, a, b, offset, str) => {
+    s = s.replace(/(\d{2})\*+(\d{2})(?=[\s*_,.\-]|$|\(|\.\d|\d{2})/g, (full, a, b, offset, str) => {
       const tail = str.slice(offset + full.length);
       const stake = parseInt(b, 10);
       if (
@@ -266,6 +269,8 @@ export function parseStandaloneIntoTypoRateDigits(line: string): string | null {
   const t = line.trim();
   const plain = /^\s*(?:into|ijto)\s*(\d{1,5})\s*$/i.exec(t);
   if (plain) return plain[1]!;
+  const dotInto = /^\s*(\d{1,5})\.\s*(?:into|ijto|intu)\s*$/i.exec(t);
+  if (dotInto) return dotInto[1]!;
   const m = /^\s*([a-zA-Z]{2,})\s*(\d{1,5})\s*$/i.exec(t);
   if (m && looksLikeIntoTypo(m[1]!)) return m[2]!;
   return null;
@@ -301,6 +306,8 @@ export function normalizeIntoRateMarker(s: string): string {
   );
   // Standalone "10.intu" / "10 into" lines where the rate number PRECEDES "into" (no rate after).
   // Converts the whole line to a rate-only token so pending pairs can inherit it.
-  out = out.replace(/^(\d{1,5})\.?\s*(?:in\s*t[ou])\s*$/i, "x$1");
+  out = out
+    .replace(/^(\d{1,5})\.\s*(?:into|ijto|intu)\s*$/i, "x$1")
+    .replace(/^(\d{1,5})\.?\s*(?:in\s*t[ou])\s*$/i, "x$1");
   return out;
 }

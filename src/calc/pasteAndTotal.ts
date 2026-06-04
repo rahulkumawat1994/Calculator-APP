@@ -8,6 +8,7 @@ import {
 import {
   normalizeIntoRateMarker,
   normalizeDoubleDotJodiRate,
+  isReverseJodiPairDigits,
   normalizeParenRateTypos,
   normalizeTrailingDashRate,
   normalizeTypoTolerantInput,
@@ -34,10 +35,17 @@ export function mergeTrailingDashWithIntoContinuation(rawLines: string[]): Merge
     const curT = cur.trim();
     const nextT = next.trim();
     const intoNext =
-      /^\s*(?:into|ijto)\s*(\d{1,5})\s*$/i.exec(nextT)?.[1] ?? parseStandaloneIntoTypoRateDigits(nextT);
+      /^\s*(?:into|ijto)\s*(\d{1,5})\s*$/i.exec(nextT)?.[1] ??
+      parseStandaloneIntoTypoRateDigits(nextT);
     if (/[-–—]\s*$/.test(curT) && intoNext) {
       const base = curT.replace(/[-–—]+\s*$/, "");
       out.push({ text: `${base} x${intoNext}`, rawIndices: [i, i + 1] });
+      i += 2;
+      continue;
+    }
+    const dd = /^(\d{1,3})\.\.(\d{1,4})$/.exec(curT);
+    if (dd && intoNext && !isReverseJodiPairDigits(dd[1]!, dd[2]!)) {
+      out.push({ text: `${curT} x${intoNext}`, rawIndices: [i, i + 1] });
       i += 2;
       continue;
     }
@@ -65,6 +73,91 @@ function isWhatsAppNoiseLine(line: string): boolean {
     return true;
   }
   return false;
+}
+
+function splitDoubleDotTokens(line: string): string[] {
+  return line.trim().split(/\.\./).filter(Boolean);
+}
+
+function isSingleDoubleDotRow(s: string): boolean {
+  return /^\d{1,3}\.\.\d{1,4}$/.test(s.trim());
+}
+
+/**
+ * `79..78..28` + `30..10..10` — row 2 ends with a uniform rate (`10`); jodis are all of row 1
+ * plus the first two tokens of row 2 (`30`, `10`) → 5×10. Differs from full-uniform row 2
+ * (`10..10..10` + `54..14..08`) which uses positional value/rate zip (3×10).
+ */
+function tryFlushAsUniformTailRateRows(
+  pendingLines: string[],
+  pushMerged: (line: string) => void,
+  resetPending: () => void,
+): boolean {
+  if (pendingLines.length !== 2) return false;
+  const l1 = pendingLines[0]!.trim();
+  const l2 = pendingLines[1]!.trim();
+  if (!l1.includes("..") || !l2.includes("..")) return false;
+  const isPure = (s: string) => /^[\d\s\-_.,:|\/\\]+$/.test(s) && /\d/.test(s);
+  if (!isPure(l1) || !isPure(l2)) return false;
+
+  const t1 = splitDoubleDotTokens(l1);
+  const t2 = splitDoubleDotTokens(l2);
+  if (t1.length < 2 || t2.length < 2) return false;
+  if (!t1.every((t) => t.length === 2)) return false;
+  if (!t2.every((t) => t.length >= 1 && t.length <= 4 && parseInt(t, 10) > 0)) {
+    return false;
+  }
+  if (t2.every((r) => r === t2[0])) return false;
+
+  const tailRate = t2[t2.length - 1]!;
+  if (!t2.slice(1).every((r) => r === tailRate)) return false;
+
+  const rate = parseInt(tailRate, 10);
+  if (!(rate > 0)) return false;
+
+  const jodis = [...t1, t2[0]!, tailRate];
+  pushMerged(`${jodis.join(" ")} x${rate}`);
+  resetPending();
+  return true;
+}
+
+/**
+ * Non-uniform rate rows with leading jodi..rate head — rarely used; kept for other pastes.
+ */
+function tryFlushAsLeadingDoubleDotJodiRate(
+  pendingLines: string[],
+  pushMerged: (line: string) => void,
+  resetPending: () => void,
+): boolean {
+  if (pendingLines.length !== 2) return false;
+  const l1 = pendingLines[0]!.trim();
+  const l2 = pendingLines[1]!.trim();
+  if (!l1.includes("..") || !l2.includes("..")) return false;
+  const isPure = (s: string) => /^[\d\s\-_.,:|\/\\]+$/.test(s) && /\d/.test(s);
+  if (!isPure(l1) || !isPure(l2)) return false;
+
+  const t1 = splitDoubleDotTokens(l1);
+  const t2 = splitDoubleDotTokens(l2);
+  if (t1.length < 3 || t1.length !== t2.length) return false;
+  if (!t1.every((t) => t.length === 2)) return false;
+  if (!t2.every((t) => t.length >= 1 && t.length <= 4 && parseInt(t, 10) > 0)) {
+    return false;
+  }
+  if (t2.every((r) => r === t2[0])) return false;
+
+  const head = `${t1[0]}..${t1[1]}`;
+  const headNorm = normalizeDoubleDotJodiRate(head);
+  if (!/x/i.test(headNorm) || headNorm === head) return false;
+  if (!processLine(headNorm).length) return false;
+
+  pushMerged(headNorm);
+  for (let i = 2; i < t1.length; i++) {
+    const rate = t2[i - 1];
+    if (!rate) return false;
+    pushMerged(`${t1[i]}x${rate}`);
+  }
+  resetPending();
+  return true;
 }
 
 /**
@@ -325,12 +418,10 @@ export function calculateTotal(text: string): CalculationResult {
     if (isWhatsAppNoiseLine(rawLine)) continue;
     const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
     const labelStripped = stripLeadingGameLabels(afterLoose);
-    const line = normalizeDoubleDotJodiRate(
-      normalizeTrailingDashRate(
-        normalizeParenRateTypos(
-          normalizeTypoTolerantInput(
-            normalizeIntoRateMarker(stripTrailingMarketSuffix(labelStripped)),
-          ),
+    const line = normalizeTrailingDashRate(
+      normalizeParenRateTypos(
+        normalizeTypoTolerantInput(
+          normalizeIntoRateMarker(stripTrailingMarketSuffix(labelStripped)),
         ),
       ),
     );
@@ -370,6 +461,7 @@ export function calculateTotal(text: string): CalculationResult {
     if (lastInheritedRate != null) return false;
     const l1 = pendingLines[0]!;
     const l2 = pendingLines[1]!;
+    if (isSingleDoubleDotRow(l1) && isSingleDoubleDotRow(l2)) return false;
     const isPureLine = (s: string) => /^[\d\s\-_.,:|\/\\]+$/.test(s) && /\d/.test(s);
     if (!isPureLine(l1) || !isPureLine(l2)) return false;
     const valTokens = l1.match(/\d+/g) ?? [];
@@ -387,6 +479,14 @@ export function calculateTotal(text: string): CalculationResult {
 
   const flushPending = (opts?: { endOfMessage?: boolean }) => {
     if (!pending) return;
+    if (tryFlushAsUniformTailRateRows(pendingLines, pushMerged, resetPending)) {
+      return;
+    }
+    if (
+      tryFlushAsLeadingDoubleDotJodiRate(pendingLines, pushMerged, resetPending)
+    ) {
+      return;
+    }
     if (tryFlushAsValueRatePairs()) return;
     if (
       opts?.endOfMessage &&
@@ -431,6 +531,9 @@ export function calculateTotal(text: string): CalculationResult {
         flushPending();
         pushMerged(line);
       } else if (isPureNumbers) {
+        if (pending && isSingleDoubleDotRow(line)) {
+          flushPending();
+        }
         pending = pending ? `${pending} ${line}` : line;
         pendingLines.push(line);
       } else {
@@ -609,12 +712,10 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
     if (isWhatsAppNoiseLine(rawLine)) continue;
     const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
     const labelStripped = stripLeadingGameLabels(afterLoose);
-    const line = normalizeDoubleDotJodiRate(
-      normalizeTrailingDashRate(
-        normalizeParenRateTypos(
-          normalizeTypoTolerantInput(
-            normalizeIntoRateMarker(stripTrailingMarketSuffix(labelStripped)),
-          ),
+    const line = normalizeTrailingDashRate(
+      normalizeParenRateTypos(
+        normalizeTypoTolerantInput(
+          normalizeIntoRateMarker(stripTrailingMarketSuffix(labelStripped)),
         ),
       ),
     );
@@ -647,6 +748,12 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
     if (pendingLineStrs.length !== 2 || lastInheritedRateTL != null || !pendingTL) return false;
     const l1 = pendingLineStrs[0]!;
     const l2 = pendingLineStrs[1]!;
+    if (
+      /^\d{1,3}\.\.\d{1,4}$/.test(l1.trim()) &&
+      /^\d{1,3}\.\.\d{1,4}$/.test(l2.trim())
+    ) {
+      return false;
+    }
     const isPure = (s: string) => /^[\d\s\-_.,:|\/\\]+$/.test(s) && /\d/.test(s);
     if (!isPure(l1) || !isPure(l2)) return false;
     const valToks = l1.match(/\d+/g) ?? [];
@@ -663,6 +770,24 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
 
   const flushPendingTL = (opts?: { endOfMessage?: boolean }) => {
     if (!pendingTL) return;
+    if (
+      tryFlushAsUniformTailRateRows(
+        pendingLineStrs,
+        (line) => pushMergedTL({ line, src: [...pendingTL!.src] }),
+        resetPendingTL,
+      )
+    ) {
+      return;
+    }
+    if (
+      tryFlushAsLeadingDoubleDotJodiRate(
+        pendingLineStrs,
+        (line) => pushMergedTL({ line, src: [...pendingTL!.src] }),
+        resetPendingTL,
+      )
+    ) {
+      return;
+    }
     if (tryFlushAsValueRatePairsTL()) return;
     if (
       opts?.endOfMessage &&
@@ -710,6 +835,9 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
         flushPendingTL();
         pushMergedTL(tp);
       } else if (isPureNumbers) {
+        if (pendingTL && isSingleDoubleDotRow(line)) {
+          flushPendingTL();
+        }
         if (pendingTL) {
           pendingTL = { line: `${pendingTL.line} ${line}`, src: [...pendingTL.src, ...tp.src] };
         } else {
