@@ -26,6 +26,11 @@ import type { CalculationResult, Segment } from "../types";
  */
 export type MergedRawChunk = { text: string; rawIndices: number[] };
 
+/** `97-79-02-20-03-30` — dash jodi row with rate on the next line (`Into5`). */
+function isDashSeparatedJodiRow(line: string): boolean {
+  return /^\d{2}(?:[-–—]\d{2})+$/.test(line.trim());
+}
+
 export function mergeTrailingDashWithIntoContinuation(rawLines: string[]): MergedRawChunk[] {
   const out: MergedRawChunk[] = [];
   let i = 0;
@@ -40,6 +45,11 @@ export function mergeTrailingDashWithIntoContinuation(rawLines: string[]): Merge
     if (/[-–—]\s*$/.test(curT) && intoNext) {
       const base = curT.replace(/[-–—]+\s*$/, "");
       out.push({ text: `${base} x${intoNext}`, rawIndices: [i, i + 1] });
+      i += 2;
+      continue;
+    }
+    if (intoNext && isDashSeparatedJodiRow(curT)) {
+      out.push({ text: `${curT} x${intoNext}`, rawIndices: [i, i + 1] });
       i += 2;
       continue;
     }

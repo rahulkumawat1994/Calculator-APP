@@ -209,6 +209,25 @@ describe("calculateTotal regression scenarios", () => {
     expect(msgs!.flatMap((m) => m.result.failedLines ?? [])).toEqual([]);
   });
 
+  it("skgonline1979: dash jodi row then Into5 on next line (97-79-02-20-03-30)", () => {
+    const raw = `[04/06, 3:21 pm] skgonline1979: 07-70-59-95into5
+32-23into30
+37-73-into10
+87-78-82-28into5
+97-79-02-20-03-30
+Into5`;
+    const r = calculateTotal(raw);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(150);
+    expect(r.results).toHaveLength(5);
+    expect(r.results[4]).toMatchObject({
+      line: "97-79-02-20-03-30",
+      rate: 5,
+      count: 6,
+      lineTotal: 30,
+    });
+  });
+
   it("GC MALHOTRA: hyphen line break before Into rate — merge rows (no orphan x5)", () => {
     const raw = `[03/05, 3:17 pm] GC MALHOTRA PLAYER: 75-57into10
 25-52-02-20-

@@ -100,6 +100,112 @@ function auditSavedFieldsFromParsed(parsed: CalculationResult): {
   };
 }
 
+const PREVIEW_INPUT_PALETTE_HL = [
+  "#dbeafe",
+  "#d1fae5",
+  "#fef3c7",
+  "#ede9fe",
+  "#ffe4e6",
+  "#cffafe",
+  "#ffedd5",
+  "#fce7f3",
+] as const;
+
+type PreviewLineMaps = {
+  rawLineToInputIdx: number[];
+  inputIdxToSegIdxs: Map<number, number[]>;
+};
+
+function buildPreviewLineMaps(
+  input: string,
+  previewRawLines: string[],
+  segmentSourceIndices: number[][],
+): PreviewLineMaps {
+  const inputLines = input.split("\n");
+  const rawLineToInputIdx = new Array<number>(previewRawLines.length).fill(-1);
+  let scanPtr = 0;
+  for (let ri = 0; ri < previewRawLines.length; ri++) {
+    const target = previewRawLines[ri]!;
+    while (scanPtr < inputLines.length) {
+      const t = inputLines[scanPtr]!.trim();
+      if (t === target || t.endsWith(target) || t.includes(target)) {
+        rawLineToInputIdx[ri] = scanPtr;
+        scanPtr++;
+        break;
+      }
+      scanPtr++;
+    }
+  }
+
+  const rawLineToSegIdxs = new Map<number, number[]>();
+  segmentSourceIndices.forEach((srcIdxs, segIdx) => {
+    for (const ri of srcIdxs) {
+      const arr = rawLineToSegIdxs.get(ri) ?? [];
+      arr.push(segIdx);
+      rawLineToSegIdxs.set(ri, arr);
+    }
+  });
+
+  const inputIdxToSegIdxs = new Map<number, number[]>();
+  for (let ri = 0; ri < rawLineToInputIdx.length; ri++) {
+    const li = rawLineToInputIdx[ri]!;
+    if (li < 0) continue;
+    const segSet = new Set(inputIdxToSegIdxs.get(li) ?? []);
+    for (const si of rawLineToSegIdxs.get(ri) ?? []) segSet.add(si);
+    if (segSet.size > 0) {
+      inputIdxToSegIdxs.set(li, [...segSet].sort((a, b) => a - b));
+    }
+  }
+
+  return { rawLineToInputIdx, inputIdxToSegIdxs };
+}
+
+function toggleSegIdxInSet(
+  prev: Set<number>,
+  idx: number,
+  multiSelectMode: boolean,
+): Set<number> {
+  const next = new Set(prev);
+  if (multiSelectMode) {
+    if (next.has(idx)) next.delete(idx);
+    else next.add(idx);
+  } else if (next.has(idx) && next.size === 1) {
+    next.clear();
+  } else {
+    next.clear();
+    next.add(idx);
+  }
+  return next;
+}
+
+function toggleSegIdxsInSet(
+  prev: Set<number>,
+  idxs: number[],
+  multiSelectMode: boolean,
+): Set<number> {
+  if (idxs.length === 0) return prev;
+  if (idxs.length === 1) {
+    return toggleSegIdxInSet(prev, idxs[0]!, multiSelectMode);
+  }
+  const next = new Set(prev);
+  if (multiSelectMode) {
+    const allActive = idxs.every((si) => next.has(si));
+    for (const si of idxs) {
+      if (allActive) next.delete(si);
+      else next.add(si);
+    }
+    return next;
+  }
+  const sole = idxs[0]!;
+  if (next.has(sole) && next.size === 1) {
+    next.clear();
+  } else {
+    next.clear();
+    next.add(sole);
+  }
+  return next;
+}
+
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<"audit" | "report">("audit");
   const [auditRows, setAuditRows] = useState<CalculationAuditLog[]>([]);
@@ -153,11 +259,15 @@ export default function AdminPage() {
   /** Which segment indices are currently highlighted (single or multi-select). */
   const [activeSegIdxs, setActiveSegIdxs] = useState<Set<number>>(new Set());
   /** When true, clicking multiple cards accumulates highlights instead of replacing. */
-  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [multiSelectMode, setMultiSelectMode] = useState(true);
   /** Ref to the original-input <pre> so we can scroll to the highlighted line. */
   const inputPreRef = useRef<HTMLPreElement>(null);
+  /** Ref to the line-by-line result panel for reverse scroll. */
+  const resultPanelRef = useRef<HTMLDivElement>(null);
   /** The segment index most recently clicked — determines scroll target. */
   const lastClickedSegIdxRef = useRef<number | null>(null);
+  /** Which panel initiated the last selection (scroll the other panel). */
+  const lastClickSourceRef = useRef<"input" | "segment">("segment");
   const [allAuditInputsOpen, setAllAuditInputsOpen] = useState(false);
   const [reportPushOn, setReportPushOn] = useState(() => {
     try {
@@ -389,33 +499,81 @@ export default function AdminPage() {
     setConfirmBulkReportIds(null);
   }, [activeTab]);
 
-  // Auto-scroll the original-input panel to the clicked segment's source line.
+  const previewLineMaps = useMemo(() => {
+    if (!previewAudit || !segmentSourceIndices || !previewRawLines) return null;
+    return buildPreviewLineMaps(
+      previewAudit.input ?? "",
+      previewRawLines,
+      segmentSourceIndices,
+    );
+  }, [previewAudit, segmentSourceIndices, previewRawLines]);
+
+  const inputLineHighlights = useMemo(() => {
+    if (
+      !previewLineMaps ||
+      activeSegIdxs.size === 0 ||
+      !segmentSourceIndices
+    ) {
+      return null;
+    }
+    const lineHighlights = new Map<
+      number,
+      { color: string; ri: number }
+    >();
+    for (const segIdx of activeSegIdxs) {
+      const srcIdxs = segmentSourceIndices[segIdx];
+      if (!srcIdxs) continue;
+      const hlColor = PREVIEW_INPUT_PALETTE_HL[segIdx % PREVIEW_INPUT_PALETTE_HL.length]!;
+      for (const ri of srcIdxs) {
+        const li = previewLineMaps.rawLineToInputIdx[ri];
+        if (li !== undefined && li >= 0 && !lineHighlights.has(li)) {
+          lineHighlights.set(li, { color: hlColor, ri });
+        }
+      }
+    }
+    return lineHighlights;
+  }, [previewLineMaps, activeSegIdxs, segmentSourceIndices]);
+
+  // Scroll input ↔ result panels to the last clicked segment.
   useEffect(() => {
     const segIdx = lastClickedSegIdxRef.current;
     if (
       activeSegIdxs.size === 0 ||
       segIdx === null ||
       !activeSegIdxs.has(segIdx) ||
-      !inputPreRef.current ||
       !segmentSourceIndices ||
       !previewRawLines
-    )
+    ) {
       return;
+    }
 
-    const container = inputPreRef.current;
-    const srcIdxs = segmentSourceIndices[segIdx];
-    if (!srcIdxs || srcIdxs.length === 0) return;
+    if (lastClickSourceRef.current === "segment") {
+      const container = inputPreRef.current;
+      const srcIdxs = segmentSourceIndices[segIdx];
+      if (!container || !srcIdxs?.length) return;
 
-    // Find the first input line index that belongs to this segment
-    const firstRawIdx = srcIdxs.slice().sort((a, b) => a - b)[0]!;
-    const hlSpan = container.querySelector<HTMLElement>(
-      `[data-hl-line="${firstRawIdx}"]`
+      const firstRawIdx = srcIdxs.slice().sort((a, b) => a - b)[0]!;
+      const hlSpan = container.querySelector<HTMLElement>(
+        `[data-hl-line="${firstRawIdx}"]`,
+      );
+      if (!hlSpan) return;
+
+      const containerRect = container.getBoundingClientRect();
+      const hlRect = hlSpan.getBoundingClientRect();
+      container.scrollTop += hlRect.top - containerRect.top - 24;
+      return;
+    }
+
+    const container = resultPanelRef.current;
+    if (!container) return;
+    const card = container.querySelector<HTMLElement>(
+      `[data-seg-idx="${segIdx}"]`,
     );
-    if (!hlSpan) return;
+    if (!card) return;
 
     const containerRect = container.getBoundingClientRect();
-    const hlRect = hlSpan.getBoundingClientRect();
-    container.scrollTop += hlRect.top - containerRect.top - 24;
+    const cardRect = card.getBoundingClientRect();
+    container.scrollTop += cardRect.top - containerRect.top - 24;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSegIdxs]);
 
@@ -741,7 +899,7 @@ export default function AdminPage() {
 
   const openAuditPreview = (row: CalculationAuditLog) => {
     setActiveSegIdxs(new Set());
-    setMultiSelectMode(false);
+    setMultiSelectMode(true);
     setPreviewAudit(row);
     const waMessages = parseWhatsAppMessages(row.input ?? "");
     if (waMessages) {
@@ -1796,90 +1954,69 @@ export default function AdminPage() {
                     ref={inputPreRef}
                     className="max-h-[52vh] overflow-y-auto overscroll-contain rounded-[10px] border border-[#e4edf8] bg-white p-3 font-mono text-[11px] whitespace-pre-wrap wrap-break-word"
                   >
-                    {(() => {
-                      const PALETTE_HL = [
-                        "#dbeafe",
-                        "#d1fae5",
-                        "#fef3c7",
-                        "#ede9fe",
-                        "#ffe4e6",
-                        "#cffafe",
-                        "#ffedd5",
-                        "#fce7f3",
-                      ];
-                      const input = previewAudit.input ?? "";
-                      const inputLines = input.split("\n");
-                      if (
-                        activeSegIdxs.size === 0 ||
-                        !segmentSourceIndices ||
-                        !previewRawLines
-                      ) {
-                        return input;
-                      }
-                      // Forward-scan: map each rawLine index → the input line it came from.
-                      // Scanning in order ensures duplicate rawLine content maps to the
-                      // correct positional occurrence, not always the first.
-                      const rawLineToInputIdx = new Array<number>(
-                        previewRawLines.length
-                      ).fill(-1);
-                      let scanPtr = 0;
-                      for (let ri = 0; ri < previewRawLines.length; ri++) {
-                        const target = previewRawLines[ri]!;
-                        while (scanPtr < inputLines.length) {
-                          const t = inputLines[scanPtr]!.trim();
-                          if (
-                            t === target ||
-                            t.endsWith(target) ||
-                            t.includes(target)
-                          ) {
-                            rawLineToInputIdx[ri] = scanPtr;
-                            scanPtr++;
-                            break;
+                    {(previewAudit.input ?? "").split("\n").map((rawLine, li) => {
+                      const hl = inputLineHighlights?.get(li);
+                      const linkedSegIdxs =
+                        previewLineMaps?.inputIdxToSegIdxs.get(li);
+                      const isLinked = Boolean(linkedSegIdxs?.length);
+                      return (
+                        <span
+                          key={li}
+                          role={isLinked ? "button" : undefined}
+                          tabIndex={isLinked ? 0 : undefined}
+                          onClick={
+                            isLinked
+                              ? () => {
+                                  const segIdxs = linkedSegIdxs!;
+                                  lastClickSourceRef.current = "input";
+                                  lastClickedSegIdxRef.current = segIdxs[0]!;
+                                  setActiveSegIdxs((prev) =>
+                                    toggleSegIdxsInSet(
+                                      prev,
+                                      segIdxs,
+                                      multiSelectMode,
+                                    ),
+                                  );
+                                }
+                              : undefined
                           }
-                          scanPtr++;
-                        }
-                      }
-                      // Build inputLine → { hlColor, rawLineIdx } map from all active segments
-                      const lineHighlights = new Map<
-                        number,
-                        { color: string; ri: number }
-                      >();
-                      for (const segIdx of activeSegIdxs) {
-                        const srcIdxs = segmentSourceIndices[segIdx];
-                        if (!srcIdxs) continue;
-                        const hlColor = PALETTE_HL[segIdx % PALETTE_HL.length]!;
-                        for (const ri of srcIdxs) {
-                          const li = rawLineToInputIdx[ri];
-                          if (
-                            li !== undefined &&
-                            li >= 0 &&
-                            !lineHighlights.has(li)
-                          ) {
-                            lineHighlights.set(li, { color: hlColor, ri });
+                          onKeyDown={
+                            isLinked
+                              ? (e) => {
+                                  if (e.key !== "Enter" && e.key !== " ") return;
+                                  e.preventDefault();
+                                  const segIdxs = linkedSegIdxs!;
+                                  lastClickSourceRef.current = "input";
+                                  lastClickedSegIdxRef.current = segIdxs[0]!;
+                                  setActiveSegIdxs((prev) =>
+                                    toggleSegIdxsInSet(
+                                      prev,
+                                      segIdxs,
+                                      multiSelectMode,
+                                    ),
+                                  );
+                                }
+                              : undefined
                           }
-                        }
-                      }
-                      return inputLines.map((rawLine, li) => {
-                        const hl = lineHighlights.get(li);
-                        return (
-                          <span
-                            key={li}
-                            className="block"
-                            {...(hl ? { "data-hl-line": String(hl.ri) } : {})}
-                            style={
-                              hl
-                                ? {
-                                    backgroundColor: hl.color,
-                                    borderRadius: "3px",
-                                  }
-                                : undefined
-                            }
-                          >
-                            {rawLine}
-                          </span>
-                        );
-                      });
-                    })()}
+                          className={[
+                            "block rounded-[3px]",
+                            isLinked
+                              ? "cursor-pointer hover:bg-slate-100/80"
+                              : "",
+                          ].join(" ")}
+                          {...(hl ? { "data-hl-line": String(hl.ri) } : {})}
+                          style={
+                            hl
+                              ? {
+                                  backgroundColor: hl.color,
+                                }
+                              : undefined
+                          }
+                        >
+                          {rawLine}
+                        </span>
+                      );
+                    })}
                   </pre>
                 </div>
 
@@ -1925,7 +2062,10 @@ export default function AdminPage() {
                       )}
                     </div>
                   </div>
-                  <div className="max-h-[52vh] space-y-3 overflow-y-auto overscroll-contain pr-1">
+                  <div
+                    ref={resultPanelRef}
+                    className="max-h-[52vh] space-y-3 overflow-y-auto overscroll-contain pr-1"
+                  >
                     {previewResult.results.length === 0 ? (
                       <div className="rounded-[10px] border border-[#e4edf8] bg-white p-3 text-[12px] text-gray-500">
                         No parsed line items for this input.
@@ -1972,25 +2112,13 @@ export default function AdminPage() {
                               <button
                                 key={`${idx}-${seg.line}-${seg.rate}`}
                                 type="button"
+                                data-seg-idx={idx}
                                 onClick={() => {
+                                  lastClickSourceRef.current = "segment";
                                   lastClickedSegIdxRef.current = idx;
-                                  setActiveSegIdxs((prev) => {
-                                    const next = new Set(prev);
-                                    if (multiSelectMode) {
-                                      // toggle in set
-                                      if (next.has(idx)) next.delete(idx);
-                                      else next.add(idx);
-                                    } else {
-                                      // single select: replace
-                                      if (next.has(idx) && next.size === 1)
-                                        next.clear();
-                                      else {
-                                        next.clear();
-                                        next.add(idx);
-                                      }
-                                    }
-                                    return next;
-                                  });
+                                  setActiveSegIdxs((prev) =>
+                                    toggleSegIdxInSet(prev, idx, multiSelectMode),
+                                  );
                                 }}
                                 className={[
                                   "w-full rounded-[10px] border-l-4 p-3 text-left transition",
