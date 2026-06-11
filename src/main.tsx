@@ -9,6 +9,7 @@ import { ProtectedAppSession } from "@/auth/ProtectedAppSession";
 import { useReportIssuePush } from "@/hooks/useReportIssuePush";
 
 const StatementPage = lazy(() => import("./StatementPage"));
+const MoneyViewPage = lazy(() => import("./MoneyViewPage"));
 
 function normalizeAppPathname(p: string): string {
   if (p === "/") return "/";
@@ -18,6 +19,7 @@ function normalizeAppPathname(p: string): string {
 const path = normalizeAppPathname(window.location.pathname);
 const isAdminPath = path === "/admin" || path === "/audit";
 const isStatementPath = path === "/statement";
+const isMoneyViewPath = path === "/money-view";
 
 function ReportPushHost() {
   useReportIssuePush();
@@ -43,6 +45,16 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
           <ProtectedAppSession>
             <StatementPage />
           </ProtectedAppSession>
+        </Suspense>
+      ) : isMoneyViewPath ? (
+        <Suspense
+          fallback={
+            <div className="min-h-screen flex items-center justify-center bg-[#eef2f7] text-gray-600">
+              Loading…
+            </div>
+          }
+        >
+          <MoneyViewPage />
         </Suspense>
       ) : (
         <App />
