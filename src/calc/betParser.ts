@@ -152,7 +152,7 @@ function has3DigitBet(numbersText: string): boolean {
  * `75,74,76,,,,15 पलट के साथ,,70,71,,,,10 पलट के साथ` — rate+palat text between jodi runs;
  * split so each chunk keeps its own rate (plain comma format uses the last number as rate).
  */
-function splitCommaGroupsAtPalatMarkers(line: string): string[] | null {
+export function splitCommaGroupsAtPalatMarkers(line: string): string[] | null {
   if (!/,/.test(line)) return null;
   if (!/(?:पलट|wp|w\.?\s*p|palat(?:e|el)?)/iu.test(line)) return null;
 

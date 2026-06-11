@@ -5,6 +5,7 @@ import {
   formatSegmentLineForPairListDisplay,
   parseWhatsAppMessages,
   processLine,
+  splitCommaGroupsAtPalatMarkers,
 } from "@/lib";
 import type { CalculationResult, Segment } from "@/types";
 import {
@@ -195,6 +196,19 @@ function boldRateForLine(
     : undefined;
 }
 
+/** One pasted raw line can produce multiple parsed segments (e.g. palat comma split). */
+function rawLineMapsToMultipleSegments(srcIndices: number[][]): boolean {
+  const rawToSeg = new Map<number, number[]>();
+  for (let si = 0; si < srcIndices.length; si++) {
+    for (const ri of srcIndices[si] ?? []) {
+      const list = rawToSeg.get(ri) ?? [];
+      list.push(si);
+      rawToSeg.set(ri, list);
+    }
+  }
+  return [...rawToSeg.values()].some((list) => list.length > 1);
+}
+
 function attachFailedLines(rows: NotebookRow[], failedLines: string[]): NotebookRow[] {
   const next = rows.map((r) => ({ ...r }));
   const unmatched: string[] = [];
@@ -253,6 +267,60 @@ export function buildNotebookRowsSingle(
   const rows: NotebookRow[] = [];
   const keyPrefix =
     groupIndexOffset > 0 ? `g${groupIndexOffset}-` : "";
+
+  const segmentNotebookLeftFallback = (seg: Segment): string => {
+    const suffix = seg.isWP ? " पलट के साथ" : "";
+    return `${seg.line},,,,${seg.rate}${suffix}`;
+  };
+
+  const segmentNotebookLeft = (
+    seg: Segment,
+    segIdx: number,
+    srcIndices: number[][],
+    rawToSegIdxs: Map<number, number[]>,
+  ): string => {
+    const rawIdx = srcIndices[segIdx]?.[0];
+    if (rawIdx === undefined) return segmentNotebookLeftFallback(seg);
+    const raw = rawLines[rawIdx]!;
+    const segIdxsOnRaw = rawToSegIdxs.get(rawIdx) ?? [];
+    const posOnRaw = segIdxsOnRaw.indexOf(segIdx);
+    const chunks = splitCommaGroupsAtPalatMarkers(raw);
+    if (chunks && posOnRaw >= 0 && chunks[posOnRaw] !== undefined) {
+      return chunks[posOnRaw]!;
+    }
+    return segmentNotebookLeftFallback(seg);
+  };
+
+  const pushSegmentRows = (
+    segments: Segment[],
+    srcIndices?: number[][],
+  ) => {
+    const rawToSegIdxs = new Map<number, number[]>();
+    if (srcIndices) {
+      for (let si = 0; si < srcIndices.length; si++) {
+        for (const ri of srcIndices[si] ?? []) {
+          const list = rawToSegIdxs.get(ri) ?? [];
+          if (!list.includes(si)) list.push(si);
+          rawToSegIdxs.set(ri, list);
+        }
+      }
+    }
+
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]!;
+      const left =
+        srcIndices != null
+          ? segmentNotebookLeft(seg, i, srcIndices, rawToSegIdxs)
+          : seg.line;
+      rows.push({
+        left,
+        boldRate: boldRateForLine(left, seg.rate, true),
+        right: segmentRowRight(seg),
+        key: `${keyPrefix}seg-${i}-${seg.line}-${seg.rate}-${seg.count}-${seg.lineTotal}`,
+        groupIndex: i + groupIndexOffset,
+      });
+    }
+  };
 
   const pushSourceLayoutRows = (
     segments: Segment[],
@@ -315,7 +383,11 @@ export function buildNotebookRowsSingle(
     }
   };
 
-  if (useSourceLayout) {
+  const multiSegPerRawLine = rawLineMapsToMultipleSegments(segmentSourceIndices);
+
+  if (multiSegPerRawLine) {
+    pushSegmentRows(result.results, segmentSourceIndices);
+  } else if (useSourceLayout) {
     pushSourceLayoutRows(result.results, segmentSourceIndices);
   } else if (segmentSourceIndices.length > 0) {
     // Re-parse layout still matches raw lines; stored segments may differ after multi-WA merge.
@@ -324,16 +396,7 @@ export function buildNotebookRowsSingle(
     );
     pushSourceLayoutRows(segments, segmentSourceIndices);
   } else {
-    for (let i = 0; i < result.results.length; i++) {
-      const seg = result.results[i]!;
-      rows.push({
-        left: seg.line,
-        boldRate: boldRateForLine(seg.line, seg.rate, true),
-        right: segmentRowRight(seg),
-        key: `${keyPrefix}seg-${i}-${seg.line}-${seg.rate}-${seg.count}-${seg.lineTotal}`,
-        groupIndex: i + groupIndexOffset,
-      });
-    }
+    pushSegmentRows(result.results);
   }
 
   return rows;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { calculateTotal } from "@/lib";
 import { parseWhatsAppMessages } from "@/calc/whatsapp";
 import { buildNotebookRowsSingle } from "./NotebookBreakdown";
 import {
@@ -86,5 +87,27 @@ describe("buildNotebookRowsSingle — FB / number / rate rows", () => {
       expect(rateLine?.boldRate).toBe(m.result.results[0]!.rate);
       offset += n;
     }
+  });
+});
+
+describe("buildNotebookRowsSingle — palat comma split on one line", () => {
+  it("shows both segment totals when one raw line splits into two bets", () => {
+    const text =
+      "75,74,78,79,76,,,,15 पलट के साथ,,70,71,72,73,,,,10 पलट के साथ";
+    const result = calculateTotal(text);
+    expect(result.results).toHaveLength(2);
+    expect(result.total).toBe(230);
+
+    const rows = buildNotebookRowsSingle(text, result);
+    const calcRows = rows.filter((r) => r.right.some((line) => /×/.test(line)));
+    expect(calcRows).toHaveLength(2);
+    expect(calcRows[0]!.right.join(" ")).toContain("150");
+    expect(calcRows[1]!.right.join(" ")).toContain("80");
+    expect(calcRows[0]!.right[0]).toContain("75");
+    expect(calcRows[1]!.right[0]).toContain("70");
+    expect(calcRows[0]!.boldRate).toBe(15);
+    expect(calcRows[1]!.boldRate).toBe(10);
+    expect(calcRows[0]!.left).toContain("15");
+    expect(calcRows[1]!.left).toContain("10");
   });
 });
