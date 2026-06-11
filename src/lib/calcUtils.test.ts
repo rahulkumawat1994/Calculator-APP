@@ -857,6 +857,39 @@ GL 83×10`;
       lineTotal: 480,
     });
   });
+
+  it("splits comma jodi runs at पलट के साथ so each group keeps its own rate", () => {
+    const text =
+      "75,74,78,79,76,,,,15 पलट के साथ,,70,71,72,73,,,,10 पलट के साथ";
+    const out = calculateTotal(text);
+    expect(out.failedLines ?? []).toEqual([]);
+    expect(out.results).toHaveLength(2);
+    expect(out.results[0]).toMatchObject({
+      line: "75,74,78,79,76",
+      rate: 15,
+      isWP: true,
+      lineTotal: 150,
+    });
+    expect(out.results[1]).toMatchObject({
+      line: "70,71,72,73",
+      rate: 10,
+      isWP: true,
+      lineTotal: 80,
+    });
+    expect(out.total).toBe(230);
+  });
+
+  it("single comma row with पलट के साथ still parses as one bet", () => {
+    const text = "21,71,76,39,97,31,,,,20 पलट के साथ";
+    const out = calculateTotal(text);
+    expect(out.failedLines ?? []).toEqual([]);
+    expect(out.results).toHaveLength(1);
+    expect(out.results[0]).toMatchObject({
+      rate: 20,
+      isWP: true,
+      lineTotal: 240,
+    });
+  });
 });
 
 describe("splitWhatsAppInputByContact", () => {

@@ -149,6 +149,32 @@ function has3DigitBet(numbersText: string): boolean {
 }
 
 /**
+ * `75,74,76,,,,15 पलट के साथ,,70,71,,,,10 पलट के साथ` — rate+palat text between jodi runs;
+ * split so each chunk keeps its own rate (plain comma format uses the last number as rate).
+ */
+function splitCommaGroupsAtPalatMarkers(line: string): string[] | null {
+  if (!/,/.test(line)) return null;
+  if (!/(?:पलट|wp|w\.?\s*p|palat(?:e|el)?)/iu.test(line)) return null;
+
+  const delimRe =
+    /(?:पलट\s*के\s*साथ|पलटके\s*साथ|पलट|wp|w\.?\s*p|palat(?:e|el)?)\s*,+(?=\d)/giu;
+  const chunks: string[] = [];
+  let start = 0;
+  let m: RegExpExecArray | null;
+  while ((m = delimRe.exec(line)) !== null) {
+    const palatText = m[0].replace(/\s*,+$/, "");
+    const chunkEnd = m.index + palatText.length;
+    chunks.push(line.slice(start, chunkEnd).trim());
+    start = m.index + m[0].length;
+  }
+  if (!chunks.length) return null;
+  const tail = line.slice(start).trim();
+  if (tail) chunks.push(tail);
+  if (chunks.length < 2) return null;
+  return chunks;
+}
+
+/**
  * Same-digit run (333, 4444, 44444, …): AB / अब / A…B (any punctuation between A & B) → count 2×rate; lone A or B → 1×rate.
  * A/B/AB may appear anywhere in modifierSource (before/after digits or rate). Rate digits
  * are stripped so *20 does not interfere. No WP/palat here — those use the normal pair path.
@@ -326,7 +352,11 @@ function tryParseMergedDoubleDotRowWithTrailRate(trimmed: string): Segment[] | n
 
 export function processLine(
   line: string,
-  opts?: { skipMultiX?: boolean; skipCommaGapMulti?: boolean },
+  opts?: {
+    skipMultiX?: boolean;
+    skipCommaGapMulti?: boolean;
+    skipPalatCommaSplit?: boolean;
+  },
 ): Segment[] {
   // ── Normalize paren typos before parsing ──────────────────────────────────
   // Handles the common variations a human might type:
@@ -482,6 +512,17 @@ export function processLine(
     }
   }
   if (results.length) return results;
+
+  if (!opts?.skipPalatCommaSplit) {
+    const palatChunks = splitCommaGroupsAtPalatMarkers(trimmed);
+    if (palatChunks && palatChunks.length >= 2) {
+      const merged: Segment[] = [];
+      for (const chunk of palatChunks) {
+        merged.push(...processLine(chunk, { ...opts, skipPalatCommaSplit: true }));
+      }
+      if (merged.length) return merged;
+    }
+  }
 
   // Plain comma format: last number = rate, any trailing text = WP indicator
   if (/,/.test(trimmed)) {
