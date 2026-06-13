@@ -1904,6 +1904,36 @@ export default function AdminPage() {
                 </p>
               </div>
 
+              {(previewResult.failedLines?.length ?? 0) > 0 && (
+                <div className="rounded-xl border border-red-200 bg-red-50 overflow-hidden">
+                  <div className="flex items-start gap-2 border-b border-red-100 px-3.5 py-2.5">
+                    <span className="text-red-500 text-base shrink-0" aria-hidden>
+                      ⚠
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-semibold text-red-800">
+                        {previewResult.failedLines!.length} line
+                        {previewResult.failedLines!.length !== 1 ? "s" : ""}{" "}
+                        could not be parsed
+                      </p>
+                      <p className="text-[11px] text-red-600 mt-0.5">
+                        Not included in parsed total — fix the input or parser
+                      </p>
+                    </div>
+                  </div>
+                  <div className="max-h-[28vh] space-y-1.5 overflow-y-auto overscroll-contain p-3">
+                    {(previewResult.failedLines ?? []).map((line, idx) => (
+                      <pre
+                        key={`${idx}-${line}`}
+                        className="rounded-[8px] border border-red-200 bg-white p-2 font-mono text-[11px] text-red-700 whitespace-pre-wrap wrap-break-word"
+                      >
+                        {line}
+                      </pre>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {previewResult.total !== previewAudit.total ||
               previewResult.results.length !== previewAudit.resultCount ||
               (previewResult.failedLines?.length ?? 0) !==
@@ -2175,26 +2205,6 @@ export default function AdminPage() {
                             );
                           });
                         })()}
-                      </div>
-                    )}
-
-                    {(previewResult.failedLines?.length ?? 0) > 0 && (
-                      <div>
-                        <p className="mb-2 text-[12px] font-semibold text-red-700">
-                          Failed lines
-                        </p>
-                        <div className="space-y-1.5">
-                          {(previewResult.failedLines ?? []).map(
-                            (line, idx) => (
-                              <pre
-                                key={`${idx}-${line}`}
-                                className="rounded-[8px] border border-red-200 bg-red-50 p-2 font-mono text-[11px] text-red-700 whitespace-pre-wrap wrap-break-word"
-                              >
-                                {line}
-                              </pre>
-                            )
-                          )}
-                        </div>
                       </div>
                     )}
                   </div>
