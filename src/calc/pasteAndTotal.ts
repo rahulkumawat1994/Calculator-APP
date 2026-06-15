@@ -31,6 +31,16 @@ function isDashSeparatedJodiRow(line: string): boolean {
   return /^\d{2}(?:[-–—]\d{2})+$/.test(line.trim());
 }
 
+/** `05-50-` — dash jodi row broken before the into rate on the next line; not a standalone bet. */
+function isIncompleteDashJodiRow(line: string): boolean {
+  return /^\d{2}(?:[-–—]\d{2})+[-–—]\s*$/.test(line.trim());
+}
+
+/** `05-50-` + `77-59-95 x5` → one dash jodi run with the continuation line's rate. */
+function mergeIncompleteDashPendingWithRatedLine(pending: string, line: string): string {
+  return `${pending.trim()}${line}`;
+}
+
 export function mergeTrailingDashWithIntoContinuation(rawLines: string[]): MergedRawChunk[] {
   const out: MergedRawChunk[] = [];
   let i = 0;
@@ -489,6 +499,10 @@ export function calculateTotal(text: string): CalculationResult {
 
   const flushPending = (opts?: { endOfMessage?: boolean }) => {
     if (!pending) return;
+    if (isIncompleteDashJodiRow(pending)) {
+      resetPending();
+      return;
+    }
     if (tryFlushAsUniformTailRateRows(pendingLines, pushMerged, resetPending)) {
       return;
     }
@@ -541,6 +555,12 @@ export function calculateTotal(text: string): CalculationResult {
         flushPending();
         pushMerged(line);
       } else if (isPureNumbers) {
+        if (isIncompleteDashJodiRow(line)) {
+          flushPending();
+          pending = line;
+          pendingLines = [line];
+          continue;
+        }
         if (pending && isSingleDoubleDotRow(line)) {
           flushPending();
         }
@@ -578,6 +598,9 @@ export function calculateTotal(text: string): CalculationResult {
             flushPending();
             pushMerged(line);
           }
+        } else if (/[-–—]\s*$/.test(pending.trim())) {
+          pushMerged(mergeIncompleteDashPendingWithRatedLine(pending, line));
+          resetPending();
         } else {
           const endsWithPartialPair = /(?<!\d)\d$/.test(pending);
           const sep = endsWithPartialPair ? "" : " ";
@@ -780,6 +803,10 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
 
   const flushPendingTL = (opts?: { endOfMessage?: boolean }) => {
     if (!pendingTL) return;
+    if (isIncompleteDashJodiRow(pendingTL.line)) {
+      resetPendingTL();
+      return;
+    }
     if (
       tryFlushAsUniformTailRateRows(
         pendingLineStrs,
@@ -845,6 +872,12 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
         flushPendingTL();
         pushMergedTL(tp);
       } else if (isPureNumbers) {
+        if (isIncompleteDashJodiRow(line)) {
+          flushPendingTL();
+          pendingTL = { ...tp };
+          pendingLineStrs = [line];
+          continue;
+        }
         if (pendingTL && isSingleDoubleDotRow(line)) {
           flushPendingTL();
         }
@@ -882,6 +915,12 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
             flushPendingTL();
             pushMergedTL(tp);
           }
+        } else if (/[-–—]\s*$/.test(pendingTL.line.trim())) {
+          pushMergedTL({
+            line: mergeIncompleteDashPendingWithRatedLine(pendingTL.line, line),
+            src: [...pendingTL.src, ...tp.src],
+          });
+          resetPendingTL();
         } else {
           const endsWithPartialPair = /(?<!\d)\d$/.test(pendingTL.line);
           const sep = endsWithPartialPair ? "" : " ";

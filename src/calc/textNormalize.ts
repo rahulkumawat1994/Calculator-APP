@@ -179,12 +179,14 @@ export function normalizeTypoTolerantInput(s: string): string {
   // before the space. Second pass through this function (from `processLine`) must not rewrite that to `05x50`.
   // `(?!\s+x\s*\d)` skips when the stake is immediately followed by the ×rate from an into-split.
   // `(?!-\d{2})` skips when another jodi follows (`01-10-28-…` is three pairs, not `01` at rate `10`).
+  // `(?!-\s*$)` skips incomplete dash rows waiting for a continuation line (`05-50-`).
+  // `(?!-\s)` skips when another jodi chunk follows after the hyphen (`05-50- 77-…`).
   t = t.replace(
-    /\b(\d{2})-(5|10|15|20|25|30|40|50|100|120)\b(?!\s+x\s*\d)(?!-\d{2})/g,
+    /\b(\d{2})-(5|10|15|20|25|30|40|50|100|120)\b(?!\s+x\s*\d)(?!-\d{2})(?!-\s*$)(?!-\s)/g,
     "$1x$2",
   );
   // Single-digit stake after "-" (e.g. `27-5` same as `27=5` / `27x5`); run after whitelist so `27-10` stays one token.
-  t = t.replace(/\b(\d{2})-([1-9])\b(?!\s+x\s*\d)/g, "$1x$2");
+  t = t.replace(/\b(\d{2})-([1-9])\b(?!\s+x\s*\d)(?!-\s*$)(?!-\s)/g, "$1x$2");
   // Two-digit jodi + "." + single-digit rate (same meaning as 40x5 / 40=5; avoids breaking NN.MM dates with two-digit months)
   t = t.replace(/\b(\d{2})\.([1-9])\b/g, "$1x$2");
   // Between digits: `;` `|` `/` `\` or tabs often used instead of space (keep `,` for comma-rate lines)
@@ -293,15 +295,21 @@ export function normalizeIntoRateMarker(s: string): string {
       /(\d{2}(?:\.\d{2})+)\s+(?:with\s+)?(?:palt(?:i)?|palat(?:e|el)?)\s*(\d{1,5})(?:\s*(?:into|ijto|intu|in\s*t[ou])|(?:into|ijto|intu|in\s*t[ou]))?\s*$/i,
       "$1.=$2",
     )
-    // `…42-into5` / `05-50-into15` — hyphen before `into`; emit spaced ` xN` so later NN-stake
-    // rules do not treat `05-50` as jodi×50 when a real `into` rate follows on the same line.
-    .replace(/[-–—]+\s*(into|ijto)\s*(\d{1,5})\s*$/i, " x$2")
+    // `…42-into5` / `05-50-into15` / `77-59-95-inyo10` — hyphen before into (or typo);
+    // emit spaced ` xN` so later NN-stake rules do not treat `05-50` as jodi×50.
+    .replace(
+      /[-–—]+\s*([a-zA-Z]{2,})\s*(\d{1,5})\s*$/gi,
+      (full, letters: string, rate: string) =>
+        /^(?:into|ijto)$/i.test(letters) || looksLikeIntoTypo(letters)
+          ? ` x${rate}`
+          : full,
+    )
     // Must follow a digit — otherwise a standalone `Into5` line (continuation on next row) becomes orphan `x5`.
     .replace(/(?<=\d)\s*ij\s*to(?=\s*\d)/gi, " x")
     .replace(/(?<=\d)\s*in\s*t[ou](?=\s*\d)/gi, " x");
-  // After a digit: [letters typo "into"] [rate] at end of string → xrate
+  // After a digit (optional hyphen glue): [letters typo "into"] [rate] at end → xrate
   out = out.replace(
-    /(?<=\d)([a-zA-Z]{2,})\s*(\d{1,5})\s*$/gi,
+    /(?<=\d)[-–—]*([a-zA-Z]{2,})\s*(\d{1,5})\s*$/gi,
     (full, letters: string, rate: string) => (looksLikeIntoTypo(letters) ? ` x${rate}` : full),
   );
   // Standalone "10.intu" / "10 into" lines where the rate number PRECEDES "into" (no rate after).

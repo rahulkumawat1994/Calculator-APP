@@ -247,6 +247,27 @@ Sh`;
     expect(r.total).toBe(180);
   });
 
+  it("inyo typo + incomplete dash row merged with next into line", () => {
+    const text = `77-59-95-inyo10
+05-50-
+77-59-95-into5`;
+    const r = calculateTotal(text);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.results).toHaveLength(2);
+    expect(r.results[0]).toMatchObject({
+      line: "77-59-95",
+      rate: 10,
+      count: 3,
+      lineTotal: 30,
+    });
+    expect(r.results[1]).toMatchObject({
+      rate: 5,
+      count: 5,
+      lineTotal: 25,
+    });
+    expect(r.total).toBe(55);
+  });
+
   it("GC MALHOTRA: hyphen before into on same line + inyo typo + colon in jodi row", () => {
     const raw = `[05/05, 2:00 pm] GC MALHOTRA PLAYER: 05-50-into15
 32-23into5
@@ -382,7 +403,12 @@ Gb`;
 77.30  दिसावर`);
     expect(r.failedLines ?? []).toEqual([]);
     expect(r.results).toHaveLength(5);
-    expect(r.results[4]).toMatchObject({ line: "77", rate: 30, count: 1, lineTotal: 30 });
+    expect(r.results[4]).toMatchObject({
+      line: "77",
+      rate: 30,
+      count: 1,
+      lineTotal: 30,
+    });
     expect(r.total).toBe(170);
   });
 
@@ -438,7 +464,12 @@ Gb`;
     const r = calculateTotal("19=91=28into 5");
     expect(r.failedLines ?? []).toEqual([]);
     expect(r.total).toBe(15);
-    expect(r.results[0]).toMatchObject({ line: "19 91 28", rate: 5, count: 3, lineTotal: 15 });
+    expect(r.results[0]).toMatchObject({
+      line: "19 91 28",
+      rate: 5,
+      count: 3,
+      lineTotal: 15,
+    });
   });
 
   it("skgonline1979: Sg/FB/dot rows + Desawr 02..52 with 10.intu (03–04 Jun)", () => {
@@ -452,9 +483,21 @@ Gb`;
     const msgs = parseWhatsAppMessages(raw);
     expect(msgs).toHaveLength(4);
     expect(msgs!.map((m) => m.result.total)).toEqual([90, 100, 80, 20]);
-    expect(msgs![0]!.result.results[0]).toMatchObject({ count: 9, rate: 10, lineTotal: 90 });
-    expect(msgs![1]!.result.results[0]).toMatchObject({ count: 10, rate: 10, lineTotal: 100 });
-    expect(msgs![2]!.result.results[0]).toMatchObject({ count: 8, rate: 10, lineTotal: 80 });
+    expect(msgs![0]!.result.results[0]).toMatchObject({
+      count: 9,
+      rate: 10,
+      lineTotal: 90,
+    });
+    expect(msgs![1]!.result.results[0]).toMatchObject({
+      count: 10,
+      rate: 10,
+      lineTotal: 100,
+    });
+    expect(msgs![2]!.result.results[0]).toMatchObject({
+      count: 8,
+      rate: 10,
+      lineTotal: 80,
+    });
     expect(msgs!.flatMap((m) => m.result.failedLines ?? [])).toEqual([]);
   });
 
@@ -493,8 +536,16 @@ Gb`;
     expect(msgs![0]!.result.failedLines ?? []).toEqual([]);
     expect(msgs![0]!.result.total).toBe(65);
     expect(msgs![0]!.result.results).toHaveLength(2);
-    expect(msgs![0]!.result.results[0]).toMatchObject({ line: "46", rate: 45, lineTotal: 45 });
-    expect(msgs![0]!.result.results[1]).toMatchObject({ line: "20", rate: 20, lineTotal: 20 });
+    expect(msgs![0]!.result.results[0]).toMatchObject({
+      line: "46",
+      rate: 45,
+      lineTotal: 45,
+    });
+    expect(msgs![0]!.result.results[1]).toMatchObject({
+      line: "20",
+      rate: 20,
+      lineTotal: 20,
+    });
   });
 
   it("comma list: many commas separate multiple rates in one line", () => {
@@ -523,17 +574,25 @@ Gb`;
     expect(r.failedLines ?? []).toEqual([]);
     expect(r.total).toBe(705);
     expect(r.results).toHaveLength(2);
-    expect(r.results[0]).toMatchObject({ line: "98 94", rate: 150, isWP: true, lineTotal: 600 });
-    expect(r.results[1]).toMatchObject({ line: "77 27 72", rate: 35, count: 3, lineTotal: 105 });
+    expect(r.results[0]).toMatchObject({
+      line: "98 94",
+      rate: 150,
+      isWP: true,
+      lineTotal: 600,
+    });
+    expect(r.results[1]).toMatchObject({
+      line: "77 27 72",
+      rate: 35,
+      count: 3,
+      lineTotal: 105,
+    });
   });
 
   it("WhatsApp bold/markup: 04*54* merges with 09--59(75(wp typo paren", () => {
     const raw = `[28/05, 9:12 pm] Jai Shree Shyam 🙏🏻: 04*54*
 09--59(75(wp
 08--58--03--53*(35)wp`;
-    const r = calculateTotal(
-      raw.replace(/\[[^\]]*\]\s*[^:\n]+:\s*/g, ""),
-    );
+    const r = calculateTotal(raw.replace(/\[[^\]]*\]\s*[^:\n]+:\s*/g, ""));
     expect(r.failedLines ?? []).toEqual([]);
     expect(r.total).toBe(880);
     expect(r.results).toHaveLength(2);
@@ -544,7 +603,11 @@ Gb`;
       count: 8,
       lineTotal: 600,
     });
-    expect(r.results[1]).toMatchObject({ rate: 35, lineTotal: 280, isWP: true });
+    expect(r.results[1]).toMatchObject({
+      rate: 35,
+      lineTotal: 280,
+      isWP: true,
+    });
   });
 
   it("WhatsApp bold/markup: *12..14*17...19*(50)wp → 8 WP entries at 50", () => {
@@ -591,7 +654,11 @@ Gb`;
       count: 4,
       lineTotal: 200,
     });
-    expect(r.results[1]).toMatchObject({ rate: 50, lineTotal: 500, isWP: true });
+    expect(r.results[1]).toMatchObject({
+      rate: 50,
+      lineTotal: 500,
+      isWP: true,
+    });
   });
 
   it("slash pair/rate (NN/10) lines from WhatsApp — 43/10, 07/20 parse as NN×rate, not as junk", () => {
@@ -769,7 +836,9 @@ Harf. ,B.. 77777x9999x50
 71x10`;
     const r = calculateTotal(raw);
     expect(r.failedLines ?? []).toEqual([]);
-    const harfSegs = r.results.filter((s) => s.line.includes("77777") || s.line.includes("9999"));
+    const harfSegs = r.results.filter(
+      (s) => s.line.includes("77777") || s.line.includes("9999")
+    );
     expect(harfSegs).toHaveLength(2);
     expect(harfSegs.reduce((s, x) => s + x.lineTotal, 0)).toBe(100);
   });
@@ -855,6 +924,39 @@ GL 83×10`;
       count: 16,
       rate: 30,
       lineTotal: 480,
+    });
+  });
+
+  it("splits comma jodi runs at पलट के साथ so each group keeps its own rate", () => {
+    const text =
+      "75,74,78,79,76,,,,15 पलट के साथ,,70,71,72,73,,,,10 पलट के साथ";
+    const out = calculateTotal(text);
+    expect(out.failedLines ?? []).toEqual([]);
+    expect(out.results).toHaveLength(2);
+    expect(out.results[0]).toMatchObject({
+      line: "75,74,78,79,76",
+      rate: 15,
+      isWP: true,
+      lineTotal: 150,
+    });
+    expect(out.results[1]).toMatchObject({
+      line: "70,71,72,73",
+      rate: 10,
+      isWP: true,
+      lineTotal: 80,
+    });
+    expect(out.total).toBe(230);
+  });
+
+  it("single comma row with पलट के साथ still parses as one bet", () => {
+    const text = "21,71,76,39,97,31,,,,20 पलट के साथ";
+    const out = calculateTotal(text);
+    expect(out.failedLines ?? []).toEqual([]);
+    expect(out.results).toHaveLength(1);
+    expect(out.results[0]).toMatchObject({
+      rate: 20,
+      isWP: true,
+      lineTotal: 240,
     });
   });
 });
