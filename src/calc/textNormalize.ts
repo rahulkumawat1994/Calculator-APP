@@ -191,6 +191,9 @@ export function normalizeTypoTolerantInput(s: string): string {
   );
   // Single-digit stake after "-" (e.g. `27-5` same as `27=5` / `27x5`); run after whitelist so `27-10` stays one token.
   t = t.replace(/\b(\d{2})-([1-9])\b(?!\s+x\s*\d)(?!-\s*$)(?!-\s)/g, "$1x$2");
+  // 3+-digit number (solid run / triple) + dash + rate: `100-30` → `100x30`, `000-10` → `000x10`.
+  // Prevents multi-line merge stealing the rate from the next line.
+  t = t.replace(/\b(\d{3,})-(\d{1,3})\b(?!-\d)/g, "$1x$2");
   // Two-digit jodi + "." + single-digit rate (same meaning as 40x5 / 40=5; avoids breaking NN.MM dates with two-digit months)
   t = t.replace(/\b(\d{2})\.([1-9])\b/g, "$1x$2");
   // Between digits: `;` `|` `/` `\` or tabs often used instead of space (keep `,` for comma-rate lines)

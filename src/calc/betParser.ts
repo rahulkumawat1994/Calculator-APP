@@ -294,6 +294,8 @@ export function stripLeadingGameLabels(s: string): string {
   // WhatsApp typos: `HarfAxBx.55555x50` glued — must become `Harf.AxB.…` so AxB is not stripped with Harf.
   let t = s
     .trim()
+    // Stray leading comma/dot before a game label (`,Harf.b.x4444…` → `Harf.b.x4444…`).
+    .replace(/^[,.\s]+(?=[A-Za-z])/, "")
     .replace(/\b(haruf|harf|hrf)axbx?\./gi, "$1.AxB. ");
   let prev = "";
   while (t !== prev) {
