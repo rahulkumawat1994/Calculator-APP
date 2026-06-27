@@ -88,6 +88,13 @@ function isWhatsAppNoiseLine(line: string): boolean {
   if (/phonepe|phon\.pe/i.test(t)) return true;
   if (/^explore the app now/i.test(t)) return true;
   if (/^under\s*\/\s*bahar$/i.test(t)) return true;
+  // WhatsApp reply/quote annotation: "↳ not counted", "↳ …" — arrow prefix means user annotated a forwarded line.
+  if (/^↳/.test(t)) return true;
+  // WhatsApp OCR/image error messages (⚠ prefix).
+  if (/^⚠/.test(t)) return true;
+  // A bet line always contains at least one digit (jodi number or rate).
+  // No-digit lines are labels, market headers, WhatsApp annotations — never valid bets.
+  if (!/\d/.test(t)) return true;
   // Standalone market / game stamp on its own line (often after a screenshot block).
   if (/^(fd|db|sg|sh|gb|gali|ds|fb|gl|desawr|harf|hrf)\s*$/i.test(t)) {
     return true;

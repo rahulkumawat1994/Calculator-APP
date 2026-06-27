@@ -1135,7 +1135,7 @@ describe("computePatternAccuracy", () => {
   });
 
   it("drops below 100 when failed lines exist", () => {
-    const r = calculateTotal("10 20 x5\nthis is not a valid bet line at all");
+    const r = calculateTotal("10 20 x5\n99abc88def77 not a valid bet line 42");
     expect(r.failedLines?.length).toBeGreaterThan(0);
     const a = computePatternAccuracy(r);
     expect(a.scorePercent).toBeLessThan(100);
@@ -1147,5 +1147,141 @@ describe("computePatternAccuracy", () => {
     const a = computePatternAccuracy(r, { waSlotFallbackCount: 2 });
     expect(a.scorePercent).toBe(99.7);
     expect(a.reasons.some((x) => x.includes("fallback"))).toBe(true);
+  });
+});
+
+describe("user typo normalization — real WhatsApp paste fixes", () => {
+  it("28.82.80.08==.10 — stray dot after == rate marker", () => {
+    const r = calculateTotal("28.82.80.08==.10");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(40);
+    expect(r.results[0]).toMatchObject({ count: 4, rate: 10, lineTotal: 40 });
+  });
+
+  it("55.27.87..95..x.10 — stray dot after x rate marker", () => {
+    const r = calculateTotal("55.27.87..95..x.10");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(40);
+  });
+
+  it("DS.30.x.180 — DS label + dot around x", () => {
+    const r = calculateTotal("DS.30.x.180");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(180);
+  });
+
+  it("55x.30 — dot after x before rate", () => {
+    const r = calculateTotal("55x.30");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(30);
+  });
+
+  it("83.29.entu20 — entu typo preceded by dot separator", () => {
+    const r = calculateTotal("83.29.entu20");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(40);
+    expect(r.results[0]).toMatchObject({ count: 2, rate: 20, lineTotal: 40 });
+  });
+
+  it("Dl.50 .75.into5 — DL label, dot before into", () => {
+    const r = calculateTotal("Dl.50 .75.into5");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(10);
+  });
+
+  it("total suffix stripped before parsing — entu10total140", () => {
+    const r = calculateTotal("21.18.74.58.48.84entu10total140");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(60);
+    expect(r.results[0]).toMatchObject({ count: 6, rate: 10, lineTotal: 60 });
+  });
+
+  it("total suffix stripped — entu20total120", () => {
+    const r = calculateTotal("59.29.92.95.34.43entu20total120");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(120);
+    expect(r.results[0]).toMatchObject({ count: 6, rate: 20, lineTotal: 120 });
+  });
+
+  it("multi-line entu with total suffix on second line", () => {
+    const text = "12.81.47.85entu20\n21.18.74.58.48.84entu10total140";
+    const r = calculateTotal(text);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(140);
+  });
+});
+
+describe("↳ not counted annotations + market-suffix lines (WhatsApp paste)", () => {
+  const block = `06===500 फरीदाबाद
+↳ not counted
+59.95=100 फरीदाबाद
+↳ not counted
+72.27.11.66=30 फरीदाबाद
+↳ not counted
+88=========500 फरीदाबाद
+↳ not counted
+फरीदाबाद
+↳ not counted
+40.04=30 श्री गणेश
+↳ not counted
+88=====100 श्री गणेश
+↳ not counted
+85.58===100 श्री गणेश
+↳ not counted`;
+
+  it("↳ not counted lines do not produce errors", () => {
+    const r = calculateTotal(block);
+    expect(r.failedLines ?? []).toEqual([]);
+  });
+
+  it("standalone Hindi market label alone (फरीदाबाद) is silently skipped", () => {
+    const r = calculateTotal("फरीदाबाद");
+    expect(r.failedLines ?? []).toEqual([]);
+  });
+
+  it("standalone श्री गणेश label alone is silently skipped", () => {
+    const r = calculateTotal("श्री गणेश");
+    expect(r.failedLines ?? []).toEqual([]);
+  });
+});
+
+describe("no-digit label/annotation lines — silently skipped (no errors)", () => {
+  const noDigitLines = [
+    "Sri Ganesh...",
+    "Delhi Bazzar",
+    "⚠ Could not read this line",
+    "Not added to total",
+    "Fix",
+    "Gali&ds",
+    "Galli .....",
+    "Gali &ds",
+  ];
+  for (const line of noDigitLines) {
+    it(`skips: ${JSON.stringify(line)}`, () => {
+      const r = calculateTotal(line);
+      expect(r.failedLines ?? []).toEqual([]);
+    });
+  }
+
+  it("full paste block with label/annotation noise produces no errors", () => {
+    const text = `ds
+↳ not counted
+Gali
+↳ not counted
+Sri Ganesh...
+↳ not counted
+Delhi Bazzar
+⚠ Could not read this line
+Not added to total
+Fix
+Gali&ds
+↳ not counted
+Galli .....
+⚠ Could not read this line
+Not added to total
+Gali &ds
+↳ not counted`;
+    const r = calculateTotal(text);
+    expect(r.failedLines ?? []).toEqual([]);
   });
 });

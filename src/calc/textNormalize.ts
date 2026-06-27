@@ -150,6 +150,10 @@ function normalizeWhatsAppBoldJodiMarkup(t: string): string {
  */
 export function normalizeTypoTolerantInput(s: string): string {
   let t = s.normalize("NFKC");
+  // User annotation: trailing "total NNN" or "totalNNN" (running cumulative note, not a bet field).
+  t = t.replace(/\s*total\s*\d+\s*$/i, "");
+  // Stray dot between rate marker and its digits (`x.30`→`x30`, `==.10`→`==10`, `*.5`→`*5`).
+  t = t.replace(/([xX×]|={1,}|\*)\.+(\d)/g, "$1$2");
   // WhatsApp / OCR: stray colon after a dash in jodi runs (`32-:23` → `32-23`).
   t = t.replace(/-\s*:\s*(?=\d)/g, "-");
   // Multiplication sign from WhatsApp/keyboards -> ASCII x for rate parsing.
@@ -307,9 +311,10 @@ export function normalizeIntoRateMarker(s: string): string {
     // Must follow a digit — otherwise a standalone `Into5` line (continuation on next row) becomes orphan `x5`.
     .replace(/(?<=\d)\s*ij\s*to(?=\s*\d)/gi, " x")
     .replace(/(?<=\d)\s*in\s*t[ou](?=\s*\d)/gi, " x");
-  // After a digit (optional hyphen glue): [letters typo "into"] [rate] at end → xrate
+  // After a digit (optional dot/hyphen glue): [letters typo "into"] [rate] at end → xrate.
+  // Allow `.` as separator so `83.29.entu20` and `75.into5` are handled (dot-separated format).
   out = out.replace(
-    /(?<=\d)[-–—]*([a-zA-Z]{2,})\s*(\d{1,5})\s*$/gi,
+    /(?<=\d)[.\-–—]*([a-zA-Z]{2,})\s*(\d{1,5})\s*$/gi,
     (full, letters: string, rate: string) => (looksLikeIntoTypo(letters) ? ` x${rate}` : full),
   );
   // Standalone "10.intu" / "10 into" lines where the rate number PRECEDES "into" (no rate after).
