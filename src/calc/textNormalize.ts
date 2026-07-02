@@ -158,7 +158,9 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/-\s*:\s*(?=\d)/g, "-");
   // Multiplication sign from WhatsApp/keyboards -> ASCII x for rate parsing.
   t = t.replace(/×/g, "x");
-  // "Rs" / "rs" (rupees) as rate, common in market lines: "55 rs10", "20.02.rs5"
+  // "Rs" / "rs" (rupees) as rate — postfix: `200rs`, `75 rs` → `x200`, `x75`
+  t = t.replace(/\b(\d{1,5})\s*rs\b/gi, "x$1");
+  // prefix: `rs10`, `rs 200` → `x10`, `x200`
   t = t.replace(/(?<![A-Za-z])rs\s*(\d{1,5})/gi, "x$1");
   // Fancy spaces → ASCII space
   t = t.replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, " ");

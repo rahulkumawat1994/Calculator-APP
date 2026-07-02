@@ -1309,3 +1309,26 @@ describe("3-digit number + dash rate (100-30 style)", () => {
     expect(r.total).toBe(80);
   });
 });
+
+describe("postfix Rs/rs rate marker (`200rs`, `75rs`)", () => {
+  it("22 200rs — jodi 22 at rate 200", () => {
+    const r = calculateTotal("22 200rs");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(200);
+    expect(r.results[0]).toMatchObject({ rate: 200, count: 1 });
+  });
+
+  it("27 72 77 75rs — three jodis at rate 75", () => {
+    const r = calculateTotal("27 72 77  75rs");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(225);
+    expect(r.results[0]).toMatchObject({ rate: 75, count: 3 });
+  });
+
+  it("multi-line rs paste: 200+225=425", () => {
+    const r = calculateTotal("22 200rs\n27 72 77  75rs");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(425);
+    expect(r.results).toHaveLength(2);
+  });
+});
