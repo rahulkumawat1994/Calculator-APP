@@ -58,6 +58,12 @@ export function mergeTrailingDashWithIntoContinuation(rawLines: string[]): Merge
       i += 2;
       continue;
     }
+    // `NN.NN.NN=` + `30` → `NN.NN.NN=30` (user typed rate on the next line after a trailing `=`).
+    if (/=+\s*$/.test(curT) && /^\d+\s*$/.test(nextT) && nextT.trim()) {
+      out.push({ text: `${curT.trimEnd()}${nextT.trim()}`, rawIndices: [i, i + 1] });
+      i += 2;
+      continue;
+    }
     if (intoNext && isDashSeparatedJodiRow(curT)) {
       out.push({ text: `${curT} x${intoNext}`, rawIndices: [i, i + 1] });
       i += 2;
@@ -221,8 +227,13 @@ function mergeCommaOnlyRateContinuationLine(lines: string[]): string[] {
   const out: string[] = [];
   for (const line of lines) {
     const rateOnly = /^\s*,+\s*(\d{1,5})\s*$/.exec(line);
-    if (rateOnly && out.length) {
-      const rate = rateOnly[1]!;
+    // WP-rate continuation: `(35)wp`, `35 wp`, `(35/wp` (already normalized by normalizeParenRateTypos).
+    const wpRateOnly = !rateOnly
+      ? /^\s*\(?(\d{1,5})\)?\s*(wp|palat(?:e|el)?)\s*$/i.exec(line.trim())
+      : null;
+    if ((rateOnly || wpRateOnly) && out.length) {
+      const rate = rateOnly ? rateOnly[1]! : wpRateOnly![1]!;
+      const wpSuffix = wpRateOnly ? ` ${wpRateOnly[2]!}` : "";
       const prev = out[out.length - 1]!;
       const core = prev.replace(/[.,\s]+$/g, "").replace(/^[\s,]+/, "");
       const twoDigitFieldCount = core
@@ -230,7 +241,7 @@ function mergeCommaOnlyRateContinuationLine(lines: string[]): string[] {
         .map((s) => s.replace(/[^\d]/g, ""))
         .filter((s) => s.length === 2).length;
       if (/,/.test(prev) && twoDigitFieldCount >= 3) {
-        out[out.length - 1] = `${core},${rate}`;
+        out[out.length - 1] = `${core},${rate}${wpSuffix}`;
         continue;
       }
     }

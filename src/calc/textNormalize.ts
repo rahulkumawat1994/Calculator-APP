@@ -226,6 +226,9 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/(?<=\d)\s*([ab]+)\s*(?=(?:x|=+|\*)\s*\d)/gi, " $1 ");
   // "AB/15" or "ab/ 15" — slash between betting flag and rate (e.g. "HRF 9999 ab/ 15") → remove slash
   t = t.replace(/\b(AB|A|B)\s*\/\s*(\d)/gi, '$1 $2');
+  // Harf chain: `AB x5555x50` — `x` is the chain separator before the number, not a rate marker.
+  // Strip it so `AB 5555x50` is parsed correctly (last `x50` remains the rate).
+  t = t.replace(/\b(AB|A|B)\s+x(\d{3,})/gi, '$1 $2');
   // "harufx20" / "harfx20" / "hrfx20" — x rate glued to the keyword → insert space so SEP_RATE_RE can see it
   t = t.replace(/\b(haruf|harf|hrf)(x)(\d)/gi, '$1 x$3');
   // Middle dot · between digits
@@ -315,7 +318,9 @@ export function normalizeIntoRateMarker(s: string): string {
     )
     // Must follow a digit — otherwise a standalone `Into5` line (continuation on next row) becomes orphan `x5`.
     .replace(/(?<=\d)\s*ij\s*to(?=\s*\d)/gi, " x")
-    .replace(/(?<=\d)\s*in\s*t[ou](?=\s*\d)/gi, " x");
+    .replace(/(?<=\d)\s*in\s*t[ou](?=\s*\d)/gi, " x")
+    // `int` (3-char truncation of "into") before a rate digit: `65-56int10` → `65-56 x10`.
+    .replace(/(?<=\d)\.?int(?=\d)/gi, " x");
   // After a digit (optional dot/hyphen glue): [letters typo "into"] [rate] at end → xrate.
   // Allow `.` as separator so `83.29.entu20` and `75.into5` are handled (dot-separated format).
   out = out.replace(

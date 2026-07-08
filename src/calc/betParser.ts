@@ -309,7 +309,8 @@ export function stripLeadingGameLabels(s: string): string {
     t = t.slice(m[0].length);
   }
   // `Harf. ,B.. 77777x9999x50` — comma/extra dots before lane letter after game label is stripped.
-  return t.replace(/^[,\s.]*?(AB|A|B)\s*\.+/i, (_, lane) => `${lane.toUpperCase()}. `).trim();
+  // Replace trailing dot separator with a space: `AB.x5555` → `AB x5555`.
+  return t.replace(/^[,\s.]*?(AB|A|B)\s*\.+/i, (_, lane) => `${lane.toUpperCase()} `).trim();
 }
 
 /** `02..52 x10` — two jodis on one `..` row share the trailing into/× rate (not 02×52). */

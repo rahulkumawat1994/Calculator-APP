@@ -1332,3 +1332,42 @@ describe("postfix Rs/rs rate marker (`200rs`, `75rs`)", () => {
     expect(r.results).toHaveLength(2);
   });
 });
+
+describe("Jul-7 batch — four previously failing patterns", () => {
+  it("trailing = with rate on next line: 13 jodis × 30 = 390", () => {
+    const r = calculateTotal("66.77.22.33.88.90\n09.26.62.65.56.40.04=\n30");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(390);
+  });
+
+  it("trailing = with rate on next line (7 jodis): 09.26... =\\n30 = 210", () => {
+    const r = calculateTotal("09.26.62.65.56.40.04=\n30");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(210);
+  });
+
+  it("comma WP rate: 10,65,90,03,25,94,99\\n(35/wp — 7 jodis WP at 35", () => {
+    const r = calculateTotal("10,65,90,03,25,94,99\n(35/wp");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.results[0]).toMatchObject({ rate: 35, isWP: true });
+    expect(r.total).toBe(455);
+  });
+
+  it("int typo for into: 65-56int10 = 2 × 10 = 20", () => {
+    const r = calculateTotal("65-56int10");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(20);
+  });
+
+  it("Harf.ab.x5555x50 — lowercase ab lane, x-prefixed number = 100", () => {
+    const r = calculateTotal("Harf.ab.x5555x50");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(100);
+  });
+
+  it("Harf.AB.x5555x50 — uppercase AB lane = 100", () => {
+    const r = calculateTotal("Harf.AB.x5555x50");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(100);
+  });
+});
