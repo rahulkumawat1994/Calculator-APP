@@ -53,6 +53,8 @@ export function preprocessText(text: string): string {
 /** `(75(wp` / `(35(` / `(75) wp` / `(rate` at EOL → `(rate)flag` so merge logic sees an explicit rate. */
 export function normalizeParenRateTypos(s: string): string {
   return s
+    // Double (or more) parens around a rate: `((35))` → `(35)`, `((35)` → `(35)`.
+    .replace(/\(+\s*(\d+)\s*\)+/g, "($1)")
     .replace(/\(\s*(\d+)\s*[\/\\|.]\s*([a-zA-Z]*)\s*\)?/g, "($1)$2")
     .replace(/\(\s*(\d+)\s+([a-zA-Z]+)\s*\)?/g, "($1)$2")
     .replace(/\(\s*(\d+)\s*\(\s*([a-zA-Z]+)/g, "($1)$2")

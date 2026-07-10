@@ -1371,3 +1371,12 @@ describe("Jul-7 batch — four previously failing patterns", () => {
     expect(r.total).toBe(100);
   });
 });
+
+describe("double-paren rate: ((35)) treated same as (35)", () => {
+  it("99 66((35)) — 2 jodis at rate 35 = 70", () => {
+    const r = calculateTotal("99 66((35))");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(70);
+    expect(r.results[0]).toMatchObject({ rate: 35, count: 2 });
+  });
+});
