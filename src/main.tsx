@@ -1,8 +1,8 @@
-import React, { lazy, Suspense } from 'react';
-import ReactDOM from 'react-dom/client';
-import { ToastContainer } from 'react-toastify';
-import 'react-toastify/dist/ReactToastify.css';
-import './index.css';
+import React, { lazy, Suspense } from "react";
+import ReactDOM from "react-dom/client";
+import { ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
+import "./index.css";
 import App from "./App";
 import AdminPage from "./AdminPage";
 import { ProtectedAppSession } from "@/auth/ProtectedAppSession";
@@ -26,7 +26,7 @@ function ReportPushHost() {
   return null;
 }
 
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <>
       <ReportPushHost />
@@ -69,5 +69,5 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
         limit={4}
       />
     </>
-  </React.StrictMode>,
+  </React.StrictMode>
 );
