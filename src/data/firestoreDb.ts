@@ -831,6 +831,181 @@ export async function clearReportIssueLogs(maxRows = 2000): Promise<number> {
   }
 }
 
+// ─── Electricity meter readings ───────────────────────────────────────────────
+
+export type ElectricityMeterId = "main" | "basement";
+
+export interface ElectricityReading {
+  /** Unique document ID — generated once on first save, never changes */
+  id: string;
+  /** "YYYY-MM-DD" — derived from readingTime, kept for grouping/queries */
+  dateISO: string;
+  /** Which meter this reading belongs to */
+  meterId: ElectricityMeterId;
+  /** Cumulative KWH reading from the meter */
+  reading: number;
+  /** Unix ms — when the meter was physically read (user-supplied date + time) */
+  readingTime: number;
+  /** Unix ms — when the record was saved/updated in the app */
+  enteredAt: number;
+  /**
+   * Rate (₹/unit) locked in at the time this reading was saved.
+   * Changing the global price later will NOT affect this entry.
+   * 0 means no price was set at that time.
+   */
+  pricePerUnit: number;
+  /** Optional note */
+  note?: string;
+}
+
+export interface ElectricitySlabRate {
+  /** Upper limit for this slab (use Infinity / 999999 for the last slab) */
+  upTo: number;
+  /** ₹ per unit for consumption within this slab */
+  rate: number;
+}
+
+export const DEFAULT_SLAB_RATES: ElectricitySlabRate[] = [
+  { upTo: 50,     rate: 3.00 },
+  { upTo: 150,    rate: 4.50 },
+  { upTo: 300,    rate: 6.00 },
+  { upTo: 500,    rate: 7.25 },
+  { upTo: 999999, rate: 8.50 },
+];
+
+export interface ElectricityConfig {
+  /** Flat rate — used only when useSlabRates is false */
+  pricePerUnit: number;
+  /** When true billing-period costs are calculated using slabRates instead of pricePerUnit */
+  useSlabRates: boolean;
+  slabRates: ElectricitySlabRate[];
+  /** Fixed charges (meter rent, taxes etc.) saved per meter for convenience */
+  fixedChargesMain: number;
+  fixedChargesBasement: number;
+}
+
+export interface ElectricityBillingPeriod {
+  id: string;
+  meterId: ElectricityMeterId;
+  /** "YYYY-MM-DD" — first day of this bill period */
+  fromDate: string;
+  /** "YYYY-MM-DD" — last day of this bill period (date bill was generated/received) */
+  toDate: string;
+  /** Fixed charges on this specific bill (meter rent, service charge, taxes, etc.) */
+  fixedCharges: number;
+  note?: string;
+  createdAt: number;
+}
+
+/** Generate a unique ID for a new electricity reading. */
+export function newElectricityReadingId(meterId: ElectricityMeterId): string {
+  return `${meterId}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+const electricityConfigRef = () => doc(db, "config", "electricity");
+
+const DEFAULT_ELEC_CONFIG: ElectricityConfig = {
+  pricePerUnit: 0,
+  useSlabRates: false,
+  slabRates: DEFAULT_SLAB_RATES,
+  fixedChargesMain: 0,
+  fixedChargesBasement: 0,
+};
+
+export async function loadElectricityConfig(): Promise<ElectricityConfig> {
+  try {
+    const snap = await withFirestoreRetry(() => getDoc(electricityConfigRef()));
+    if (snap.exists()) return { ...DEFAULT_ELEC_CONFIG, ...(snap.data() as ElectricityConfig) };
+    return DEFAULT_ELEC_CONFIG;
+  } catch (e) {
+    toastApiError(e, "Could not load electricity settings.", { toastId: "electricity-config" });
+    return DEFAULT_ELEC_CONFIG;
+  }
+}
+
+export async function loadElectricityBillingPeriods(meterId: ElectricityMeterId): Promise<ElectricityBillingPeriod[]> {
+  try {
+    const snap = await withFirestoreRetry(() =>
+      getDocs(query(collection(db, "electricity_billing_periods"), where("meterId", "==", meterId)))
+    );
+    const docs = snap.docs.map((d) => d.data() as ElectricityBillingPeriod);
+    return docs.sort((a, b) => b.fromDate.localeCompare(a.fromDate)); // newest first
+  } catch (e) {
+    toastApiError(e, "Could not load billing periods.", { toastId: "electricity-billing" });
+    return [];
+  }
+}
+
+export async function saveElectricityBillingPeriod(period: ElectricityBillingPeriod): Promise<void> {
+  await setDoc(doc(db, "electricity_billing_periods", period.id), period);
+}
+
+export async function deleteElectricityBillingPeriod(id: string): Promise<void> {
+  await deleteDoc(doc(db, "electricity_billing_periods", id));
+}
+
+export function newBillingPeriodId(meterId: ElectricityMeterId): string {
+  return `bp_${meterId}_${Date.now()}`;
+}
+
+export async function saveElectricityConfig(config: ElectricityConfig): Promise<void> {
+  await setDoc(electricityConfigRef(), config);
+}
+
+/** Migrate docs saved with the old schema (no id / no readingTime) so the UI works. */
+function hydrateElectricityReading(
+  docId: string,
+  raw: Record<string, unknown>,
+): ElectricityReading {
+  // Old schema used `savedAt`; new schema uses `readingTime` + `enteredAt`
+  const readingTime =
+    typeof raw.readingTime === "number"
+      ? raw.readingTime
+      : typeof raw.savedAt === "number"
+      ? raw.savedAt
+      : Date.now();
+
+  const dateISO =
+    typeof raw.dateISO === "string" && raw.dateISO
+      ? raw.dateISO
+      : new Date(readingTime).toISOString().slice(0, 10);
+
+  return {
+    id:           typeof raw.id === "string" && raw.id ? raw.id : docId,
+    dateISO,
+    meterId:      (raw.meterId as ElectricityMeterId) ?? "main",
+    reading:      typeof raw.reading === "number" ? raw.reading : 0,
+    readingTime,
+    enteredAt:    typeof raw.enteredAt === "number" ? raw.enteredAt : readingTime,
+    pricePerUnit: typeof raw.pricePerUnit === "number" ? raw.pricePerUnit : 0,
+    ...(typeof raw.note === "string" && raw.note ? { note: raw.note } : {}),
+  };
+}
+
+export async function loadElectricityReadings(): Promise<ElectricityReading[]> {
+  try {
+    const snap = await withFirestoreRetry(() =>
+      getDocs(collection(db, "electricity_readings"))
+    );
+    const docs = snap.docs.map((d) =>
+      hydrateElectricityReading(d.id, d.data() as Record<string, unknown>)
+    );
+    // Sort client-side — avoids needing a Firestore composite index on readingTime
+    return docs.sort((a, b) => a.readingTime - b.readingTime);
+  } catch (e) {
+    toastApiError(e, "Could not load electricity readings.", { toastId: "electricity-readings" });
+    return [];
+  }
+}
+
+export async function saveElectricityReading(reading: ElectricityReading): Promise<void> {
+  await setDoc(doc(db, "electricity_readings", reading.id), reading);
+}
+
+export async function deleteElectricityReading(id: string): Promise<void> {
+  await deleteDoc(doc(db, "electricity_readings", id));
+}
+
 // ─── One-time migration from old bulk-doc structure ───────────────────────────
 
 export async function migrateOldFirestoreData(): Promise<void> {
