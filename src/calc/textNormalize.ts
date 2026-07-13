@@ -53,6 +53,8 @@ export function preprocessText(text: string): string {
 /** `(75(wp` / `(35(` / `(75) wp` / `(rate` at EOL → `(rate)flag` so merge logic sees an explicit rate. */
 export function normalizeParenRateTypos(s: string): string {
   return s
+    // `24)10)` — closing-paren where opening paren was meant (WhatsApp typo): `NN)rate)` → `NN(rate)`.
+    .replace(/(\d{1,3})\)(\d{1,5})\)/g, "$1($2)")
     // Double (or more) parens around a rate: `((35))` → `(35)`, `((35)` → `(35)`.
     .replace(/\(+\s*(\d+)\s*\)+/g, "($1)")
     .replace(/\(\s*(\d+)\s*[\/\\|.]\s*([a-zA-Z]*)\s*\)?/g, "($1)$2")
@@ -154,6 +156,10 @@ export function normalizeTypoTolerantInput(s: string): string {
   let t = s.normalize("NFKC");
   // User annotation: trailing "total NNN" or "totalNNN" (running cumulative note, not a bet field).
   t = t.replace(/\s*total\s*\d+\s*$/i, "");
+  // Normalize en-dash and em-dash to hyphen so jodi chains parse uniformly.
+  t = t.replace(/[–—]/g, "-");
+  // 3+ digit number + `*` + rate: `888*50` → `888x50` (must run before bold-markup cleanup).
+  t = t.replace(/\b(\d{3,})\*(\d{1,5})\b/g, "$1x$2");
   // Stray dot between rate marker and its digits (`x.30`→`x30`, `==.10`→`==10`, `*.5`→`*5`).
   t = t.replace(/([xX×]|={1,}|\*)\.+(\d)/g, "$1$2");
   // WhatsApp / OCR: stray colon after a dash in jodi runs (`32-:23` → `32-23`).
@@ -299,6 +305,11 @@ export function parseStandaloneIntoTypoRateDigits(line: string): string | null {
  */
 export function normalizeIntoRateMarker(s: string): string {
   let out = s
+    // `20..10.intu` / `20..10.into` — double-dot jodi..rate where trailing `.intu` marks the rate.
+    .replace(
+      /(\d{1,3})\.\.(\d{1,4})\.\s*(?:into|ijto|intu|in\s*t[ou])\s*$/i,
+      "$1 x$2",
+    )
     // Dot-separated jodi run + "with palt(i) N into" (WhatsApp: `37.48.50.41.36.27.with palt 5intu`).
     .replace(
       /(\d{2}(?:\.\d{2})+)\.\s*(?:with\s+)?(?:palt(?:i)?|palat(?:e|el)?)\s*(\d{1,5})(?:\s*(?:into|ijto|intu|in\s*t[ou])|(?:into|ijto|intu|in\s*t[ou]))?\s*$/i,
@@ -326,7 +337,7 @@ export function normalizeIntoRateMarker(s: string): string {
   // After a digit (optional dot/hyphen glue): [letters typo "into"] [rate] at end → xrate.
   // Allow `.` as separator so `83.29.entu20` and `75.into5` are handled (dot-separated format).
   out = out.replace(
-    /(?<=\d)[.\-–—]*([a-zA-Z]{2,})\s*(\d{1,5})\s*$/gi,
+    /(?<=\d)[.\-–—]*([a-zA-Z]{2,})\s*(\d{1,5})\.?\s*$/gi,
     (full, letters: string, rate: string) => (looksLikeIntoTypo(letters) ? ` x${rate}` : full),
   );
   // Standalone "10.intu" / "10 into" lines where the rate number PRECEDES "into" (no rate after).

@@ -231,8 +231,12 @@ function mergeCommaOnlyRateContinuationLine(lines: string[]): string[] {
     const wpRateOnly = !rateOnly
       ? /^\s*\(?(\d{1,5})\)?\s*(wp|palat(?:e|el)?)\s*$/i.exec(line.trim())
       : null;
-    if ((rateOnly || wpRateOnly) && out.length) {
-      const rate = rateOnly ? rateOnly[1]! : wpRateOnly![1]!;
+    // Paren-rate continuation: `(15)` on its own line after a comma jodi list.
+    const parenRateOnly = !rateOnly && !wpRateOnly
+      ? /^\s*\((\d{1,5})\)\s*$/.exec(line.trim())
+      : null;
+    if ((rateOnly || wpRateOnly || parenRateOnly) && out.length) {
+      const rate = rateOnly ? rateOnly[1]! : wpRateOnly ? wpRateOnly[1]! : parenRateOnly![1]!;
       const wpSuffix = wpRateOnly ? ` ${wpRateOnly[2]!}` : "";
       const prev = out[out.length - 1]!;
       const core = prev.replace(/[.,\s]+$/g, "").replace(/^[\s,]+/, "");
@@ -241,7 +245,8 @@ function mergeCommaOnlyRateContinuationLine(lines: string[]): string[] {
         .map((s) => s.replace(/[^\d]/g, ""))
         .filter((s) => s.length === 2).length;
       if (/,/.test(prev) && twoDigitFieldCount >= 3) {
-        out[out.length - 1] = `${core},${rate}${wpSuffix}`;
+        // Paren rate becomes an explicit rate marker; comma rate appended to list.
+        out[out.length - 1] = parenRateOnly ? `${core}(${rate})` : `${core},${rate}${wpSuffix}`;
         continue;
       }
     }
@@ -678,8 +683,14 @@ function _mergeCommaOnlyRateContinuationTL(pairs: TL[]): TL[] {
   const out: TL[] = [];
   for (const pair of pairs) {
     const rateOnly = /^\s*,+\s*(\d{1,5})\s*$/.exec(pair.line);
-    if (rateOnly && out.length) {
-      const rate = rateOnly[1]!;
+    const wpRateOnly = !rateOnly
+      ? /^\s*\(?(\d{1,5})\)?\s*(wp|palat(?:e|el)?)\s*$/i.exec(pair.line.trim())
+      : null;
+    const parenRateOnly = !rateOnly && !wpRateOnly
+      ? /^\s*\((\d{1,5})\)\s*$/.exec(pair.line.trim())
+      : null;
+    if ((rateOnly || wpRateOnly || parenRateOnly) && out.length) {
+      const rate = rateOnly ? rateOnly[1]! : wpRateOnly ? wpRateOnly[1]! : parenRateOnly![1]!;
       const prev = out[out.length - 1]!;
       const core = prev.line.replace(/[.,\s]+$/g, "").replace(/^[\s,]+/, "");
       const twoDigitFieldCount = core
@@ -687,7 +698,8 @@ function _mergeCommaOnlyRateContinuationTL(pairs: TL[]): TL[] {
         .map((s) => s.replace(/[^\d]/g, ""))
         .filter((s) => s.length === 2).length;
       if (/,/.test(prev.line) && twoDigitFieldCount >= 3) {
-        out[out.length - 1] = { line: `${core},${rate}`, src: [...prev.src, ...pair.src] };
+        const merged = parenRateOnly ? `${core}(${rate})` : `${core},${rate}`;
+        out[out.length - 1] = { line: merged, src: [...prev.src, ...pair.src] };
         continue;
       }
     }

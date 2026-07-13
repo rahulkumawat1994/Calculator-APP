@@ -1296,17 +1296,17 @@ describe("leading comma/dot before game label (WhatsApp typo)", () => {
 });
 
 describe("3-digit number + dash rate (100-30 style)", () => {
-  it("100-30 alone gives 2×30=60", () => {
+  it("100-30 alone gives 1×30=30 (no A/B marker → single bet)", () => {
     const r = calculateTotal("100-30");
     expect(r.failedLines ?? []).toEqual([]);
-    expect(r.total).toBe(60);
+    expect(r.total).toBe(30);
   });
 
-  it("100-30 on line 1 and 10-20 on line 2 do NOT merge — total is 60+20=80", () => {
+  it("100-30 on line 1 and 10-20 on line 2 do NOT merge — total is 30+20=50", () => {
     const r = calculateTotal("100-30\n10-20");
     expect(r.failedLines ?? []).toEqual([]);
     expect(r.results).toHaveLength(2);
-    expect(r.total).toBe(80);
+    expect(r.total).toBe(50);
   });
 });
 

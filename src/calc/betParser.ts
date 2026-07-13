@@ -433,10 +433,12 @@ export function processLine(
       results.push(solid);
       continue;
     }
-    const nums = (numbersPart.match(/(?<!\d)\d{2}(?!\d)/g) ?? []).map(Number);
+    let nums = (numbersPart.match(/(?<!\d)\d{2}(?!\d)/g) ?? []).map(Number);
+    // Fallback for 3-digit numbers (e.g. `100(20)`) where no standalone 2-digit pair exists.
+    if (!nums.length) nums = extractPairedNumbers(numbersPart);
     if (!nums.length) continue;
     const { isWP, isDouble: isDoubleFlagged } = parseFlags(suffix);
-    const isDouble = isDoubleFlagged || has3DigitBet(numbersPart);
+    const isDouble = isDoubleFlagged;
     const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
     if (count > 0) {
       const display = numbersPart.replace(/^[\s*\-_.,:|]+|[\s*\-_.,:|]+$/g, '').trim();
@@ -469,7 +471,7 @@ export function processLine(
       const nums = extractPairedNumbers(numbersText);
       if (nums.length > 0) {
         const { isWP, isDouble: isDoubleFlagged } = parseFlags(suffix);
-        const isDouble = isDoubleFlagged || has3DigitBet(numbersText);
+        const isDouble = isDoubleFlagged;
         const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
         if (count > 0) {
           const display = numbersText.replace(/^\D+/, '').replace(/\D+$/, '').trim();
