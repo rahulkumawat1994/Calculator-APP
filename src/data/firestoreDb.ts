@@ -876,12 +876,19 @@ export const DEFAULT_SLAB_RATES: ElectricitySlabRate[] = [
 export interface ElectricityConfig {
   /** Flat rate — used only when useSlabRates is false */
   pricePerUnit: number;
-  /** When true billing-period costs are calculated using slabRates instead of pricePerUnit */
+  /**
+   * When true, billing uses slabRates: total units select one slab, then
+   * ALL units are charged at that slab's rate (non-progressive).
+   */
   useSlabRates: boolean;
   slabRates: ElectricitySlabRate[];
-  /** Fixed charges (meter rent, taxes etc.) saved per meter for convenience */
+  /** Fixed charges (meter rent, service charge) saved per meter for convenience */
   fixedChargesMain: number;
   fixedChargesBasement: number;
+  /** Tax / duty percent applied on (energy + fixed + fuel) */
+  taxPercent: number;
+  /** Fuel / FPA surcharge in ₹ per unit */
+  fuelSurchargePerUnit: number;
 }
 
 export interface ElectricityBillingPeriod {
@@ -910,6 +917,8 @@ const DEFAULT_ELEC_CONFIG: ElectricityConfig = {
   slabRates: DEFAULT_SLAB_RATES,
   fixedChargesMain: 0,
   fixedChargesBasement: 0,
+  taxPercent: 0,
+  fuelSurchargePerUnit: 0,
 };
 
 export async function loadElectricityConfig(): Promise<ElectricityConfig> {
