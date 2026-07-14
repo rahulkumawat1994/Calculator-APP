@@ -653,8 +653,37 @@ export default function ElectricityPage() {
         : null
     : null;
 
-  // Peak day
-  const peakRow = allRows.filter((r) => r.units != null).reduce<DayRow | null>((best, r) => (!best || (r.units ?? 0) > (best.units ?? 0)) ? r : best, null);
+  // Daily totals map (used for peak/best day)
+  const dailyTotalsMap = new Map<string, number>();
+  for (const r of allRows) {
+    if (r.units == null) continue;
+    dailyTotalsMap.set(r.dateISO, (dailyTotalsMap.get(r.dateISO) ?? 0) + r.units);
+  }
+  const dailyEntries = [...dailyTotalsMap.entries()];
+
+  // Peak day — highest DAILY total (not single reading)
+  const peakDayEntry  = dailyEntries.length > 0 ? dailyEntries.reduce((a, b) => b[1] > a[1] ? b : a) : null;
+  // Best day — lowest DAILY total
+  const bestDayEntry  = dailyEntries.length > 0 ? dailyEntries.reduce((a, b) => b[1] < a[1] ? b : a) : null;
+
+  // Today's usage so far
+  const todayUnits = dailyTotalsMap.get(today) ?? null;
+  // Trend: compare today-so-far with the same elapsed hours yesterday
+  const yesterdayISO = (() => { const d = new Date(today); d.setDate(d.getDate() - 1); return d.toISOString().split("T")[0]!; })();
+  const yesterdayUnits = dailyTotalsMap.get(yesterdayISO) ?? null;
+  const trendDiff = todayUnits != null && yesterdayUnits != null ? +(todayUnits - yesterdayUnits).toFixed(2) : null;
+
+  // Overnight base load: units from last reading of day N to first reading of day N+1
+  const overnightUnits: number[] = [];
+  const dates = [...new Set(allRows.map((r) => r.dateISO))].sort();
+  for (let i = 0; i + 1 < dates.length; i++) {
+    const lastOfDay  = [...allRows].reverse().find((r) => r.dateISO === dates[i]);
+    const firstOfNext = allRows.find((r) => r.dateISO === dates[i + 1]);
+    if (lastOfDay && firstOfNext && firstOfNext.units != null) {
+      overnightUnits.push(firstOfNext.units);
+    }
+  }
+  const avgOvernightLoad = overnightUnits.length > 0 ? +(overnightUnits.reduce((a, b) => a + b, 0) / overnightUnits.length).toFixed(2) : null;
 
   const monthlySummary = buildMonthlySummary(allRows);
   const firstReading   = meterReadings[0]?.reading;
@@ -850,7 +879,18 @@ export default function ElectricityPage() {
                 highlight
               />
             )}
-            {peakRow && <StatCard label="Peak day" value={`${(peakRow.units ?? 0).toFixed(2)} KWH`} sub={formatDate(peakRow.dateISO)} />}
+            {peakDayEntry && <StatCard label="Peak day" value={`${peakDayEntry[1].toFixed(2)} KWH`} sub={formatDate(peakDayEntry[0])} />}
+            {bestDayEntry && dailyEntries.length >= 2 && <StatCard label="Best day" value={`${bestDayEntry[1].toFixed(2)} KWH`} sub={formatDate(bestDayEntry[0])} />}
+            {trendDiff != null && (
+              <StatCard
+                label="Today vs yesterday"
+                value={`${trendDiff > 0 ? "+" : ""}${trendDiff.toFixed(2)} KWH`}
+                sub={trendDiff > 0 ? "using more than yesterday" : trendDiff < 0 ? "using less than yesterday" : "same as yesterday"}
+              />
+            )}
+            {avgOvernightLoad != null && (
+              <StatCard label="Avg night load" value={`${avgOvernightLoad.toFixed(2)} KWH`} sub="overnight (last eve → first morn)" />
+            )}
           </div>
         )}
 
@@ -950,7 +990,7 @@ export default function ElectricityPage() {
                           </td>
                           <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 whitespace-nowrap">{row.reading.toLocaleString("en-IN")}</td>
                           <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap">
-                            {row.units != null ? <span className={`font-medium ${row.units < 0 ? "text-red-500" : row.units === (peakRow?.units ?? -1) ? "text-orange-500 font-bold" : "text-gray-700"}`}>{row.units.toFixed(2)}</span> : <span className="text-gray-300">—</span>}
+                            {row.units != null ? <span className={`font-medium ${row.units < 0 ? "text-red-500" : peakDayEntry && row.dateISO === peakDayEntry[0] ? "text-orange-500 font-bold" : "text-gray-700"}`}>{row.units.toFixed(2)}</span> : <span className="text-gray-300">—</span>}
                           </td>
                           {!config.useSlabRates && (
                             <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap">
