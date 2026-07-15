@@ -648,23 +648,12 @@ export default function ElectricityPage() {
 
   const totalUnits = analytics.totalUnits;
   const avgUnitsPerDay = analytics.avgPerDay;
-  const projectedCost = analytics.periodProjectedBill?.total ?? null;
   const peakDayEntry: DayUsage | null = analytics.peakDay;
   const bestDayEntry: DayUsage | null = analytics.lowestDay;
   const todayUnits = analytics.todayUnits;
   const yesterdayUnits = analytics.yesterdayUnits;
   const trendDiff =
     todayUnits != null && yesterdayUnits != null ? +(todayUnits - yesterdayUnits).toFixed(2) : null;
-
-  const lastPeriod = billingPeriods[0];
-  const today = todayISO();
-  const periodStartDate = lastPeriod ? lastPeriod.toDate : (meterReadings[0]?.dateISO ?? today);
-  const daysElapsed = daysBetween(periodStartDate, today);
-  const avgPeriodDays =
-    billingPeriods.length >= 2
-      ? Math.round(billingPeriods.reduce((s, p) => s + daysBetween(p.fromDate, p.toDate), 0) / billingPeriods.length)
-      : 30;
-  const daysLeft = Math.max(0, avgPeriodDays - daysElapsed);
 
   const monthlySummary = analytics.months.map((m) => ({
     key: m.key,
@@ -893,17 +882,17 @@ export default function ElectricityPage() {
                 <StatCard label="Projected month" value={`${analytics.projectedMonthEndUnits.toFixed(0)} KWH`}
                   sub="end-of-month estimate" />
               )}
-              {(analytics.estimatedBill || projectedCost != null) && (
+              {(analytics.periodProjectedBill || analytics.estimatedBill) && (
                 <StatCard
                   label="Estimated bill"
-                  value={`₹${formatInr(projectedCost ?? analytics.estimatedBill!.total)}`}
-                  sub={lastPeriod
-                    ? `${daysElapsed}d since last bill · ${daysLeft}d left`
-                    : analytics.estimatedBill?.costPerUnit != null
-                      ? `≈ ₹${analytics.estimatedBill.costPerUnit.toFixed(2)}/unit`
-                      : "billing estimate"}
+                  value={`₹${formatInr((analytics.periodProjectedBill ?? analytics.estimatedBill)!.total)}`}
+                  sub={
+                    analytics.lastBillDate
+                      ? `Last bill ${formatDate(analytics.lastBillDate)} · ${analytics.daysSinceLastBill}d ago · ~${analytics.daysLeftInCycle}d until next`
+                      : `Add bill date (e.g. 10 Jul) under Billing · assuming ~${analytics.avgCycleDays}d cycle`
+                  }
                   highlight
-                  onClick={() => showMetric("Estimated / projected bill", projectedCost != null ? "periodProjection" : "estimatedBill")}
+                  onClick={() => showMetric("Estimated / projected bill", analytics.periodProjectedBill ? "periodProjection" : "estimatedBill")}
                 />
               )}
               {peakDayEntry && (
@@ -1106,7 +1095,7 @@ export default function ElectricityPage() {
 
           {billingPeriods.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-gray-300 bg-white/50 p-10 text-center text-sm text-gray-400">
-              No billing periods yet. Add one when your next bill arrives.
+              No billing periods yet. Add one with bill date <strong>10 Jul 2026</strong> so “days until next bill” is correct.
             </div>
           ) : (
             <div className="flex flex-col gap-3">

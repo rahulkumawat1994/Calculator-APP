@@ -149,6 +149,14 @@ export interface MeterAnalytics {
   estimatedBill: BillEstimate | null;
   projectedMonthEndBill: BillEstimate | null;
   periodProjectedBill: BillEstimate | null;
+  /** Last recorded bill end date (YYYY-MM-DD), if any billing period exists. */
+  lastBillDate: string | null;
+  /** Whole days since lastBillDate (exclusive of bill day itself if bill was earlier). */
+  daysSinceLastBill: number | null;
+  /** Assumed billing cycle length in days (from history, else fallback). */
+  avgCycleDays: number;
+  /** Estimated days remaining until next bill in the assumed cycle. */
+  daysLeftInCycle: number | null;
 
   efficiencyScore: number | null;
   insights: string[];
@@ -740,25 +748,41 @@ export function computeMeterAnalytics(
   const projectedMonthEndBill =
     projectedMonthEndUnits != null ? estimateBill(projectedMonthEndUnits, config, fixedCharges) : null;
 
-  // Billing-period projection (preserve existing product behavior)
-  const lastPeriod = [...billingPeriods].sort((a, b) => b.toDate.localeCompare(a.toDate))[0];
-  const periodStartISO = lastPeriod?.toDate ?? first?.dateISO ?? todayISO;
-  const periodStartMs = startOfLocalDay(new Date(periodStartISO + "T00:00:00").getTime()) + DAY_MS; // after last bill day
-  const daysElapsedPeriod = Math.max(
-    0,
-    (startOfLocalDay(nowMs) - startOfLocalDay(new Date(periodStartISO + "T00:00:00").getTime())) / DAY_MS,
-  );
-  const avgPeriodDays =
+  // Billing-period projection
+  const lastPeriod = [...billingPeriods].sort((a, b) => b.toDate.localeCompare(a.toDate))[0] ?? null;
+  const lastBillDate = lastPeriod?.toDate ?? null;
+
+  const avgCycleDays =
     billingPeriods.length >= 2
       ? Math.round(
           billingPeriods.reduce((s, p) => {
-            const from = new Date(p.fromDate + "T00:00:00").getTime();
-            const to = new Date(p.toDate + "T00:00:00").getTime();
-            return s + Math.max(1, (to - from) / DAY_MS + 1);
+            const from = startOfLocalDay(new Date(p.fromDate + "T00:00:00").getTime());
+            const to = startOfLocalDay(new Date(p.toDate + "T00:00:00").getTime());
+            // Cycle length as exclusive day span (10 Jun → 10 Jul ≈ 30 days)
+            return s + Math.max(1, Math.round((to - from) / DAY_MS));
           }, 0) / billingPeriods.length,
         )
       : avgPeriodDaysFallback;
-  const daysLeftPeriod = Math.max(0, avgPeriodDays - daysElapsedPeriod);
+
+  // Days since last bill date (Jul 10 → Jul 15 = 5)
+  const daysSinceLastBill = lastBillDate
+    ? Math.max(
+        0,
+        Math.round(
+          (startOfLocalDay(nowMs) - startOfLocalDay(new Date(lastBillDate + "T00:00:00").getTime())) /
+            DAY_MS,
+        ),
+      )
+    : null;
+  const daysLeftInCycle =
+    daysSinceLastBill != null ? Math.max(0, avgCycleDays - daysSinceLastBill) : null;
+
+  // Units after the bill day (start of day after last bill)
+  const periodStartMs = lastBillDate
+    ? startOfLocalDay(new Date(lastBillDate + "T00:00:00").getTime()) + DAY_MS
+    : first
+      ? first.readingTime
+      : startOfLocalDay(nowMs);
   const periodUnits = intervals
     .filter((iv) => iv.toTime > periodStartMs)
     .reduce((s, iv) => {
@@ -768,7 +792,11 @@ export function computeMeterAnalytics(
       return s + iv.units * ((end - start) / HOUR_MS / iv.hours);
     }, 0);
   const projectedPeriodUnits =
-    avgPerDay != null ? +(periodUnits + avgPerDay * daysLeftPeriod).toFixed(3) : null;
+    avgPerDay != null && daysLeftInCycle != null
+      ? +(periodUnits + avgPerDay * daysLeftInCycle).toFixed(3)
+      : avgPerDay != null && !lastBillDate
+        ? +(totalUnits + avgPerDay * avgCycleDays).toFixed(3) // no bill date yet: rough full-cycle guess
+        : null;
   const periodProjectedBill =
     projectedPeriodUnits != null ? estimateBill(projectedPeriodUnits, config, fixedCharges) : null;
 
@@ -840,11 +868,15 @@ export function computeMeterAnalytics(
     periodProjection: {
       value: periodProjectedBill?.total ?? null,
       unit: "₹",
-      formula: "Period units so far + avg/day × days left in billing cycle",
+      formula: lastBillDate
+        ? "Units since last bill + avg/day × days left in billing cycle"
+        : "Rough full-cycle estimate (add last bill date under Billing for accuracy)",
       details:
-        projectedPeriodUnits != null
-          ? `${periodUnits.toFixed(1)} + ${avgPerDay?.toFixed(2)} × ${daysLeftPeriod}d → ${projectedPeriodUnits} KWH`
-          : "n/a",
+        projectedPeriodUnits != null && daysLeftInCycle != null
+          ? `Last bill ${lastBillDate}: ${periodUnits.toFixed(1)} KWH so far + ${avgPerDay?.toFixed(2)} × ${daysLeftInCycle}d left (cycle ~${avgCycleDays}d) → ${projectedPeriodUnits} KWH`
+          : projectedPeriodUnits != null
+            ? `No bill date yet → ~${projectedPeriodUnits} KWH over ${avgCycleDays}d cycle`
+            : "n/a",
     },
   };
 
@@ -885,6 +917,10 @@ export function computeMeterAnalytics(
     estimatedBill,
     projectedMonthEndBill,
     periodProjectedBill,
+    lastBillDate,
+    daysSinceLastBill,
+    avgCycleDays,
+    daysLeftInCycle,
     efficiencyScore: score,
     insights,
     trends,
