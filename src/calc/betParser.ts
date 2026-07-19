@@ -47,6 +47,26 @@ export function extractPairedNumbers(text: string): number[] {
   return out;
 }
 
+/**
+ * Standalone 2-digit tokens only (skips glued `2384`).
+ * Prefer {@link extractPairedNumbers} when a longer digit run is a mistaken jodi merge.
+ */
+function extractStandaloneTwoDigitNumbers(text: string): number[] {
+  return (text.match(/(?<!\d)\d{2}(?!\d)/g) ?? []).map(Number);
+}
+
+/**
+ * Numbers for counting: prefer pair-splitting when it recovers glued jodis
+ * (`43, 2384, 23` → 43,23,84,23) over standalone-only (`43, 23`).
+ */
+export function extractJodiNumbers(text: string): number[] {
+  const standalone = extractStandaloneTwoDigitNumbers(text);
+  const paired = extractPairedNumbers(text);
+  if (paired.length > standalone.length) return paired;
+  if (standalone.length > 0) return standalone;
+  return paired;
+}
+
 /** Comma-separated field is a same-digit run length ≥ 3 (444, 1111, …) — show whole token, not paired digits (44, 11). */
 const COMMA_FIELD_SAME_DIGIT_RUN = /^(\d)\1{2,}$/;
 
@@ -78,13 +98,18 @@ export function formatSegmentLineForPairListDisplay(segment: {
   if (COMMA_FIELD_SAME_DIGIT_RUN.test(singleRun)) {
     return singleRun;
   }
-  const pairs = extractPairedNumbers(segment.line);
+  const pairs = extractJodiNumbers(segment.line);
   const n = pairs.length;
-  if (n > 0 && !segment.isWP) {
-    if (
+  if (n > 0) {
+    const listedOk =
       segment.count === n ||
-      (segment.isDouble && segment.count === 2 * n)
-    ) {
+      (segment.isDouble && segment.count === 2 * n);
+    const wpCount = countSegment(pairs, true);
+    const wpOk =
+      segment.isWP &&
+      (segment.count === wpCount ||
+        (segment.isDouble && segment.count === 2 * wpCount));
+    if (listedOk || wpOk) {
       return pairs.map((p) => p.toString().padStart(2, "0")).join(", ");
     }
   }
@@ -97,7 +122,8 @@ export function formatSegmentLineForPairListDisplay(segment: {
 // Strip WP keywords first so "palat" (contains 'a') never accidentally triggers AB.
 function stripWpPalatWords(text: string): string {
   return text
-    .replace(/\bwp\b/gi, "")
+    // `wpp` (common WhatsApp typo) before `wp`
+    .replace(/\bwpp?\b/gi, "")
     .replace(/\bw\.?\s*p\b/gi, "")
     .replace(/\bw\s+p\b/gi, "")
     .replace(/\bpalat(?:e|el)?\b/gi, "")
@@ -107,7 +133,7 @@ function stripWpPalatWords(text: string): string {
 
 function parseFlags(text: string): { isWP: boolean; isDouble: boolean } {
   const isWP =
-    /\bwp\b/i.test(text) ||
+    /\bwpp?\b/i.test(text) ||
     /\bw\.?\s*p\b/i.test(text) ||
     /\bw\s+p\b/i.test(text) ||
     /\bpalat(?:e|el)?\b/i.test(text) ||
@@ -154,10 +180,10 @@ function has3DigitBet(numbersText: string): boolean {
  */
 export function splitCommaGroupsAtPalatMarkers(line: string): string[] | null {
   if (!/,/.test(line)) return null;
-  if (!/(?:पलट|wp|w\.?\s*p|palat(?:e|el)?)/iu.test(line)) return null;
+  if (!/(?:पलट|wpp?|w\.?\s*p|palat(?:e|el)?)/iu.test(line)) return null;
 
   const delimRe =
-    /(?:पलट\s*के\s*साथ|पलटके\s*साथ|पलट|wp|w\.?\s*p|palat(?:e|el)?)\s*,+(?=\d)/giu;
+    /(?:पलट\s*के\s*साथ|पलटके\s*साथ|पलट|wpp?|w\.?\s*p|palat(?:e|el)?)\s*,+(?=\d)/giu;
   const chunks: string[] = [];
   let start = 0;
   let m: RegExpExecArray | null;
@@ -213,7 +239,7 @@ function trySolidRunSegment(
 ): Segment | null {
   const nt = numbersText.trim();
   if (!nt || !Number.isFinite(rate) || rate <= 0) return null;
-  if (/\b(?:wp|palat(?:e|el)?)\b/i.test(modifierSource) || /पलट/.test(modifierSource)) return null;
+  if (/\b(?:wpp?|palat(?:e|el)?)\b/i.test(modifierSource) || /पलट/.test(modifierSource)) return null;
 
   const rm = nt.match(/(\d)\1{2,}/);
   if (!rm || rm.index === undefined) return null;
@@ -433,9 +459,7 @@ export function processLine(
       results.push(solid);
       continue;
     }
-    let nums = (numbersPart.match(/(?<!\d)\d{2}(?!\d)/g) ?? []).map(Number);
-    // Fallback for 3-digit numbers (e.g. `100(20)`) where no standalone 2-digit pair exists.
-    if (!nums.length) nums = extractPairedNumbers(numbersPart);
+    let nums = extractJodiNumbers(numbersPart);
     if (!nums.length) continue;
     const { isWP, isDouble: isDoubleFlagged } = parseFlags(suffix);
     const isDouble = isDoubleFlagged;
@@ -488,7 +512,7 @@ export function processLine(
   // Handles: "444 10 Ab", "56 74 50 wp", "13 31 15 palat"
   // Last number before a flag keyword = rate; everything before = numbers.
   {
-    const flagMatch = trimmed.match(/\b(?:wp|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i);
+    const flagMatch = trimmed.match(/\b(?:wpp?|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i);
     if (flagMatch && flagMatch.index !== undefined) {
       const beforeFlag = trimmed.slice(0, flagMatch.index).trim();
       const flagText = trimmed.slice(flagMatch.index);

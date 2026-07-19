@@ -107,7 +107,7 @@ export interface UsageTrends {
 
 export interface MeterAnalytics {
   intervals: Interval[];
-  rows: Array<ElectricityReading & { units: number | null; cost: number | null }>;
+  rows: ReadingRow[];
 
   currentReading: number | null;
   previousReading: number | null;
@@ -341,16 +341,31 @@ export function buildIntervals(readings: ElectricityReading[]): Interval[] {
   return out;
 }
 
-export function buildRows(
-  readings: ElectricityReading[],
-): Array<ElectricityReading & { units: number | null; cost: number | null }> {
+export type ReadingRow = ElectricityReading & {
+  units: number | null;
+  cost: number | null;
+  /** Hours since previous reading (null for the first reading). */
+  elapsedHours: number | null;
+  /** Average kW over the gap = units ÷ elapsedHours. */
+  avgKw: number | null;
+};
+
+export function buildRows(readings: ElectricityReading[]): ReadingRow[] {
   const sorted = [...readings].sort((a, b) => a.readingTime - b.readingTime);
   return sorted.map((r, i) => {
     const prev = sorted[i - 1];
     const units = prev != null ? +(r.reading - prev.reading).toFixed(3) : null;
+    const elapsedHours =
+      prev != null && r.readingTime > prev.readingTime
+        ? +((r.readingTime - prev.readingTime) / HOUR_MS).toFixed(4)
+        : null;
+    const avgKw =
+      units != null && elapsedHours != null && elapsedHours > 0
+        ? +(units / elapsedHours).toFixed(3)
+        : null;
     const cost =
       units != null && r.pricePerUnit > 0 ? +(units * r.pricePerUnit).toFixed(2) : null;
-    return { ...r, units, cost };
+    return { ...r, units, cost, elapsedHours, avgKw };
   });
 }
 

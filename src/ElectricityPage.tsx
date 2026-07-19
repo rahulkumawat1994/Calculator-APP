@@ -27,8 +27,10 @@ import {
   buildRows,
   computeMeterAnalytics,
   estimateBill,
+  formatElapsed,
   type DayUsage,
   type MetricDetail,
+  type ReadingRow,
   type TrendPoint,
 } from "./lib/electricityCalc";
 
@@ -74,17 +76,19 @@ function daysBetween(fromISO: string, toISO: string): number {
   return Math.max(1, Math.round((new Date(toISO).getTime() - new Date(fromISO).getTime()) / 86400000) + 1);
 }
 
-type DayRow = ElectricityReading & { units: number | null; cost: number | null };
+type DayRow = ReadingRow;
 
 // ─── CSV export ───────────────────────────────────────────────────────────────
 
 function exportCSV(rows: DayRow[], meterLabel: string) {
-  const headers = ["Date","Time","Meter Reading (KWH)","Units Used","Rate (₹/unit)","Cost (₹)","Entered At","Note"];
+  const headers = ["Date","Time","Meter Reading (KWH)","Units Used","Duration","Avg kW","Rate (₹/unit)","Cost (₹)","Entered At","Note"];
   const lines = rows.map((r) => [
     r.dateISO,
     formatTime(r.readingTime),
     r.reading,
     r.units ?? "",
+    r.elapsedHours != null ? formatElapsed(r.elapsedHours) : "",
+    r.avgKw ?? "",
     r.pricePerUnit || "",
     r.cost ?? "",
     formatDateTime(r.enteredAt),
@@ -1027,6 +1031,8 @@ export default function ElectricityPage() {
                       <th className="px-3 py-2.5 text-left   text-[11px] font-semibold uppercase tracking-wide text-gray-400">Date & Time</th>
                       <th className="px-3 py-2.5 text-right  text-[11px] font-semibold uppercase tracking-wide text-gray-400">Reading</th>
                       <th className="px-3 py-2.5 text-right  text-[11px] font-semibold uppercase tracking-wide text-gray-400">Units</th>
+                      <th className="px-3 py-2.5 text-right  text-[11px] font-semibold uppercase tracking-wide text-gray-400">Duration</th>
+                      <th className="px-3 py-2.5 text-right  text-[11px] font-semibold uppercase tracking-wide text-gray-400">Avg kW</th>
                       {!config.useSlabRates && <th className="px-3 py-2.5 text-right  text-[11px] font-semibold uppercase tracking-wide text-gray-400">Rate</th>}
                       {!config.useSlabRates && hasCostData && <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-gray-400">Cost (₹)</th>}
                       <th className="px-3 py-2.5 text-left   text-[11px] font-semibold uppercase tracking-wide text-gray-400">Entered</th>
@@ -1048,6 +1054,16 @@ export default function ElectricityPage() {
                           <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 whitespace-nowrap">{row.reading.toLocaleString("en-IN")}</td>
                           <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap">
                             {row.units != null ? <span className={`font-medium ${row.units < 0 ? "text-red-500" : peakDayEntry && row.dateISO === peakDayEntry.dateISO ? "text-orange-500 font-bold" : "text-gray-700"}`}>{row.units.toFixed(2)}</span> : <span className="text-gray-300">—</span>}
+                          </td>
+                          <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap">
+                            {row.elapsedHours != null
+                              ? <span className="text-gray-600 text-xs font-medium" title={`${row.elapsedHours.toFixed(2)} hours since previous reading`}>{formatElapsed(row.elapsedHours)}</span>
+                              : <span className="text-gray-300">—</span>}
+                          </td>
+                          <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap">
+                            {row.avgKw != null
+                              ? <span className="text-gray-600 text-xs">{row.avgKw.toFixed(2)}</span>
+                              : <span className="text-gray-300">—</span>}
                           </td>
                           {!config.useSlabRates && (
                             <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap">
@@ -1072,6 +1088,10 @@ export default function ElectricityPage() {
                       <tr className="bg-gray-50 border-t-2 border-gray-200">
                         <td className="px-3 py-2.5 text-xs font-bold text-gray-500 uppercase">{isFiltered ? "Filtered total" : "Total"}</td>
                         <td /><td className="px-3 py-2.5 text-right tabular-nums font-bold text-gray-800">{filteredRows.reduce((s, r) => s + (r.units ?? 0), 0).toFixed(2)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-xs font-semibold text-gray-600">
+                          {formatElapsed(filteredRows.reduce((s, r) => s + (r.elapsedHours ?? 0), 0))}
+                        </td>
+                        <td />
                         {!config.useSlabRates && <td />}
                         {!config.useSlabRates && hasCostData && <td className="px-3 py-2.5 text-right tabular-nums font-bold text-gray-800">₹{formatInr(filteredRows.reduce((s, r) => s + (r.cost ?? 0), 0))}</td>}
                         <td colSpan={3} />

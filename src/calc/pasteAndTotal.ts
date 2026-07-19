@@ -117,9 +117,19 @@ function isSingleDoubleDotRow(s: string): boolean {
 }
 
 /**
- * `79..78..28` + `30..10..10` — row 2 ends with a uniform rate (`10`); jodis are all of row 1
- * plus the first two tokens of row 2 (`30`, `10`) → 5×10. Differs from full-uniform row 2
- * (`10..10..10` + `54..14..08`) which uses positional value/rate zip (3×10).
+ * `46..45` / `20..20` are self-contained jodi×rate; `05..50` is a reverse-jodi list
+ * that needs a following rate row (`10..15` → 05×10 + 50×15).
+ */
+function isIntrinsicDoubleDotJodiRateRow(s: string): boolean {
+  const m = /^(\d{1,3})\.\.(\d{1,4})$/.exec(s.trim());
+  if (!m) return false;
+  return !isReverseJodiPairDigits(m[1]!, m[2]!);
+}
+
+/**
+ * Legacy fallback: value row + non-uniform rate row with unequal token counts.
+ * Equal-length rows always prefer positional value/rate zip instead
+ * (`04..40..86` + `20..10..10` → 04×20, 40×10, 86×10).
  */
 function tryFlushAsUniformTailRateRows(
   pendingLines: string[],
@@ -136,6 +146,8 @@ function tryFlushAsUniformTailRateRows(
   const t1 = splitDoubleDotTokens(l1);
   const t2 = splitDoubleDotTokens(l2);
   if (t1.length < 2 || t2.length < 2) return false;
+  // Equal length → caller should use positional zip; do not invent extra jodis.
+  if (t1.length === t2.length) return false;
   if (!t1.every((t) => t.length === 2)) return false;
   if (!t2.every((t) => t.length >= 1 && t.length <= 4 && parseInt(t, 10) > 0)) {
     return false;
@@ -229,7 +241,7 @@ function mergeCommaOnlyRateContinuationLine(lines: string[]): string[] {
     const rateOnly = /^\s*,+\s*(\d{1,5})\s*$/.exec(line);
     // WP-rate continuation: `(35)wp`, `35 wp`, `(35/wp` (already normalized by normalizeParenRateTypos).
     const wpRateOnly = !rateOnly
-      ? /^\s*\(?(\d{1,5})\)?\s*(wp|palat(?:e|el)?)\s*$/i.exec(line.trim())
+      ? /^\s*\(?(\d{1,5})\)?\s*(wpp?|palat(?:e|el)?)\s*$/i.exec(line.trim())
       : null;
     // Paren-rate continuation: `(15)` on its own line after a comma jodi list.
     const parenRateOnly = !rateOnly && !wpRateOnly
@@ -352,7 +364,7 @@ function isSelfContainedDigitRowWithRate(line: string, pendingTrimmed: string): 
   const hasExplicitRate =
     /\(\d+\)/.test(t) || X_RATE_RE.test(t) || /=+\s*\d+/.test(t) || /\*\s*\d+/.test(t);
   if (!hasExplicitRate) return false;
-  if (/^\s*(?:wp|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(t)) return false;
+  if (/^\s*(?:wpp?|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(t)) return false;
   const p = pendingTrimmed.trim();
   const purePending = p && /^[\d\s\-_.,:|\/\\]+$/.test(p) && /\d/.test(p);
   if (purePending && !/\.\s*$/.test(p)) return false;
@@ -504,7 +516,8 @@ export function calculateTotal(text: string): CalculationResult {
     if (lastInheritedRate != null) return false;
     const l1 = pendingLines[0]!;
     const l2 = pendingLines[1]!;
-    if (isSingleDoubleDotRow(l1) && isSingleDoubleDotRow(l2)) return false;
+    // Intrinsic jodi×rate rows (`46..45` + `20..20`) are flushed separately upstream.
+    // Reverse-jodi + rate (`05..50` + `10..15`) and multi-token zip rows must pair here.
     const isPureLine = (s: string) => /^[\d\s\-_.,:|\/\\]+$/.test(s) && /\d/.test(s);
     if (!isPureLine(l1) || !isPureLine(l2)) return false;
     const valTokens = l1.match(/\d+/g) ?? [];
@@ -526,6 +539,7 @@ export function calculateTotal(text: string): CalculationResult {
       resetPending();
       return;
     }
+    if (tryFlushAsValueRatePairs()) return;
     if (tryFlushAsUniformTailRateRows(pendingLines, pushMerged, resetPending)) {
       return;
     }
@@ -534,7 +548,6 @@ export function calculateTotal(text: string): CalculationResult {
     ) {
       return;
     }
-    if (tryFlushAsValueRatePairs()) return;
     if (
       opts?.endOfMessage &&
       tryFlushAsBareNumberMessage(pendingLines, lastInheritedRate, (line) => pushMerged(line))
@@ -565,7 +578,7 @@ export function calculateTotal(text: string): CalculationResult {
       /\(\d+\)/.test(line) || X_RATE_RE.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
     const hasKnownFlag =
-      /\b(?:wp|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(line) || /पलट/.test(line);
+      /\b(?:wpp?|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(line) || /पलट/.test(line);
 
     // `B.1111x9999x50` must never absorb `pending` — glue would break the first `x`.
     const isSelfContainedMultiX = Boolean(parseMultiXChainStructure(line));
@@ -585,7 +598,11 @@ export function calculateTotal(text: string): CalculationResult {
           continue;
         }
         if (pending && isSingleDoubleDotRow(line)) {
-          flushPending();
+          // Keep reverse-jodi rows like `05..50` with the next `10..15` rate row for zip.
+          const pendingTrim = pending.trim();
+          if (!(isSingleDoubleDotRow(pendingTrim) && !isIntrinsicDoubleDotJodiRateRow(pendingTrim))) {
+            flushPending();
+          }
         }
         pending = pending ? `${pending} ${line}` : line;
         pendingLines.push(line);
@@ -684,7 +701,7 @@ function _mergeCommaOnlyRateContinuationTL(pairs: TL[]): TL[] {
   for (const pair of pairs) {
     const rateOnly = /^\s*,+\s*(\d{1,5})\s*$/.exec(pair.line);
     const wpRateOnly = !rateOnly
-      ? /^\s*\(?(\d{1,5})\)?\s*(wp|palat(?:e|el)?)\s*$/i.exec(pair.line.trim())
+      ? /^\s*\(?(\d{1,5})\)?\s*(wpp?|palat(?:e|el)?)\s*$/i.exec(pair.line.trim())
       : null;
     const parenRateOnly = !rateOnly && !wpRateOnly
       ? /^\s*\((\d{1,5})\)\s*$/.exec(pair.line.trim())
@@ -811,12 +828,8 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
     if (pendingLineStrs.length !== 2 || lastInheritedRateTL != null || !pendingTL) return false;
     const l1 = pendingLineStrs[0]!;
     const l2 = pendingLineStrs[1]!;
-    if (
-      /^\d{1,3}\.\.\d{1,4}$/.test(l1.trim()) &&
-      /^\d{1,3}\.\.\d{1,4}$/.test(l2.trim())
-    ) {
-      return false;
-    }
+    // Two intrinsic jodi×rate rows (`46..45` + `20..20`) are flushed separately upstream.
+    // Reverse-jodi + rate row (`05..50` + `10..15`) must zip here.
     const isPure = (s: string) => /^[\d\s\-_.,:|\/\\]+$/.test(s) && /\d/.test(s);
     if (!isPure(l1) || !isPure(l2)) return false;
     const valToks = l1.match(/\d+/g) ?? [];
@@ -837,6 +850,7 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
       resetPendingTL();
       return;
     }
+    if (tryFlushAsValueRatePairsTL()) return;
     if (
       tryFlushAsUniformTailRateRows(
         pendingLineStrs,
@@ -855,7 +869,6 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
     ) {
       return;
     }
-    if (tryFlushAsValueRatePairsTL()) return;
     if (
       opts?.endOfMessage &&
       tryFlushAsBareNumberMessage(pendingLineStrs, lastInheritedRateTL, (line) =>
@@ -892,7 +905,7 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
       /\(\d+\)/.test(line) || X_RATE_RE.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
     const hasKnownFlag =
-      /\b(?:wp|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(line) || /पलट/.test(line);
+      /\b(?:wpp?|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(line) || /पलट/.test(line);
     const isSelfContainedMultiX = Boolean(parseMultiXChainStructure(line));
     const isHarfLine = /\b(?:haruf|harf|hrf)\b/i.test(line);
 
@@ -909,7 +922,10 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
           continue;
         }
         if (pendingTL && isSingleDoubleDotRow(line)) {
-          flushPendingTL();
+          const pendingTrim = pendingTL.line.trim();
+          if (!(isSingleDoubleDotRow(pendingTrim) && !isIntrinsicDoubleDotJodiRateRow(pendingTrim))) {
+            flushPendingTL();
+          }
         }
         if (pendingTL) {
           pendingTL = { line: `${pendingTL.line} ${line}`, src: [...pendingTL.src, ...tp.src] };

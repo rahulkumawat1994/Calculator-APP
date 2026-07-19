@@ -16,6 +16,9 @@ const TRAILING_MARKET_SUFFIX_LABELS = [
   "disawar",
   "disawer",
   "desawr",
+  "desawer",
+  "deasawer",
+  "desawar",
   "gali",
   "ghaziabad",
   "faridabad",
@@ -25,6 +28,8 @@ const TRAILING_MARKET_SUFFIX_LABELS = [
 
 export function stripTrailingMarketSuffix(s: string): string {
   let t = s.replace(/[\u200B-\u200D\uFEFF]/g, "").normalize("NFKC").trim();
+  // Rupee / currency glued before market name: `=10₹Deasawer` → `=10 Deasawer`
+  t = t.replace(/[₹₨]/g, " ");
   let changed = true;
   while (changed) {
     changed = false;
@@ -38,7 +43,7 @@ export function stripTrailingMarketSuffix(s: string): string {
       }
     }
   }
-  return t;
+  return t.replace(/ +/g, " ").trim();
 }
 
 export function preprocessText(text: string): string {
@@ -135,7 +140,7 @@ function normalizeWhatsAppBoldJodiMarkup(t: string): string {
       const stake = parseInt(b, 10);
       if (
         STAR_RATE_STAKES.has(stake) &&
-        (/^\s*$/.test(tail) || /^\s*(?:wp|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(tail))
+        (/^\s*$/.test(tail) || /^\s*(?:wpp?|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(tail))
       ) {
         return full;
       }
@@ -158,6 +163,11 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/\s*total\s*\d+\s*$/i, "");
   // Normalize en-dash and em-dash to hyphen so jodi chains parse uniformly.
   t = t.replace(/[–—]/g, "-");
+  // Star-separated jodi list with trailing =rate: `36*38*…*86=10` → spaces + `=10`
+  // (must run before bold-markup / `*` rate parsing, else last `*86` becomes the rate).
+  t = t.replace(/(\d{2}(?:\*\d{2})+)=+(\d+)/g, (_, chain: string, rate: string) =>
+    `${chain.replace(/\*/g, " ")}=${rate}`,
+  );
   // 3+ digit number + `*` + rate: `888*50` → `888x50` (must run before bold-markup cleanup).
   t = t.replace(/\b(\d{3,})\*(\d{1,5})\b/g, "$1x$2");
   // Stray dot between rate marker and its digits (`x.30`→`x30`, `==.10`→`==10`, `*.5`→`*5`).
@@ -166,6 +176,11 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/-\s*:\s*(?=\d)/g, "-");
   // Multiplication sign from WhatsApp/keyboards -> ASCII x for rate parsing.
   t = t.replace(/×/g, "x");
+  // In double-dot rows, a stray single-dot / spaced separator: `04..84. 09` → `04..84..09`
+  // (only when the line already has `..`, so `60.06=10` stays intact).
+  if (/\.\./.test(t)) {
+    t = t.replace(/(\d{2})\.(?!\.)\s*(\d{2})\b/g, "$1..$2");
+  }
   // "Rs" / "rs" (rupees) as rate — postfix: `200rs`, `75 rs` → `x200`, `x75`
   t = t.replace(/\b(\d{1,5})\s*rs\b/gi, "x$1");
   // prefix: `rs10`, `rs 200` → `x10`, `x200`
@@ -281,7 +296,7 @@ function looksLikeIntoTypo(letters: string): boolean {
   // "into" is 4 chars; shorter runs (e.g. "int") are too ambiguous vs real words
   if (t.length < 4 || t.length > 9) return false;
   // Do not treat known bet flags as "into"
-  if (/^(wp|ab|palat|palatel|palt|palti)$/i.test(t)) return false;
+  if (/^(wpp?|ab|palat|palatel|palt|palti)$/i.test(t)) return false;
   const targets = ["into", "intu"];
   return targets.some((target) => levenshtein(t, target) <= 2);
 }

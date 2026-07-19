@@ -501,20 +501,51 @@ Gb`;
     expect(msgs!.flatMap((m) => m.result.failedLines ?? [])).toEqual([]);
   });
 
-  it("GB: value row + 30..10..10 uniform-tail rate row → 5 jodis at 10", () => {
+  it("GB: value row + rate row zip positionally (04..40..86 / 20..10..10 style)", () => {
     const raw = `[01/06, 7:38 pm] skgonline1979: GB 
 79..78..28
 30..10..10`;
     const r = calculateTotal(raw);
     expect(r.failedLines ?? []).toEqual([]);
-    expect(r.results).toHaveLength(1);
-    expect(r.results[0]).toMatchObject({
-      line: "79 78 28 30 10",
-      rate: 10,
-      count: 5,
-      lineTotal: 50,
-    });
+    // 79@30 + 78@10 + 28@10 = 50
     expect(r.total).toBe(50);
+    expect(r.results).toHaveLength(3);
+    expect(r.results.map((x) => x.lineTotal)).toEqual([30, 10, 10]);
+  });
+
+  it("GB reverse-jodi + rate row: 05..50 / 10..15 → 05@10 + 50@15", () => {
+    const r = calculateTotal("GB\n05..50\n10..15");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(25);
+    expect(r.results.map((x) => `${x.line}@${x.rate}`)).toEqual(["05@10", "50@15"]);
+  });
+
+  it("Gali: 04..40..86 / 20..10..10 positional zip", () => {
+    const r = calculateTotal("Gali\n04..40..86\n20..10..10");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(40);
+    expect(r.results.map((x) => `${x.line}@${x.rate}`)).toEqual(["04@20", "40@10", "86@10"]);
+  });
+
+  it("GB typo single-dot: 04..84. 09 / 10..30..10 → 04@10 + 84@30 + 09@10", () => {
+    const r = calculateTotal("GB\n04..84. 09\n10..30..10");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(50);
+    expect(r.results.map((x) => `${x.line}@${x.rate}`)).toEqual(["04@10", "84@30", "09@10"]);
+  });
+
+  it("Desawr bare 77 / 60 → rate 60", () => {
+    const r = calculateTotal("Desawr\n77\n60");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(60);
+  });
+
+  it("star-separated jodis with =rate and ₹Deasawer suffix: 14×10=140", () => {
+    const r = calculateTotal("36*38*48*04*99*28*82*52*79*73*17*72*05*86=10₹Deasawer");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(140);
+    expect(r.results).toHaveLength(1);
+    expect(r.results[0]).toMatchObject({ count: 14, rate: 10, lineTotal: 140 });
   });
 
   it("FB double-dot value/rate rows stay uniform-rate zip (54..14..08 + 10..10..10)", () => {
@@ -622,6 +653,33 @@ Gb`;
       count: 8,
       lineTotal: 400,
     });
+  });
+
+  it("wpp typo is treated as wp (52..02.(150/wpp → 4×150)", () => {
+    const r = calculateTotal("52..02.(150/wpp");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(600);
+    expect(r.results).toHaveLength(1);
+    expect(r.results[0]).toMatchObject({
+      rate: 150,
+      isWP: true,
+      count: 4,
+      lineTotal: 600,
+    });
+  });
+
+  it("glued 4-digit jodi typo splits: 43, 2384, 23 (30)wp → 43,23,84,23 WP = 6×30", () => {
+    const r = calculateTotal("43, 2384, 23 (30)wp");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(180);
+    expect(r.results).toHaveLength(1);
+    expect(r.results[0]).toMatchObject({
+      rate: 30,
+      isWP: true,
+      count: 6,
+      lineTotal: 180,
+    });
+    expect(formatSegmentLineForPairListDisplay(r.results[0]!)).toBe("43, 23, 84, 23");
   });
 
   it("WhatsApp bold/markup: 78*73* is two jodis (not 78×73) and merges with (75)wp row", () => {
