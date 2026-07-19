@@ -1886,7 +1886,13 @@ export default function AdminPage() {
                   ₹{previewResult.total}
                   {previewResult.total !== previewAudit.total && (
                     <span className="ml-1.5 text-[10px] font-bold text-orange-600">
-                      Differs
+                      Differs (
+                      {previewResult.total - previewAudit.total > 0 ? "+" : ""}
+                      ₹
+                      {Math.abs(
+                        previewResult.total - previewAudit.total,
+                      ).toLocaleString("en-IN")}
+                      )
                     </span>
                   )}
                 </p>
