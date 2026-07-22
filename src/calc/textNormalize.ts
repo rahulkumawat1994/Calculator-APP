@@ -176,6 +176,8 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/-\s*:\s*(?=\d)/g, "-");
   // Multiplication sign from WhatsApp/keyboards -> ASCII x for rate parsing.
   t = t.replace(/×/g, "x");
+  // Double/triple x typo before rate: `27xx5` → `27x5`
+  t = t.replace(/(?<=\d)x{2,}(?=\d)/gi, "x");
   // In double-dot rows, a stray single-dot / spaced separator: `04..84. 09` → `04..84..09`
   // (only when the line already has `..`, so `60.06=10` stays intact).
   if (/\.\./.test(t)) {
@@ -350,9 +352,9 @@ export function normalizeIntoRateMarker(s: string): string {
     // `int` (3-char truncation of "into") before a rate digit: `65-56int10` → `65-56 x10`.
     .replace(/(?<=\d)\.?int(?=\d)/gi, " x");
   // After a digit (optional dot/hyphen glue): [letters typo "into"] [rate] at end → xrate.
-  // Allow `.` as separator so `83.29.entu20` and `75.into5` are handled (dot-separated format).
+  // Allow `.` as separator so `83.29.entu20`, `75.into5`, and `10.intu.20` are handled.
   out = out.replace(
-    /(?<=\d)[.\-–—]*([a-zA-Z]{2,})\s*(\d{1,5})\.?\s*$/gi,
+    /(?<=\d)[.\-–—]*([a-zA-Z]{2,})[.\s]*(\d{1,5})\.?\s*$/gi,
     (full, letters: string, rate: string) => (looksLikeIntoTypo(letters) ? ` x${rate}` : full),
   );
   // Standalone "10.intu" / "10 into" lines where the rate number PRECEDES "into" (no rate after).

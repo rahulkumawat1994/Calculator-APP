@@ -682,6 +682,22 @@ Gb`;
     expect(formatSegmentLineForPairListDisplay(r.results[0]!)).toBe("43, 23, 84, 23");
   });
 
+  it("double-x rate typo: 11.57.48.73.27xx5 → 5×5=25", () => {
+    const r = calculateTotal("11.57.48.73.27xx5");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(25);
+    expect(r.results[0]).toMatchObject({ count: 5, rate: 5, lineTotal: 25 });
+  });
+
+  it("GB: 17..16..83 + 10.intu.20 merges as 4 jodis × 20", () => {
+    const r = calculateTotal(`GB 
+17..16..83
+10.intu.20`);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(80);
+    expect(r.results[0]).toMatchObject({ count: 4, rate: 20, lineTotal: 80 });
+  });
+
   it("WhatsApp bold/markup: 78*73* is two jodis (not 78×73) and merges with (75)wp row", () => {
     const raw = `78*73*
 23--28--(75)wp`;
