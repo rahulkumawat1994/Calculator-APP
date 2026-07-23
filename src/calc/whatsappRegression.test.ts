@@ -22,6 +22,7 @@ describe("WhatsApp bulk regression fixture", () => {
 
     expect(msgs!.length).toBe(155);
     expect(failed.length).toBe(0);
-    expect(grandTotal).toMatchInlineSnapshot(`28181`);
+    // Baseline after 3-digit numbers no longer auto-double (only explicit double/AB flags).
+    expect(grandTotal).toMatchInlineSnapshot(`28111`);
   });
 });

@@ -291,7 +291,7 @@ function levenshtein(a: string, b: string): number {
 
 /**
  * Letter run before trailing rate digits is meant as "into" (×rate) but mis-typed
- * (into / intu / inu / ijto / ilto / entu / inyo / …).
+ * (into / intu / inu / ijto / ilto / ibto / entu / inyo / onyo / …).
  * Any matching word followed by a number is treated as the rate marker.
  */
 export function looksLikeIntoTypo(letters: string): boolean {
@@ -307,16 +307,16 @@ export function looksLikeIntoTypo(letters: string): boolean {
   ) {
     return false;
   }
-  // Exact / near-exact into family (incl. short phone typos)
+  // Exact / near-exact into family (onyo = inyo i→o; ibto = into n→b)
   if (
-    /^(into|intu|inu|int|ito|ijto|enty|entu|ento|inyo|inyu|ilto|iltu|olto|nlto|inot|itno|itnu)$/.test(
+    /^(into|intu|inu|int|ito|ijto|enty|entu|ento|inyo|inyu|onyo|onyu|ibto|ibtu|ilto|iltu|olto|nlto|inot|itno|itnu)$/.test(
       t,
     )
   ) {
     return true;
   }
   // Must look like the into family (common first letters from phone typos)
-  if (!/^(in|ij|en|ol|il|nl|ny|it)/.test(t)) return false;
+  if (!/^(in|ij|ib|en|ol|il|nl|ny|it)/.test(t)) return false;
   const targets = ["into", "intu", "inu", "ijto"];
   return targets.some((target) => {
     const maxDist = Math.min(t.length, target.length) <= 3 ? 1 : 2;

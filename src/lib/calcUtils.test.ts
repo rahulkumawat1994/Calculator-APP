@@ -705,13 +705,16 @@ Gb`;
     expect(r.results[0]).toMatchObject({ count: 4, rate: 5, lineTotal: 20 });
   });
 
-  it("into-family typos: intu / inu / inyo / entu / ilto all treat trailing number as rate", () => {
+  it("into-family typos: intu / inu / inyo / onyo / ibto / entu / ilto all treat trailing number as rate", () => {
     const cases: Array<[string, number]> = [
       ["84-48-87-78into5", 20],
       ["84-48-87-78intu5", 20],
       ["84-48-87-78inu5", 20],
       ["84-48-87-78inu-5", 20],
       ["84-48-87-78inyo5", 20],
+      ["84-48-87-78onyo5", 20],
+      ["69-96-24-42-92-29onyo5", 30],
+      ["97-79ibto5", 10],
       ["84-48-87-78entu10", 40],
       ["84-48-87-78ilto5", 20],
       ["75-57intu10", 20],
