@@ -291,24 +291,45 @@ function levenshtein(a: string, b: string): number {
 
 /**
  * Letter run before trailing rate digits is meant as "into" (×rate) but mis-typed
- * (e.g. ilto, olto, iltu, nlto). Covers many combinations via edit distance, not a fixed list.
+ * (into / intu / inu / ijto / ilto / entu / inyo / …).
+ * Any matching word followed by a number is treated as the rate marker.
  */
-function looksLikeIntoTypo(letters: string): boolean {
-  const t = letters.toLowerCase();
-  // "into" is 4 chars; shorter runs (e.g. "int") are too ambiguous vs real words
-  if (t.length < 4 || t.length > 9) return false;
+export function looksLikeIntoTypo(letters: string): boolean {
+  const t = letters.toLowerCase().replace(/[^a-z]/g, "");
+  if (t.length < 3 || t.length > 9) return false;
   // Do not treat known bet flags as "into"
-  if (/^(wpp?|ab|palat|palatel|palt|palti)$/i.test(t)) return false;
-  const targets = ["into", "intu"];
-  return targets.some((target) => levenshtein(t, target) <= 2);
+  if (/^(wpp?|ab|palat|palatel|palt|palti)$/.test(t)) return false;
+  // Common English words that start like "in…" but are not into
+  if (
+    /^(info|india|indian|inch|inches|ink|inn|input|inside|intoes|integer|invite|inyear)$/.test(
+      t,
+    )
+  ) {
+    return false;
+  }
+  // Exact / near-exact into family (incl. short phone typos)
+  if (
+    /^(into|intu|inu|int|ito|ijto|enty|entu|ento|inyo|inyu|ilto|iltu|olto|nlto|inot|itno|itnu)$/.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  // Must look like the into family (common first letters from phone typos)
+  if (!/^(in|ij|en|ol|il|nl|ny|it)/.test(t)) return false;
+  const targets = ["into", "intu", "inu", "ijto"];
+  return targets.some((target) => {
+    const maxDist = Math.min(t.length, target.length) <= 3 ? 1 : 2;
+    return levenshtein(t, target) <= maxDist;
+  });
 }
 
 /** Whole trimmed line is only an into-typo marker + rate (e.g. `Into5`, `inyo5`). */
 export function parseStandaloneIntoTypoRateDigits(line: string): string | null {
   const t = line.trim();
-  const plain = /^\s*(?:into|ijto)\s*(\d{1,5})\s*$/i.exec(t);
+  const plain = /^\s*(?:into|ijto|intu|inu)\s*(\d{1,5})\s*$/i.exec(t);
   if (plain) return plain[1]!;
-  const dotInto = /^\s*(\d{1,5})\.\s*(?:into|ijto|intu)\s*$/i.exec(t);
+  const dotInto = /^\s*(\d{1,5})\.\s*(?:into|ijto|intu|inu)\s*$/i.exec(t);
   if (dotInto) return dotInto[1]!;
   const m = /^\s*([a-zA-Z]{2,})\s*(\d{1,5})\s*$/i.exec(t);
   if (m && looksLikeIntoTypo(m[1]!)) return m[2]!;
@@ -316,51 +337,49 @@ export function parseStandaloneIntoTypoRateDigits(line: string): string | null {
 }
 
 /**
- * Hindi-style "into" (often written "in to") means ×rate. Tolerate common phone typos
- * ("intu", "ijto", "ilto", "olto", …) via explicit patterns + fuzzy end-of-line match.
- * Require a digit immediately before the letter run so we don't rewrite e.g. "in town 10".
+ * Hindi-style "into" (often written "in to") means ×rate.
+ * Rule: after jodis, any into / intu / inu (or close spelling mistake) + number → that number is the rate.
+ * Separators between the word and rate (space, `.`, `-`) are ignored.
  */
 export function normalizeIntoRateMarker(s: string): string {
   let out = s
     // `20..10.intu` / `20..10.into` — double-dot jodi..rate where trailing `.intu` marks the rate.
     .replace(
-      /(\d{1,3})\.\.(\d{1,4})\.\s*(?:into|ijto|intu|in\s*t[ou])\s*$/i,
+      /(\d{1,3})\.\.(\d{1,4})\.\s*(?:into|ijto|intu|inu|in\s*t[ou])\s*$/i,
       "$1 x$2",
     )
     // Dot-separated jodi run + "with palt(i) N into" (WhatsApp: `37.48.50.41.36.27.with palt 5intu`).
     .replace(
-      /(\d{2}(?:\.\d{2})+)\.\s*(?:with\s+)?(?:palt(?:i)?|palat(?:e|el)?)\s*(\d{1,5})(?:\s*(?:into|ijto|intu|in\s*t[ou])|(?:into|ijto|intu|in\s*t[ou]))?\s*$/i,
+      /(\d{2}(?:\.\d{2})+)\.\s*(?:with\s+)?(?:palt(?:i)?|palat(?:e|el)?)\s*(\d{1,5})(?:\s*(?:into|ijto|intu|inu|in\s*t[ou])|(?:into|ijto|intu|inu|in\s*t[ou]))?\s*$/i,
       "$1.=$2",
     )
     // Same shape with space before "with" (no trailing dot after last jodi).
     .replace(
-      /(\d{2}(?:\.\d{2})+)\s+(?:with\s+)?(?:palt(?:i)?|palat(?:e|el)?)\s*(\d{1,5})(?:\s*(?:into|ijto|intu|in\s*t[ou])|(?:into|ijto|intu|in\s*t[ou]))?\s*$/i,
+      /(\d{2}(?:\.\d{2})+)\s+(?:with\s+)?(?:palt(?:i)?|palat(?:e|el)?)\s*(\d{1,5})(?:\s*(?:into|ijto|intu|inu|in\s*t[ou])|(?:into|ijto|intu|inu|in\s*t[ou]))?\s*$/i,
       "$1.=$2",
     )
-    // `…42-into5` / `05-50-into15` / `77-59-95-inyo10` — hyphen before into (or typo);
-    // emit spaced ` xN` so later NN-stake rules do not treat `05-50` as jodi×50.
+    // `…42-into5` / `05-50-into15` / `78-into-5` — hyphen before into (or typo).
     .replace(
-      /[-–—]+\s*([a-zA-Z]{2,})\s*(\d{1,5})\s*$/gi,
+      /[-–—]+\s*([a-zA-Z]{2,})[.\s\-–—]*(\d{1,5})\s*$/gi,
       (full, letters: string, rate: string) =>
-        /^(?:into|ijto)$/i.test(letters) || looksLikeIntoTypo(letters)
-          ? ` x${rate}`
-          : full,
+        looksLikeIntoTypo(letters) ? ` x${rate}` : full,
     )
-    // Must follow a digit — otherwise a standalone `Into5` line (continuation on next row) becomes orphan `x5`.
-    .replace(/(?<=\d)\s*ij\s*to(?=\s*\d)/gi, " x")
-    .replace(/(?<=\d)\s*in\s*t[ou](?=\s*\d)/gi, " x")
-    // `int` (3-char truncation of "into") before a rate digit: `65-56int10` → `65-56 x10`.
-    .replace(/(?<=\d)\.?int(?=\d)/gi, " x");
-  // After a digit (optional dot/hyphen glue): [letters typo "into"] [rate] at end → xrate.
-  // Allow `.` as separator so `83.29.entu20`, `75.into5`, and `10.intu.20` are handled.
+    // Fast paths: consume optional separators so `into-5` / `inu.10` become ` xN`, not ` x-N`.
+    .replace(/(?<=\d)\s*ij\s*to[\s.\-–—]*(?=\d)/gi, " x")
+    .replace(/(?<=\d)\s*in\s*t[ou][\s.\-–—]*(?=\d)/gi, " x")
+    .replace(/(?<=\d)\s*inu[\s.\-–—]*(?=\d)/gi, " x")
+    // `int` (3-char truncation) before a rate digit: `65-56int10` / `int-10` → ` x10`.
+    .replace(/(?<=\d)\.?int[\-–—.]*(?=\d)/gi, " x");
+  // Primary rule: digit… + into-like word + optional separators + rate digits → ×rate.
+  // Covers `75.into5`, `78into-5`, `10.intu.20`, `84inu5`, `inyo10`, `entu20`, etc.
   out = out.replace(
-    /(?<=\d)[.\-–—]*([a-zA-Z]{2,})[.\s]*(\d{1,5})\.?\s*$/gi,
-    (full, letters: string, rate: string) => (looksLikeIntoTypo(letters) ? ` x${rate}` : full),
+    /(?<=\d)[.\-–—]*([a-zA-Z]{2,})[.\s\-–—]*(\d{1,5})\.?\s*$/gi,
+    (full, letters: string, rate: string) =>
+      looksLikeIntoTypo(letters) ? ` x${rate}` : full,
   );
   // Standalone "10.intu" / "10 into" lines where the rate number PRECEDES "into" (no rate after).
-  // Converts the whole line to a rate-only token so pending pairs can inherit it.
   out = out
-    .replace(/^(\d{1,5})\.\s*(?:into|ijto|intu)\s*$/i, "x$1")
+    .replace(/^(\d{1,5})\.\s*(?:into|ijto|intu|inu)\s*$/i, "x$1")
     .replace(/^(\d{1,5})\.?\s*(?:in\s*t[ou])\s*$/i, "x$1");
   return out;
 }
