@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   calculateTotalWithSources,
   extractPairedNumbers,
@@ -440,7 +440,10 @@ export default function NotebookBreakdown({
   onReportFailedLine,
   fontLevel = DEFAULT_FONT_LEVEL,
 }: Props) {
-  const rows = buildNotebookRows(text, result);
+  const rows = useMemo(
+    () => buildNotebookRows(text, result),
+    [text, result],
+  );
   const failedLines = result.failedLines ?? [];
   const partTotals = result.results.map((r) => r.lineTotal);
   const sumLine =

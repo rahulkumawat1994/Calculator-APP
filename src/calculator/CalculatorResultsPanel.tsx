@@ -223,24 +223,25 @@ export function CalculatorResultsPanel({
               >
                 <div className="pc-result__collapse-inner">
                   <div className="pc-result__body">
-                    {resultViewMode === "check" ? (
-                      <NotebookBreakdown
-                        text={u.text}
-                        result={u.result}
-                        onChange={(r) => onUpdateUserResult(u.blockId, r)}
-                        onReportFailedLine={reportLine}
-                        fontLevel={checkFontLevel}
-                      />
-                    ) : (
-                      hasLines && (
-                        <EditableBreakdown
+                    {isOpen &&
+                      (resultViewMode === "check" ? (
+                        <NotebookBreakdown
+                          text={u.text}
                           result={u.result}
                           onChange={(r) => onUpdateUserResult(u.blockId, r)}
                           onReportFailedLine={reportLine}
-                          compact
+                          fontLevel={checkFontLevel}
                         />
-                      )
-                    )}
+                      ) : (
+                        hasLines && (
+                          <EditableBreakdown
+                            result={u.result}
+                            onChange={(r) => onUpdateUserResult(u.blockId, r)}
+                            onReportFailedLine={reportLine}
+                            compact
+                          />
+                        )
+                      ))}
                   </div>
                 </div>
               </div>

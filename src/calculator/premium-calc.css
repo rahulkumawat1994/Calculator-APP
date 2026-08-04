@@ -31,6 +31,8 @@
   z-index: 0;
   background: var(--pc-bg);
   overflow: hidden;
+  isolation: isolate;
+  contain: strict;
 }
 
 .pc-orb {
@@ -38,6 +40,9 @@
   border-radius: 50%;
   filter: blur(80px);
   opacity: 0.45;
+}
+
+.pc-bg--illuminated .pc-orb {
   will-change: transform;
 }
 
@@ -107,6 +112,7 @@
 .pc-content {
   position: relative;
   z-index: 1;
+  isolation: isolate;
   width: 100%;
   max-width: 440px;
   margin-inline: auto;
@@ -237,12 +243,16 @@
 .pc-glass {
   border-radius: 20px;
   border: 1px solid var(--pc-border);
+  background-color: #ffffff;
   background: var(--pc-surface);
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.04),
     0 8px 32px -12px rgba(15, 23, 42, 0.1);
   margin-bottom: 0.85rem;
   overflow: hidden;
+  isolation: isolate;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
   transition:
     border-color 0.25s var(--pc-ease),
     box-shadow 0.25s var(--pc-ease);
@@ -496,12 +506,52 @@
   cursor: pointer;
 }
 
+.pc-user__paste {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid var(--pc-border);
+  background: #fff;
+  color: var(--pc-muted);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  padding: 0.3rem 0.55rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    color 0.2s var(--pc-ease),
+    border-color 0.2s var(--pc-ease),
+    background 0.2s var(--pc-ease),
+    transform 0.15s var(--pc-ease);
+}
+
+.pc-user__paste:hover {
+  color: var(--pc-accent);
+  border-color: rgba(79, 70, 229, 0.35);
+  background: #eef2ff;
+}
+
+.pc-user__paste:active {
+  transform: scale(0.96);
+}
+
+.pc-user__paste-icon {
+  width: 0.8rem;
+  height: 0.8rem;
+  flex-shrink: 0;
+}
+
+.pc-user__paste-label {
+  line-height: 1;
+}
+
 .pc-terminal {
   width: 100%;
   min-height: 130px;
   resize: vertical;
   border: none;
-  padding: 0.5rem 0.85rem 0.85rem;
+  padding: 0.35rem 0.85rem 0.85rem;
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.8125rem;
   line-height: 1.75;

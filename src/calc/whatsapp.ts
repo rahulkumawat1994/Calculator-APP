@@ -161,8 +161,20 @@ function adjustWADateForOvernight(date: string, timestamp: string): string {
   return formatLedgerDate(dt.getDate(), dt.getMonth() + 1, dt.getFullYear());
 }
 
-export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
-  if (!/\[[^\]]*\]\s*[^:\n\uFF1A]+[\uFF1A:]/.test(input)) return null;
+export type WaHeaderMessage = {
+  contact: string;
+  date: string;
+  timestamp: string;
+  text: string;
+};
+
+export function looksLikeWhatsApp(input: string): boolean {
+  return /\[[^\]]*\]\s*[^:\n\uFF1A]+[\uFF1A:]/.test(input);
+}
+
+/** Header scan only — no `calculateTotal` (cheap for slot detection / labels while typing). */
+export function parseWhatsAppHeaders(input: string): WaHeaderMessage[] | null {
+  if (!looksLikeWhatsApp(input)) return null;
 
   const headerRegex = /\[([^\]]*)\]\s*([^:\n\uFF1A]+)\s*[\uFF1A:]\s*/g;
   const headers: Array<{
@@ -195,13 +207,31 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
 
   if (!headers.length) return null;
 
-  const messages: ParsedMessage[] = [];
+  const messages: WaHeaderMessage[] = [];
   for (let i = 0; i < headers.length; i++) {
     const h = headers[i];
     const textEnd = i + 1 < headers.length ? headers[i + 1].index : input.length;
     const text = input.slice(h.end, textEnd).trim();
     if (!text) continue;
-    const result = calculateTotal(text);
+    messages.push({
+      contact: h.contact,
+      date: h.date,
+      timestamp: h.timestamp,
+      text,
+    });
+  }
+
+  return messages.length ? messages : null;
+}
+
+export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
+  const headers = parseWhatsAppHeaders(input);
+  if (!headers) return null;
+
+  const messages: ParsedMessage[] = [];
+  for (let i = 0; i < headers.length; i++) {
+    const h = headers[i]!;
+    const result = calculateTotal(h.text);
     if (result.results.length === 0 && (result.failedLines?.length ?? 0) === 0)
       continue;
     messages.push({
@@ -209,7 +239,7 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
       contact: h.contact,
       date: h.date,
       timestamp: h.timestamp,
-      text,
+      text: h.text,
       result,
     });
   }
@@ -225,7 +255,7 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
 export function splitWhatsAppInputByContact(
   input: string,
 ): { contact: string; text: string }[] | null {
-  if (!/\[[^\]]*\]\s*[^:\n\uFF1A]+[\uFF1A:]/.test(input)) return null;
+  if (!looksLikeWhatsApp(input)) return null;
 
   const headerRegex = /\[([^\]]*)\]\s*([^:\n\uFF1A]+)\s*[\uFF1A:]\s*/g;
   const headers: Array<{ index: number; end: number; contact: string }> = [];

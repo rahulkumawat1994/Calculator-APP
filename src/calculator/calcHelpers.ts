@@ -1,10 +1,11 @@
 import {
-  parseWhatsAppMessages,
+  looksLikeWhatsApp,
+  parseWhatsAppHeaders,
   splitPlainTextByMarketSlots,
   slotMinutes,
-  type ParsedMessage,
+  type WaHeaderMessage,
 } from "@/lib";
-import type { CalculationResult, GameSlot } from "@/types";
+import type { CalculationResult, GameSlot, ParsedMessage } from "@/types";
 
 export const RESULT_VIEW_MODE_KEY = "calc-result-view-mode";
 export type ResultViewMode = "summary" | "check";
@@ -18,10 +19,7 @@ export type CalcBlock = {
   labelLocked?: boolean;
 };
 
-export type TaggedMessages =
-  ReturnType<typeof parseWhatsAppMessages> extends (infer T)[] | null
-    ? T & { slotId: string }
-    : never;
+export type TaggedMessages = ParsedMessage & { slotId: string };
 
 export type PerUserCalc = {
   blockId: string;
@@ -55,7 +53,7 @@ export function normPasteText(s: string): string {
 }
 
 export function uniqueContactLabel(
-  messages: ParsedMessage[],
+  messages: Array<{ contact: string }>,
   fallbackIndex1: number,
 ): string {
   const uniq = [
@@ -88,10 +86,10 @@ export function summarizeWaSlots(
   return order.join(", ");
 }
 
-export function collectAllParsedWaMessages(blocks: CalcBlock[]): ParsedMessage[] {
-  const out: ParsedMessage[] = [];
+export function collectAllWaHeaders(blocks: CalcBlock[]): WaHeaderMessage[] {
+  const out: WaHeaderMessage[] = [];
   for (const b of blocks) {
-    const m = parseWhatsAppMessages(b.text);
+    const m = parseWhatsAppHeaders(b.text);
     if (m?.length) out.push(...m);
   }
   return out;
@@ -106,7 +104,7 @@ export function collectPlainMarketSlotIds(
   for (const b of blocks) {
     const t = normPasteText(b.text);
     if (!t) continue;
-    if (parseWhatsAppMessages(b.text)) continue;
+    if (looksLikeWhatsApp(b.text)) continue;
     const parts = splitPlainTextByMarketSlots(t, slots, fallback);
     const labeled = parts.filter(
       (p) => p.text.trim().length > 0 && p.touchedByMarketLabel,

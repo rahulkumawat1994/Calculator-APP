@@ -26,26 +26,16 @@
   overflow: hidden;
 }
 
-.pc-bg__filter-defs {
-  position: absolute;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
 .pc-bg__water {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  filter: url("#pc-bg-water-filter");
 }
 
 .pc-bg__water-blob {
   position: absolute;
   filter: blur(52px);
   opacity: 0.38;
-  will-change: transform, border-radius;
 }
 
 .pc-bg__water-blob--1 {
@@ -148,7 +138,6 @@
   );
   background-size: 200% 200%;
   opacity: 1;
-  filter: url("#pc-bg-water-filter");
   animation:
     pc-bg-gradient-drift 6s ease-in-out infinite,
     pc-bg-water-sway 8s ease-in-out infinite;
@@ -323,14 +312,6 @@
   .pc-bg--illuminated .pc-orb,
   .pc-bg__water-blob {
     animation: none !important;
-  }
-
-  .pc-bg__water {
-    filter: none;
-  }
-
-  .pc-bg__shift--active::after {
-    filter: none;
   }
 
   .pc-bg--illuminated {

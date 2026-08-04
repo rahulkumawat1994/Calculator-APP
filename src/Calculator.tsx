@@ -17,7 +17,7 @@ import {
 } from "./calculator/PatternAccuracyPanel";
 import { ClearConfirmModal } from "./calculator/ClearConfirmModal";
 import {
-  collectAllParsedWaMessages,
+  collectAllWaHeaders,
   collectPlainMarketSlotIds,
   detectSlotFromTimestamp,
   getStoredResultViewMode,
@@ -35,11 +35,14 @@ import {
 import type { ReportIssuePrefill } from "./calculator/reportIssueTypes";
 import { scrollElementIntoView, scrollToElement } from "./calculator/scrollUtils";
 import { prefersReducedMotion } from "./calculator/motion";
+import { debounce } from "@/lib/debounce";
 import { toast } from "react-toastify";
 import {
   calculateTotal,
   getSkipAuditOnCalculateAll,
   parseWhatsAppMessages,
+  parseWhatsAppHeaders,
+  looksLikeWhatsApp,
   splitWhatsAppInputByContact,
   computePatternAccuracy,
   mergeIntoSessions,
@@ -118,6 +121,8 @@ export default function Calculator({
   const ctaRef = useRef<HTMLButtonElement>(null);
   const [bgShiftToken, setBgShiftToken] = useState(0);
   const [bgShiftOrigin, setBgShiftOrigin] = useState({ x: 0, y: 0 });
+  const [bgGlowHold, setBgGlowHold] = useState(false);
+  const bgGlowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** While clear animations run, block edits must not wipe userResults early. */
   const preserveResultsOnBlockChangeRef = useRef(false);
   const [showReport, setShowReport] = useState(false);
@@ -177,9 +182,24 @@ export default function Calculator({
   const [selectedSlotId, setSelectedSlotId] = useState<string>(autoSlot.id);
 
   const blocksTextSig = useMemo(
-    () => blocks.map((b) => `${b.label}\t${b.text}`).join("\n~\n"),
+    () => blocks.map((b) => b.text).join("\n~\n"),
     [blocks],
   );
+
+  useEffect(() => {
+    return () => {
+      if (bgGlowTimerRef.current) clearTimeout(bgGlowTimerRef.current);
+    };
+  }, []);
+
+  const holdBgGlow = useCallback((ms = 8000) => {
+    if (bgGlowTimerRef.current) clearTimeout(bgGlowTimerRef.current);
+    setBgGlowHold(true);
+    bgGlowTimerRef.current = setTimeout(() => {
+      setBgGlowHold(false);
+      bgGlowTimerRef.current = null;
+    }, ms);
+  }, []);
 
   useEffect(() => {
     if (!enabledSlots.find((s) => s.id === selectedSlotId)) {
@@ -214,66 +234,75 @@ export default function Calculator({
     return () => window.clearTimeout(retry);
   }, [accordionScrollToBlockId]);
 
-  // Auto-detect games from all WhatsApp lines (all blocks); sync dropdown only when a single game applies
+  // Clear stale results immediately when input text changes
   useEffect(() => {
-    const allMsgs = collectAllParsedWaMessages(blocks);
-    const fallbackSlot =
-      enabledSlots.find((s) => s.id === selectedSlotId) ?? autoSlot;
-
-    if (allMsgs.length > 0) {
-      setDetectedViaMarket(false);
-      const tagged = allMsgs.map((msg) => {
-        const firstLine =
-          msg.text
-            .replace(/\r\n/g, "\n")
-            .split("\n")
-            .map((x) => x.trim())
-            .find((x) => x.length > 0) ?? "";
-        const fromMarket = firstLine
-          ? detectSlotFromMarketLine(firstLine, slots)
-          : null;
-        const fromTime = detectSlotFromTimestamp(msg.timestamp, slots);
-        const slot = fromMarket ?? fromTime ?? fallbackSlot;
-        return { slotId: slot.id };
-      });
-      const summary = summarizeWaSlots(tagged, slots);
-      const uniqueIds = [...new Set(tagged.map((t) => t.slotId))];
-
-      setDetectedSlotsSummary(summary || null);
-      setDetectedMultiSlots(uniqueIds.length > 1);
-      setWaSingleFallbackSlotId(uniqueIds.length === 1 ? uniqueIds[0] : null);
-
-      if (!slotOverridden && uniqueIds.length === 1) {
-        setSelectedSlotId(uniqueIds[0]);
-      }
-    } else {
-      const plainIds = collectPlainMarketSlotIds(blocks, slots, fallbackSlot);
-      if (plainIds.length > 0) {
-        setDetectedViaMarket(true);
-        const tagged = plainIds.map((id) => ({ slotId: id }));
-        const summary = summarizeWaSlots(tagged, slots);
-        const uniqueIds = [...new Set(plainIds)];
-        setDetectedSlotsSummary(summary || null);
-        setDetectedMultiSlots(uniqueIds.length > 1);
-        setWaSingleFallbackSlotId(uniqueIds.length === 1 ? uniqueIds[0] : null);
-        if (!slotOverridden && uniqueIds.length === 1) {
-          setSelectedSlotId(uniqueIds[0]);
-        }
-      } else {
-        setDetectedViaMarket(false);
-        setDetectedSlotsSummary(null);
-        setDetectedMultiSlots(false);
-        setWaSingleFallbackSlotId(null);
-        if (!slotOverridden) setSelectedSlotId(autoSlot.id);
-      }
-    }
     if (!preserveResultsOnBlockChangeRef.current) {
       setUserResults(null);
       setIsSaved(false);
       setSavedInfo(null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- slotOverridden omitted like original; selectedSlotId needed for fallback assignment
-  }, [blocksTextSig, slots, autoSlot.id, selectedSlotId]);
+  }, [blocksTextSig]);
+
+  // Debounced slot detection — avoids full WA parse on every keystroke
+  useEffect(() => {
+    const runDetection = () => {
+      const allMsgs = collectAllWaHeaders(blocks);
+      const fallbackSlot =
+        enabledSlots.find((s) => s.id === selectedSlotId) ?? autoSlot;
+
+      if (allMsgs.length > 0) {
+        setDetectedViaMarket(false);
+        const tagged = allMsgs.map((msg) => {
+          const firstLine =
+            msg.text
+              .replace(/\r\n/g, "\n")
+              .split("\n")
+              .map((x) => x.trim())
+              .find((x) => x.length > 0) ?? "";
+          const fromMarket = firstLine
+            ? detectSlotFromMarketLine(firstLine, slots)
+            : null;
+          const fromTime = detectSlotFromTimestamp(msg.timestamp, slots);
+          const slot = fromMarket ?? fromTime ?? fallbackSlot;
+          return { slotId: slot.id };
+        });
+        const summary = summarizeWaSlots(tagged, slots);
+        const uniqueIds = [...new Set(tagged.map((t) => t.slotId))];
+
+        setDetectedSlotsSummary(summary || null);
+        setDetectedMultiSlots(uniqueIds.length > 1);
+        setWaSingleFallbackSlotId(uniqueIds.length === 1 ? uniqueIds[0] : null);
+
+        if (!slotOverridden && uniqueIds.length === 1) {
+          setSelectedSlotId(uniqueIds[0]);
+        }
+      } else {
+        const plainIds = collectPlainMarketSlotIds(blocks, slots, fallbackSlot);
+        if (plainIds.length > 0) {
+          setDetectedViaMarket(true);
+          const tagged = plainIds.map((id) => ({ slotId: id }));
+          const summary = summarizeWaSlots(tagged, slots);
+          const uniqueIds = [...new Set(plainIds)];
+          setDetectedSlotsSummary(summary || null);
+          setDetectedMultiSlots(uniqueIds.length > 1);
+          setWaSingleFallbackSlotId(uniqueIds.length === 1 ? uniqueIds[0] : null);
+          if (!slotOverridden && uniqueIds.length === 1) {
+            setSelectedSlotId(uniqueIds[0]);
+          }
+        } else {
+          setDetectedViaMarket(false);
+          setDetectedSlotsSummary(null);
+          setDetectedMultiSlots(false);
+          setWaSingleFallbackSlotId(null);
+          if (!slotOverridden) setSelectedSlotId(autoSlot.id);
+        }
+      }
+    };
+
+    const debouncedDetect = debounce(runDetection, 250);
+    debouncedDetect();
+    return () => debouncedDetect.cancel();
+  }, [blocksTextSig, slots, autoSlot.id, selectedSlotId, slotOverridden, enabledSlots]);
 
   const selectedSlot =
     enabledSlots.find((s) => s.id === selectedSlotId) ?? autoSlot;
@@ -281,6 +310,11 @@ export default function Calculator({
   const canPersistToHistory = slots.some((s) => s.enabled);
 
   const updateBlockText = (id: string, text: string) => {
+    const existing = blocks.find((b) => b.id === id);
+    if (existing && normPasteText(text) === normPasteText(existing.text)) {
+      return;
+    }
+
     const split = splitWhatsAppInputByContact(text.trim());
     if (split && split.length > 1) {
       setBlocks((prev) => {
@@ -310,7 +344,7 @@ export default function Calculator({
       const idx = prev.findIndex((b) => b.id === id);
       if (idx < 0) return prev;
       const b = prev[idx];
-      const wa = parseWhatsAppMessages(text);
+      const wa = parseWhatsAppHeaders(text);
       let nextLabel = b.label;
       let nextLocked = b.labelLocked ?? false;
       if (wa && wa.length > 0) {
@@ -325,6 +359,34 @@ export default function Calculator({
           : x,
       );
     });
+  };
+
+  const handlePasteIntoBlock = async (id: string, currentText: string) => {
+    try {
+      const clip = (await navigator.clipboard.readText()).trim();
+      if (!clip) {
+        toast.info("Clipboard is empty.");
+        return;
+      }
+
+      const normClip = normPasteText(clip);
+      const normCurrent = normPasteText(currentText);
+
+      if (!normCurrent) {
+        updateBlockText(id, clip);
+        return;
+      }
+
+      if (normClip === normCurrent || normCurrent.endsWith(normClip)) {
+        toast.info("Already pasted.");
+        return;
+      }
+
+      const next = `${currentText.replace(/\s+$/, "")}\n${clip}`;
+      updateBlockText(id, next);
+    } catch {
+      toast.error("Couldn't read clipboard. Paste manually or allow permission.");
+    }
   };
 
   const updateBlockLabel = (id: string, label: string) => {
@@ -376,10 +438,7 @@ export default function Calculator({
 
     const runCalculation = () => {
     const hasEnabledSlot = slots.some((s) => s.enabled);
-    const hasWaBlock = blocks.some((b) => {
-      const wa = parseWhatsAppMessages(b.text);
-      return Boolean(wa && wa.length > 0);
-    });
+    const hasWaBlock = blocks.some((b) => looksLikeWhatsApp(b.text));
     if (hasWaBlock && !hasEnabledSlot) {
       setIsCalculating(false);
       toast.error(
@@ -604,6 +663,24 @@ export default function Calculator({
       setHeroEffectToken((token) => token + 1);
       setIsCalculating(false);
     });
+    holdBgGlow();
+
+    if (!firstErrorBlock) {
+      let minPatternScore = 100;
+      for (const u of next) {
+        const b = computePatternAccuracy(u.result, {
+          waSlotFallbackCount: u.isWAMode ? (u.waSlotFallbackCount ?? 0) : 0,
+        });
+        minPatternScore = Math.min(minPatternScore, b.scorePercent);
+      }
+      if (minPatternScore >= 100) {
+        const behavior: ScrollBehavior = prefersReducedMotion() ? "auto" : "smooth";
+        const scrollCombined = () =>
+          scrollToElement("calc-combined-total", behavior);
+        window.setTimeout(scrollCombined, 100);
+        window.setTimeout(scrollCombined, 560);
+      }
+    }
 
     window.setTimeout(() => setCtaSuccess(false), 280);
     window.setTimeout(() => setAmountMotion("idle"), 520);
@@ -723,6 +800,11 @@ export default function Calculator({
     setWaSingleFallbackSlotId(null);
     setDetectedViaMarket(false);
     setSlotOverridden(false);
+    setBgGlowHold(false);
+    if (bgGlowTimerRef.current) {
+      clearTimeout(bgGlowTimerRef.current);
+      bgGlowTimerRef.current = null;
+    }
   };
 
   const resetClearMotion = () => {
@@ -881,9 +963,7 @@ export default function Calculator({
   const isClearingAnim = resultsExiting || Boolean(departTotal);
   const showSaveDock = canSaveBeforeClear && !isClearingAnim;
   const showCtaBar = !showSaveDock;
-  const bgActive =
-    isCalculating ||
-    (Boolean(userResults?.length) && !isClearingAnim);
+  const bgActive = isCalculating || bgGlowHold;
 
   const contentPadClass = showSaveDock
     ? "pc-content--save-dock"
@@ -966,7 +1046,7 @@ export default function Calculator({
           </div>
         </section>
 
-        <section className="pc-hero pc-reveal pc-reveal--1">
+        <section id="calc-combined-total" className="pc-hero pc-reveal pc-reveal--1">
           <HeroCalculateEffect
             token={heroEffectToken}
             variant={heroEffectVariant}
@@ -1018,6 +1098,28 @@ export default function Calculator({
                   placeholder={`User ${idx + 1}`}
                   className="pc-user__name"
                 />
+                <button
+                  type="button"
+                  className="pc-user__paste"
+                  onClick={() => void handlePasteIntoBlock(b.id, b.text)}
+                  aria-label="Paste from clipboard"
+                  title="Paste from clipboard"
+                >
+                  <svg
+                    className="pc-user__paste-icon"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <rect x="9" y="9" width="13" height="13" rx="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  <span className="pc-user__paste-label">Paste</span>
+                </button>
                 {blocks.length > 1 && (
                   <button
                     type="button"
