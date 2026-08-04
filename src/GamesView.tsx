@@ -19,6 +19,25 @@ import type {
   Segment,
   CalculationResult,
 } from "@/types";
+import {
+  buildCalendarCells,
+  compareDates,
+  DAY_LABELS,
+  displayDate,
+  makeDateStr,
+  MONTH_NAMES,
+  parseDate,
+  shiftDate,
+  todayStr,
+} from "./games/dateUtils";
+import {
+  buildMonthData,
+  buildSlotUsers,
+  getSlotStatus,
+  STATUS_STYLE,
+  type UserRow,
+} from "./games/gamesDataUtils";
+import { getWinningSegments } from "./games/winnerUtils";
 import ConfirmDialog from "./ConfirmDialog";
 import EditableBreakdown from "./EditableBreakdown";
 import { useLoadingSignal } from "./TopProgressBar";
@@ -41,255 +60,6 @@ interface Props {
   saveSessionDoc: (session: SavedSession) => Promise<void>;
   deleteSessionDoc: (id: string) => Promise<void>;
   deletePaymentsByContactDate: (contact: string, date: string) => Promise<void>;
-}
-
-// ─── Date helpers ──────────────────────────────────────────────────────────────
-
-function todayStr(): string {
-  const n = new Date();
-  return `${String(n.getDate()).padStart(2, "0")}/${String(
-    n.getMonth() + 1
-  ).padStart(2, "0")}/${n.getFullYear()}`;
-}
-function parseDate(str: string): Date {
-  const [d, m, y] = str.split("/").map(Number);
-  return new Date(y, m - 1, d);
-}
-function shiftDate(str: string, delta: number): string {
-  const d = parseDate(str);
-  d.setDate(d.getDate() + delta);
-  return `${String(d.getDate()).padStart(2, "0")}/${String(
-    d.getMonth() + 1
-  ).padStart(2, "0")}/${d.getFullYear()}`;
-}
-function displayDate(str: string): string {
-  const today = todayStr();
-  const yesterday = shiftDate(today, -1);
-  if (str === today) return "Today";
-  if (str === yesterday) return "Yesterday";
-  return parseDate(str).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-function compareDates(a: string, b: string): number {
-  return parseDate(a).getTime() - parseDate(b).getTime();
-}
-
-// ─── Winner detection ──────────────────────────────────────────────────────────
-
-/** Extract all number strings from a segment's display line. */
-function extractLineNumbers(line: string): string[] {
-  return line.match(/\d+/g) ?? [];
-}
-
-/** Reverse a 2-digit number string: "42" → "24". Works for any length. */
-function reverseNumStr(n: string): string {
-  return n.split("").reverse().join("");
-}
-
-/** Returns the winning segments for a user, with info about how they won. */
-function getWinningSegments(
-  segments: Segment[],
-  winningNum: string
-): Array<{ seg: Segment; matchedNumber: string; isUlta: boolean }> {
-  if (!winningNum) return [];
-  const rev = reverseNumStr(winningNum);
-  const results: Array<{
-    seg: Segment;
-    matchedNumber: string;
-    isUlta: boolean;
-  }> = [];
-  for (const seg of segments) {
-    const nums = extractLineNumbers(seg.line);
-    for (const n of nums) {
-      if (n === winningNum) {
-        results.push({ seg, matchedNumber: n, isUlta: false });
-        break;
-      }
-      if (seg.isWP && n === rev) {
-        results.push({ seg, matchedNumber: n, isUlta: true });
-        break;
-      }
-    }
-  }
-  return results;
-}
-
-// ─── Slot status ───────────────────────────────────────────────────────────────
-
-type SlotStatus = "active" | "upcoming" | "closed";
-
-function getSlotStatus(
-  slot: GameSlot,
-  activeSlotId: string,
-  isToday: boolean
-): SlotStatus {
-  if (!isToday) return "closed";
-  if (slot.id === activeSlotId) return "active";
-  const now = new Date();
-  return slotMinutes(slot.time) <= now.getHours() * 60 + now.getMinutes()
-    ? "closed"
-    : "upcoming";
-}
-
-const STATUS_STYLE: Record<SlotStatus, { badge: string; label: string }> = {
-  active: {
-    badge: "bg-green-100 text-green-700 border border-green-300",
-    label: "🟢 Open Now",
-  },
-  upcoming: {
-    badge: "bg-blue-100 text-blue-700 border border-blue-200",
-    label: "🔵 Coming Later",
-  },
-  closed: {
-    badge: "bg-gray-100 text-gray-500 border border-gray-200",
-    label: "✅ Done",
-  },
-};
-
-// ─── Data helpers ──────────────────────────────────────────────────────────────
-
-interface UserRow {
-  contact: string;
-  betTotal: number;
-  amountPaid: number | null;
-  commissionPct: number | undefined;
-  paymentId: string;
-  segments: Segment[];
-  sessionId: string;
-  slotLedger: CalculationResult;
-}
-
-function buildSlotUsers(
-  sessions: SavedSession[],
-  payments: PaymentRecord[],
-  slotId: string,
-  date: string
-): UserRow[] {
-  const rows: UserRow[] = [];
-  for (const session of sessions) {
-    if (session.date !== date) continue;
-    const ledger = sessionLedgerForSlotKey(session, slotId);
-    if (!ledger) continue;
-    const betTotal = ledger.total;
-    const pid = `${session.contact}|${slotId}|${date}`;
-    const pr = payments.find((p) => p.id === pid);
-    rows.push({
-      contact: session.contact,
-      betTotal,
-      amountPaid: pr?.amountPaid ?? null,
-      commissionPct: pr?.commissionPct,
-      paymentId: pid,
-      segments: ledger.results,
-      sessionId: session.id,
-      slotLedger: ledger,
-    });
-  }
-  return rows.sort((a, b) => a.contact.localeCompare(b.contact));
-}
-
-interface DaySummary {
-  date: string;
-  totalBets: number;
-  received: number;
-  earned: number;
-  pending: number;
-}
-
-function buildMonthData(
-  sessions: SavedSession[],
-  payments: PaymentRecord[],
-  commissionPct: number,
-  year: number,
-  month: number
-) {
-  const allDates = new Set<string>();
-  for (const s of sessions) {
-    const p = s.date.split("/");
-    if (p.length >= 3 && parseInt(p[1]) === month && parseInt(p[2]) === year)
-      allDates.add(s.date);
-  }
-  for (const p of payments) {
-    const parts = p.date.split("/");
-    if (
-      parts.length >= 3 &&
-      parseInt(parts[1]) === month &&
-      parseInt(parts[2]) === year
-    )
-      allDates.add(p.date);
-  }
-
-  const days: DaySummary[] = [];
-  for (const date of allDates) {
-    const totalBets = sessions
-      .filter((s) => s.date === date)
-      .reduce((sum, s) => sum + mergeSessionLedgerResult(s).total, 0);
-    const dayPayments = payments.filter(
-      (p) => p.date === date && p.amountPaid !== null
-    );
-    const received = dayPayments.reduce(
-      (sum, p) => sum + (p.amountPaid ?? 0),
-      0
-    );
-    if (totalBets === 0 && received === 0) continue;
-    // Per-payment commission: use each payment's own commissionPct or fall back to global
-    const earned = dayPayments.reduce((sum, p) => {
-      const pct = p.commissionPct ?? commissionPct;
-      return sum + Math.round((p.amountPaid ?? 0) * pct) / 100;
-    }, 0);
-    const pending = Math.max(0, totalBets - received);
-    days.push({
-      date,
-      totalBets,
-      received,
-      earned: Math.round(earned * 100) / 100,
-      pending,
-    });
-  }
-
-  days.sort((a, b) => compareDates(b.date, a.date));
-  const totalBets = days.reduce((s, d) => s + d.totalBets, 0);
-  const totalReceived = days.reduce((s, d) => s + d.received, 0);
-  const totalEarned =
-    Math.round(days.reduce((s, d) => s + d.earned, 0) * 100) / 100;
-  const totalPending = days.reduce((s, d) => s + d.pending, 0);
-  return { days, totalBets, totalReceived, totalEarned, totalPending };
-}
-
-const MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-
-const DAY_LABELS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
-
-function makeDateStr(year: number, month: number, day: number): string {
-  return `${String(day).padStart(2, "0")}/${String(month).padStart(
-    2,
-    "0"
-  )}/${year}`;
-}
-
-function buildCalendarCells(year: number, month: number): (number | null)[] {
-  const firstDow = new Date(year, month - 1, 1).getDay();
-  const daysInMonth = new Date(year, month, 0).getDate();
-  const startOffset = firstDow === 0 ? 6 : firstDow - 1;
-  const cells: (number | null)[] = Array(startOffset).fill(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  while (cells.length % 7 !== 0) cells.push(null);
-  return cells;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────

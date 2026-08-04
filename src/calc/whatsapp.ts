@@ -3,10 +3,143 @@ import { calculateTotal } from "./pasteAndTotal";
 
 // ─── WhatsApp message parser ───────────────────────────────────────────────────
 
+function formatLedgerDate(day: number, month: number, year: number): string {
+  return `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}`;
+}
+
+function daysFromReference(
+  day: number,
+  month: number,
+  year: number,
+  reference: Date,
+): number {
+  const candidate = new Date(year, month - 1, day);
+  const ref = new Date(
+    reference.getFullYear(),
+    reference.getMonth(),
+    reference.getDate(),
+  );
+  return Math.abs(candidate.getTime() - ref.getTime()) / (24 * 60 * 60 * 1000);
+}
+
+/**
+ * Resolve short `a/b` headers that can be DD/MM or MM/DD (e.g. `8/4`).
+ * Picks the interpretation closest to `reference` (usually today).
+ */
+function parseAmbiguousShortDate(
+  a: string,
+  b: string,
+  year: number,
+  reference: Date,
+): string {
+  const n1 = parseInt(a, 10);
+  const n2 = parseInt(b, 10);
+  const candidates: Array<{ day: number; month: number }> = [];
+
+  if (n1 >= 1 && n1 <= 31 && n2 >= 1 && n2 <= 12) {
+    candidates.push({ day: n1, month: n2 });
+  }
+  if (n1 >= 1 && n1 <= 12 && n2 >= 1 && n2 <= 31) {
+    const mmdd = { day: n2, month: n1 };
+    if (!candidates.some((c) => c.day === mmdd.day && c.month === mmdd.month)) {
+      candidates.push(mmdd);
+    }
+  }
+
+  if (candidates.length === 0) return "";
+  if (candidates.length === 1) {
+    const c = candidates[0]!;
+    return formatLedgerDate(c.day, c.month, year);
+  }
+
+  let best = candidates[0]!;
+  let bestDistance = daysFromReference(best.day, best.month, year, reference);
+  for (const candidate of candidates.slice(1)) {
+    const distance = daysFromReference(
+      candidate.day,
+      candidate.month,
+      year,
+      reference,
+    );
+    if (distance < bestDistance) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  return formatLedgerDate(best.day, best.month, year);
+}
+
+function parseTwoPartDate(
+  first: string,
+  second: string,
+  year: number,
+  reference: Date,
+): string {
+  const n1 = parseInt(first, 10);
+  const n2 = parseInt(second, 10);
+  if (n1 > 12 && n2 >= 1 && n2 <= 12) {
+    return formatLedgerDate(n1, n2, year);
+  }
+  if (n2 > 12 && n1 >= 1 && n1 <= 12) {
+    return formatLedgerDate(n2, n1, year);
+  }
+  return parseAmbiguousShortDate(first, second, year, reference);
+}
+
+type ParsedHeaderDate = {
+  date: string;
+  /** True when the bracket starts with a date before the time — trust WhatsApp's date. */
+  dateFirst: boolean;
+};
+
+function parseHeaderDate(
+  content: string,
+  reference: Date = new Date(),
+): ParsedHeaderDate {
+  const year = reference.getFullYear();
+
+  const dateFirstFull = content.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s*,/);
+  if (dateFirstFull) {
+    const y = parseInt(dateFirstFull[3]!, 10);
+    return {
+      date: parseTwoPartDate(dateFirstFull[1]!, dateFirstFull[2]!, y, reference),
+      dateFirst: true,
+    };
+  }
+
+  const dateFirstShort = content.match(/^(\d{1,2})\/(\d{1,2})\s*,/);
+  if (dateFirstShort) {
+    return {
+      date: parseTwoPartDate(
+        dateFirstShort[1]!,
+        dateFirstShort[2]!,
+        year,
+        reference,
+      ),
+      dateFirst: true,
+    };
+  }
+
+  const fullDateM = content.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (fullDateM) {
+    const y = parseInt(fullDateM[3]!, 10);
+    return {
+      date: formatLedgerDate(
+        parseInt(fullDateM[1]!, 10),
+        parseInt(fullDateM[2]!, 10),
+        y,
+      ),
+      dateFirst: false,
+    };
+  }
+
+  return { date: "", dateFirst: false };
+}
+
 /**
  * If a WhatsApp message timestamp is before 06:00 AM, the message belongs to the
  * **previous** calendar date (the overnight portion of the same game day).
- * Returns the adjusted date string (DD/MM/YYYY) or the original if no change needed.
+ * Only used for time-first headers — date-first headers already carry WhatsApp's date.
  */
 function adjustWADateForOvernight(date: string, timestamp: string): string {
   if (!date) return date;
@@ -14,10 +147,9 @@ function adjustWADateForOvernight(date: string, timestamp: string): string {
   if (!timeM) return date;
   let hours = parseInt(timeM[1]!, 10);
   const meridiem = timeM[3]?.toLowerCase();
-  if (meridiem === "am" && hours === 12) hours = 0;   // 12:xx am = midnight
-  if (meridiem === "pm" && hours !== 12) hours += 12; // 1–11 pm
-  if (hours >= 6) return date; // Normal working-hour message, no adjustment
-  // Before 06:00 AM → shift back one calendar day
+  if (meridiem === "am" && hours === 12) hours = 0;
+  if (meridiem === "pm" && hours !== 12) hours += 12;
+  if (hours >= 6) return date;
   const parts = date.split("/");
   if (parts.length !== 3) return date;
   const dt = new Date(
@@ -26,36 +158,38 @@ function adjustWADateForOvernight(date: string, timestamp: string): string {
     parseInt(parts[0]!, 10),
   );
   dt.setDate(dt.getDate() - 1);
-  return `${String(dt.getDate()).padStart(2, "0")}/${String(dt.getMonth() + 1).padStart(2, "0")}/${dt.getFullYear()}`;
+  return formatLedgerDate(dt.getDate(), dt.getMonth() + 1, dt.getFullYear());
 }
 
 export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
   if (!/\[[^\]]*\]\s*[^:\n\uFF1A]+[\uFF1A:]/.test(input)) return null;
 
   const headerRegex = /\[([^\]]*)\]\s*([^:\n\uFF1A]+)\s*[\uFF1A:]\s*/g;
-  const headers: Array<{ index: number; end: number; contact: string; date: string; timestamp: string }> = [];
+  const headers: Array<{
+    index: number;
+    end: number;
+    contact: string;
+    date: string;
+    timestamp: string;
+  }> = [];
 
+  const reference = new Date();
   let match: RegExpExecArray | null;
   while ((match = headerRegex.exec(input)) !== null) {
     const content = match[1];
     const contact = match[2].trim();
-    // Support both [6:16 pm, 12/4/2026], [14:26, 12/04/2026] and [12/04, 2:34 pm] formats
-    const fullDateM  = content.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
-    const shortDateM = content.match(/^(\d{1,2}\/\d{1,2})\s*,/);
-    const year = new Date().getFullYear();
-    const rawDate = fullDateM?.[1] ?? (shortDateM ? `${shortDateM[1]}/${year}` : '');
-    // Normalize day and month to 2 digits so "12/4/2026" → "12/04/2026"
-    const normalizedDate = rawDate
-      ? rawDate.split('/').map((p, i) => (i < 2 ? p.padStart(2, '0') : p)).join('/')
-      : '';
-    const dateM = normalizedDate ? [null, normalizedDate] : null;
+    const { date, dateFirst } = parseHeaderDate(content, reference);
     const timeM = content.match(/(\d{1,2}:\d{2}(?:\s*[ap]m)?)/i);
+    const timestamp = timeM?.[1] ?? content;
+    const resolvedDate = dateFirst
+      ? date
+      : adjustWADateForOvernight(date, timestamp);
     headers.push({
       index: match.index,
       end: match.index + match[0].length,
       contact,
-      date: dateM?.[1] ?? '',
-      timestamp: timeM?.[1] ?? content,
+      date: resolvedDate,
+      timestamp,
     });
   }
 
@@ -68,13 +202,12 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
     const text = input.slice(h.end, textEnd).trim();
     if (!text) continue;
     const result = calculateTotal(text);
-    if (result.results.length === 0 && (result.failedLines?.length ?? 0) === 0) continue;
-    // Include index so messages at the same minute get unique IDs.
-    // Pasting the same conversation twice will produce the same index → dedup still works.
+    if (result.results.length === 0 && (result.failedLines?.length ?? 0) === 0)
+      continue;
     messages.push({
       id: `${h.contact}|${h.date}|${h.timestamp}|${i}`,
       contact: h.contact,
-      date: adjustWADateForOvernight(h.date, h.timestamp),
+      date: h.date,
       timestamp: h.timestamp,
       text,
       result,
@@ -89,7 +222,9 @@ export function parseWhatsAppMessages(input: string): ParsedMessage[] | null {
  * (each with at least one non-empty message body), returns one combined snippet per
  * contact so the UI can open separate text areas. Otherwise `null` (keep one area).
  */
-export function splitWhatsAppInputByContact(input: string): { contact: string; text: string }[] | null {
+export function splitWhatsAppInputByContact(
+  input: string,
+): { contact: string; text: string }[] | null {
   if (!/\[[^\]]*\]\s*[^:\n\uFF1A]+[\uFF1A:]/.test(input)) return null;
 
   const headerRegex = /\[([^\]]*)\]\s*([^:\n\uFF1A]+)\s*[\uFF1A:]\s*/g;
@@ -125,7 +260,7 @@ export function splitWhatsAppInputByContact(input: string): { contact: string; t
 
   if (order.length <= 1) return null;
 
-  return order.map(contact => ({
+  return order.map((contact) => ({
     contact,
     text: chunksByContact.get(contact)!.join("\n\n"),
   }));

@@ -9,6 +9,7 @@ export { AlertBanner, type AlertBannerProps } from "./AlertBanner";
 export { Callout, type CalloutProps } from "./Callout";
 export {
   IconTabBar,
+  IconTabBarAction,
   type IconTabItem,
 } from "./IconTabBar";
 export { PageContainer, type PageContainerProps } from "./PageContainer";

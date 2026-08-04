@@ -69,5 +69,5 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         limit={4}
       />
     </>
-  </React.StrictMode>
+  </React.StrictMode>,
 );

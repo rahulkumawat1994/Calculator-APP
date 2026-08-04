@@ -1,0 +1,405 @@
+/* Premium motion layer — spring reveals, stagger, accordion, CTA states */
+
+.pc-root {
+  --pc-spring: cubic-bezier(0.22, 1.28, 0.36, 1);
+  --pc-spring-soft: cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+
+/* Richer entrance: blur + lift + slight scale */
+.pc-reveal {
+  animation: pc-reveal-in 0.85s var(--pc-spring) both;
+}
+
+@keyframes pc-reveal-in {
+  from {
+    opacity: 0;
+    transform: translateY(22px) scale(0.97);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.pc-slide-up,
+.pc-results-enter {
+  animation: pc-results-in 0.38s var(--pc-spring) both;
+}
+
+@keyframes pc-results-in {
+  from {
+    opacity: 0;
+    transform: translateY(32px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Hero celebration ring after calculate */
+.pc-hero {
+  position: relative;
+}
+
+.pc-hero--celebrate::before {
+  content: "";
+  position: absolute;
+  inset: -8px 20%;
+  border-radius: 24px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(79, 70, 229, 0.14) 0%,
+    transparent 70%
+  );
+  animation: pc-hero-glow 0.55s var(--pc-spring) both;
+  pointer-events: none;
+}
+
+@keyframes pc-hero-glow {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.15);
+  }
+}
+
+.pc-hero__amount--pulse {
+  animation: pc-amount-spring 0.38s var(--pc-spring-soft);
+}
+
+@keyframes pc-amount-spring {
+  0% {
+    transform: scale(0.92);
+    filter: brightness(0.95);
+  }
+  45% {
+    transform: scale(1.06);
+    filter: brightness(1.15);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+/* Glass cards — hover lift */
+.pc-glass {
+  transition:
+    border-color 0.25s var(--pc-ease),
+    box-shadow 0.35s var(--pc-spring),
+    transform 0.35s var(--pc-spring);
+}
+
+.pc-glass:hover {
+  transform: translateY(-2px);
+}
+
+/* User blocks stagger */
+.pc-user {
+  animation: pc-user-in 0.55s var(--pc-spring) both;
+}
+
+@keyframes pc-user-in {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Result rows stagger */
+.pc-result {
+  animation: pc-result-in 0.5s var(--pc-spring) both;
+}
+
+.pc-result:nth-child(1) {
+  animation-delay: 0.04s;
+}
+.pc-result:nth-child(2) {
+  animation-delay: 0.09s;
+}
+.pc-result:nth-child(3) {
+  animation-delay: 0.14s;
+}
+.pc-result:nth-child(4) {
+  animation-delay: 0.19s;
+}
+.pc-result:nth-child(5) {
+  animation-delay: 0.24s;
+}
+.pc-result:nth-child(n + 6) {
+  animation-delay: 0.28s;
+}
+
+@keyframes pc-result-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Smooth accordion */
+.pc-result__collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.5s var(--pc-spring);
+}
+
+.pc-result__collapse--open {
+  grid-template-rows: 1fr;
+}
+
+.pc-result__collapse-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.pc-result__body {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition:
+    opacity 0.35s var(--pc-ease) 0.05s,
+    transform 0.45s var(--pc-spring) 0.05s;
+}
+
+.pc-result__collapse--open .pc-result__body {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.pc-result__trigger .pc-glass__desc {
+  display: inline-block;
+  transition: transform 0.4s var(--pc-spring);
+}
+
+.pc-result__trigger[aria-expanded="true"] .pc-glass__desc {
+  transform: rotate(180deg);
+}
+
+/* CTA loading + success */
+.pc-cta {
+  transition:
+    transform 0.25s var(--pc-spring),
+    box-shadow 0.3s var(--pc-ease),
+    filter 0.3s ease;
+}
+
+.pc-cta__label {
+  position: relative;
+  z-index: 1;
+}
+
+.pc-cta__spinner {
+  position: absolute;
+  right: 1.25rem;
+  top: 50%;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin-top: -0.5625rem;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: pc-spin 0.65s linear infinite;
+  z-index: 1;
+}
+
+@keyframes pc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Modal entrance */
+.pc-modal-overlay {
+  animation: pc-modal-overlay-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.pc-modal {
+  animation: pc-modal-in 0.55s cubic-bezier(0.22, 1.28, 0.36, 1) both;
+}
+
+@keyframes pc-modal-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pc-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.94);
+    filter: blur(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.pc-cta--loading {
+  pointer-events: none;
+  filter: saturate(1.1);
+}
+
+.pc-cta--loading::after {
+  animation: none;
+  opacity: 0;
+}
+
+.pc-cta--success {
+  animation: pc-cta-success 0.6s var(--pc-spring);
+}
+
+@keyframes pc-cta-success {
+  0% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(52, 211, 153, 0);
+  }
+  100% {
+    box-shadow: 0 0 32px -8px rgba(79, 70, 229, 0.45);
+  }
+}
+
+.pc-cta:not(:disabled):hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 40px -6px rgba(79, 70, 229, 0.55),
+    0 12px 28px -8px rgba(15, 23, 42, 0.18);
+}
+
+.pc-cta:not(:disabled):active {
+  transform: scale(0.98) translateY(0);
+  transition-duration: 0.1s;
+}
+
+/* Chips & actions */
+.pc-add-btn,
+.pc-action,
+.pc-copy-btn {
+  transition:
+    transform 0.2s var(--pc-spring),
+    background 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.pc-add-btn:hover,
+.pc-copy-btn:hover {
+  transform: translateY(-1px);
+}
+
+.pc-add-btn:active,
+.pc-action:active,
+.pc-copy-btn:active {
+  transform: scale(0.97);
+}
+
+/* Segment toggle */
+.pc-segment button {
+  transition:
+    background 0.3s var(--pc-spring),
+    color 0.25s ease,
+    transform 0.25s var(--pc-spring);
+}
+
+.pc-segment button[aria-pressed="true"] {
+  transform: scale(1.02);
+}
+
+/* Total card pop */
+.pc-total-card {
+  animation: pc-total-pop 0.65s var(--pc-spring) 0.15s both;
+}
+
+@keyframes pc-total-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Dock slide up */
+.pc-dock {
+  animation: pc-dock-in 0.45s var(--pc-spring) both;
+}
+
+@keyframes pc-dock-in {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pc-cta-bar {
+  animation: pc-dock-in 0.5s var(--pc-spring) both;
+}
+
+/* Accuracy bar spring */
+.pc-accuracy__fill {
+  transition: width 0.8s var(--pc-spring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pc-reveal,
+  .pc-slide-up,
+  .pc-results-enter,
+  .pc-user,
+  .pc-result,
+  .pc-total-card,
+  .pc-dock,
+  .pc-cta-bar,
+  .pc-modal-overlay,
+  .pc-modal,
+  .pc-hero--celebrate::before,
+  .pc-hero__amount--pulse,
+  .pc-cta--success,
+  .pc-cta__spinner,
+  .pc-modal__spinner {
+    animation: none !important;
+  }
+
+  .pc-glass:hover {
+    transform: none;
+  }
+
+  .pc-result__collapse {
+    transition: none;
+  }
+
+  .pc-result__body {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}

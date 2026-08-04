@@ -2,19 +2,29 @@ import { useState } from "react";
 import { toastApiError } from "@/lib";
 import { logReportIssue } from "@/data/firestoreDb";
 import { notifyReportListenersAfterSubmit } from "@/services/reportNotify";
-import { Button, Card, Modal } from "./ui";
+import { Modal } from "./ui";
+import type { ReportIssuePrefill } from "./calculator/reportIssueTypes";
+import "./calculator/premium-calc.css";
+import "./calculator/premium-motion.css";
 
 interface Props {
+  prefill?: ReportIssuePrefill;
+  /** @deprecated Use `prefill.input` */
   prefillInput?: string;
   onClose: () => void;
 }
 
 type Status = "idle" | "sending" | "success" | "error";
 
-export default function ReportIssue({ prefillInput = "", onClose }: Props) {
-  const [input, setInput] = useState(prefillInput);
-  const [expected, setExpected] = useState("");
-  const [note, setNote] = useState("");
+export default function ReportIssue({
+  prefill,
+  prefillInput = "",
+  onClose,
+}: Props) {
+  const initial = prefill ?? { input: prefillInput };
+  const [input, setInput] = useState(initial.input ?? "");
+  const [expected, setExpected] = useState(initial.expected ?? "");
+  const [note, setNote] = useState(initial.note ?? "");
   const [status, setStatus] = useState<Status>("idle");
 
   const handleSubmit = async () => {
@@ -35,122 +45,172 @@ export default function ReportIssue({ prefillInput = "", onClose }: Props) {
   };
 
   return (
-    <Modal open onBackdropClick={onClose} backdrop="dim" overlayClassName="p-4">
-      <Card
-        surface="panel"
-        className="max-w-[480px]"
+    <Modal
+      open
+      onBackdropClick={status === "sending" ? undefined : onClose}
+      backdrop="blurred"
+      overlayClassName="p-4 pc-modal-overlay"
+    >
+      <div
+        className="pc-modal pc-modal--form"
         role="dialog"
         aria-modal="true"
         aria-labelledby="report-issue-title"
       >
-        <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-          <div>
-            <h2
-              id="report-issue-title"
-              className="text-lg font-bold text-[#1a1a1a]"
-            >
-              🐛 Report a Pattern Issue
-            </h2>
-            <p className="mt-0.5 text-xs text-gray-400">
-              Help us improve the calculator
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-xl font-bold leading-none text-gray-400 transition-colors hover:text-gray-600"
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
-
         {status === "success" ? (
-          <div className="px-6 py-12 text-center">
-            <div className="mb-3 text-5xl">✅</div>
-            <p className="text-lg font-bold text-green-700">Thank you!</p>
-            <p className="mt-1 text-sm text-gray-500">
-              Your feedback has been recorded. We'll review and improve the
-              pattern.
-            </p>
-            <Button
-              variant="primary"
-              onClick={onClose}
-              className="mt-6 rounded-xl px-6 py-2.5 text-sm font-semibold"
+          <div className="pc-modal__body">
+            <div
+              className="pc-modal__icon pc-modal__icon--success"
+              aria-hidden
             >
-              Close
-            </Button>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+            </div>
+            <h2 id="report-issue-title" className="pc-modal__title">
+              Thank you
+            </h2>
+            <p className="pc-modal__desc">
+              Your feedback has been recorded. We&apos;ll review it and improve
+              the pattern.
+            </p>
+            <div className="pc-modal__actions">
+              <button
+                type="button"
+                onClick={onClose}
+                className="pc-modal__btn pc-modal__btn--primary"
+              >
+                Close
+              </button>
+            </div>
           </div>
         ) : (
-          <div className="space-y-4 px-6 py-5">
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-gray-700">
-                Input that didn't work <span className="text-red-500">*</span>
-              </label>
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Paste the exact text you entered..."
-                rows={4}
-                spellCheck={false}
-                autoCapitalize="none"
-                autoCorrect="off"
-                className="w-full resize-y rounded-xl border-2 border-[#c5cfe0] bg-[#f8faff] p-3 font-mono text-sm text-[#111] outline-none transition-colors focus:border-[#1d6fb8]"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-gray-700">
-                What result did you expect?
-              </label>
-              <input
-                value={expected}
-                onChange={(e) => setExpected(e.target.value)}
-                placeholder="e.g. 4 numbers × 5 = 20"
-                className="w-full rounded-xl border-2 border-[#c5cfe0] bg-[#f8faff] p-3 text-sm outline-none transition-colors focus:border-[#1d6fb8]"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-gray-700">
-                Any additional notes{" "}
-                <span className="font-normal text-gray-400">(optional)</span>
-              </label>
-              <input
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="e.g. This format comes from WhatsApp..."
-                className="w-full rounded-xl border-2 border-[#c5cfe0] bg-[#f8faff] p-3 text-sm outline-none transition-colors focus:border-[#1d6fb8]"
-              />
-            </div>
-
-            {status === "error" && (
-              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-500">
-                ⚠️ Failed to send. Please check your internet connection and try
-                again.
-              </p>
-            )}
-
-            <div className="flex gap-3 pt-1">
-              <Button
-                variant="outline"
+          <>
+            <div className="pc-modal__head">
+              <button
+                type="button"
                 onClick={onClose}
-                className="flex-1 rounded-xl border-2 py-3 text-sm font-semibold"
+                disabled={status === "sending"}
+                className="pc-modal__close"
+                aria-label="Close"
               >
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                onClick={handleSubmit}
-                disabled={!input.trim() || status === "sending"}
-                className="flex-1 rounded-xl py-3 text-sm font-bold"
+                ×
+              </button>
+              <div
+                className="pc-modal__icon pc-modal__icon--info"
+                aria-hidden
               >
-                {status === "sending" ? "Sending..." : "Submit Report"}
-              </Button>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+              </div>
+              <h2 id="report-issue-title" className="pc-modal__title">
+                Report a pattern issue
+              </h2>
+              <p className="pc-modal__desc">
+                Help us improve the calculator
+              </p>
             </div>
-          </div>
+
+            <div className="pc-modal__form">
+              <div className="pc-modal__field">
+                <label htmlFor="report-input" className="pc-modal__label">
+                  Input that didn&apos;t work{" "}
+                  <span className="pc-modal__required">*</span>
+                </label>
+                <textarea
+                  id="report-input"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Paste the exact text you entered…"
+                  rows={4}
+                  spellCheck={false}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  className="pc-modal__textarea"
+                />
+              </div>
+
+              <div className="pc-modal__field">
+                <label htmlFor="report-expected" className="pc-modal__label">
+                  What result did you expect?
+                </label>
+                <input
+                  id="report-expected"
+                  type="text"
+                  value={expected}
+                  onChange={(e) => setExpected(e.target.value)}
+                  placeholder="e.g. 4 numbers × 5 = 20"
+                  className="pc-modal__input"
+                />
+              </div>
+
+              <div className="pc-modal__field">
+                <label htmlFor="report-note" className="pc-modal__label">
+                  Additional notes{" "}
+                  <span className="pc-modal__label-hint">(optional)</span>
+                </label>
+                <input
+                  id="report-note"
+                  type="text"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="e.g. This format comes from WhatsApp…"
+                  className="pc-modal__input"
+                />
+              </div>
+
+              {status === "error" && (
+                <p className="pc-modal__error" role="alert">
+                  Failed to send. Please check your internet connection and try
+                  again.
+                </p>
+              )}
+
+              <div className="pc-modal__actions pc-modal__actions--row">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={status === "sending"}
+                  className="pc-modal__btn pc-modal__btn--ghost"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSubmit()}
+                  disabled={!input.trim() || status === "sending"}
+                  className={`pc-modal__btn pc-modal__btn--accent${status === "sending" ? " pc-modal__btn--loading" : ""}`}
+                >
+                  {status === "sending" ? (
+                    <>
+                      <span className="pc-modal__spinner" aria-hidden />
+                      Sending…
+                    </>
+                  ) : (
+                    "Submit report"
+                  )}
+                </button>
+              </div>
+            </div>
+          </>
         )}
-      </Card>
+      </div>
     </Modal>
   );
 }

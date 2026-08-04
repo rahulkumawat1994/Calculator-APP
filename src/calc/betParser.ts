@@ -13,12 +13,15 @@ import {
 // ─── Number helpers ────────────────────────────────────────────────────────────
 
 function reverseNumber(num: number): number {
-  return parseInt(String(num).padStart(2, '0').split('').reverse().join(''), 10);
+  return parseInt(
+    String(num).padStart(2, "0").split("").reverse().join(""),
+    10,
+  );
 }
 
 function normalizePair(num: number): string {
   const r = reverseNumber(num);
-  return [num, r].sort().join('-');
+  return [num, r].sort().join("-");
 }
 
 /** Normal bets: every listed pair counts (58.58 → 2). WP/palat: unique pair families only. */
@@ -41,8 +44,12 @@ export function extractPairedNumbers(text: string): number[] {
   const out: number[] = [];
   for (const block of text.match(/\d+/g) ?? []) {
     if (block.length === 1) continue;
-    if (block.length === 2) { out.push(Number(block)); }
-    else { for (let i = 0; i + 1 < block.length; i += 2) out.push(Number(block.slice(i, i + 2))); }
+    if (block.length === 2) {
+      out.push(Number(block));
+    } else {
+      for (let i = 0; i + 1 < block.length; i += 2)
+        out.push(Number(block.slice(i, i + 2)));
+    }
   }
   return out;
 }
@@ -102,8 +109,7 @@ export function formatSegmentLineForPairListDisplay(segment: {
   const n = pairs.length;
   if (n > 0) {
     const listedOk =
-      segment.count === n ||
-      (segment.isDouble && segment.count === 2 * n);
+      segment.count === n || (segment.isDouble && segment.count === 2 * n);
     const wpCount = countSegment(pairs, true);
     const wpOk =
       segment.isWP &&
@@ -113,7 +119,9 @@ export function formatSegmentLineForPairListDisplay(segment: {
       return pairs.map((p) => p.toString().padStart(2, "0")).join(", ");
     }
   }
-  return (segment.line.match(/(?<!\d)\d{2}(?!\d)/g) ?? [segment.line]).join(", ");
+  return (segment.line.match(/(?<!\d)\d{2}(?!\d)/g) ?? [segment.line]).join(
+    ", ",
+  );
 }
 
 // ─── Flag detector ─────────────────────────────────────────────────────────────
@@ -121,14 +129,16 @@ export function formatSegmentLineForPairListDisplay(segment: {
 // AB keywords: letter 'a'/'b', OR Hindi "अब" (literally "ab").
 // Strip WP keywords first so "palat" (contains 'a') never accidentally triggers AB.
 function stripWpPalatWords(text: string): string {
-  return text
-    // `wpp` (common WhatsApp typo) before `wp`
-    .replace(/\bwpp?\b/gi, "")
-    .replace(/\bw\.?\s*p\b/gi, "")
-    .replace(/\bw\s+p\b/gi, "")
-    .replace(/\bpalat(?:e|el)?\b/gi, "")
-    .replace(/पलट/g, "")
-    .trim();
+  return (
+    text
+      // `wpp` (common WhatsApp typo) before `wp`
+      .replace(/\bwpp?\b/gi, "")
+      .replace(/\bw\.?\s*p\b/gi, "")
+      .replace(/\bw\s+p\b/gi, "")
+      .replace(/\bpalat(?:e|el)?\b/gi, "")
+      .replace(/पलट/g, "")
+      .trim()
+  );
 }
 
 function parseFlags(text: string): { isWP: boolean; isDouble: boolean } {
@@ -144,7 +154,11 @@ function parseFlags(text: string): { isWP: boolean; isDouble: boolean } {
 }
 
 /** UI lane chip for non-solid segments: explicit A/B/AB from suffix, else AB when doubled. */
-function laneForNonSolid(flagText: string, isDouble: boolean, numbersText: string): BetLane | undefined {
+function laneForNonSolid(
+  flagText: string,
+  isDouble: boolean,
+  numbersText: string,
+): BetLane | undefined {
   const explicit = parseLaneFromFlagText(flagText);
   if (explicit) return explicit;
   if (isDouble && has3DigitBet(numbersText)) return "AB";
@@ -153,13 +167,16 @@ function laneForNonSolid(flagText: string, isDouble: boolean, numbersText: strin
 }
 
 export function parseLaneFromFlagText(text: string): BetLane | undefined {
-  const cleaned = stripWpPalatWords(text).replace(/[,.\s]+/g, " ").trim();
+  const cleaned = stripWpPalatWords(text)
+    .replace(/[,.\s]+/g, " ")
+    .trim();
   if (!cleaned) return undefined;
   if (/अब/.test(cleaned)) return "AB";
   const alpha = cleaned.replace(/[^a-zA-Z]/g, "");
   if (!alpha) return undefined;
   const lower = alpha.toLowerCase();
-  if (lower === "ab" || (lower.includes("a") && lower.includes("b"))) return "AB";
+  if (lower === "ab" || (lower.includes("a") && lower.includes("b")))
+    return "AB";
   if (/^a+$/i.test(alpha)) return "A";
   if (/^b+$/i.test(alpha)) return "B";
   return undefined;
@@ -214,15 +231,16 @@ function solidRunAbMultiplier(modifierSource: string): {
   if (/अब/.test(s)) return { count: 2, isDouble: true, lane: "AB" };
   // Strip rate chunks only (do not treat the "x" inside "Ax333…" as ×rate).
   s = s
-    .replace(/\(\s*\d+\s*\)/g, ' ')
-    .replace(/\*\s*\d+/g, ' ')
-    .replace(/=+\s*\d+/g, ' ')
-    .replace(/(?:^|[\s,])x\s*\d+(?=$|[\s,]|[^0-9])/gi, ' ');
+    .replace(/\(\s*\d+\s*\)/g, " ")
+    .replace(/\*\s*\d+/g, " ")
+    .replace(/=+\s*\d+/g, " ")
+    .replace(/(?:^|[\s,])x\s*\d+(?=$|[\s,]|[^0-9])/gi, " ");
   // A and B separated by punctuation/spaces; include "x" and "×" (letters otherwise) for AxB / A×B.
   // Literal "AB" with no separator is handled by the next check.
-  if (/\bA(?:[^A-Za-z0-9]|x|×)+B\b/i.test(s)) return { count: 2, isDouble: true, lane: "AB" };
+  if (/\bA(?:[^A-Za-z0-9]|x|×)+B\b/i.test(s))
+    return { count: 2, isDouble: true, lane: "AB" };
   if (/AB/i.test(s)) return { count: 2, isDouble: true, lane: "AB" };
-  const noAb = s.replace(/AB/gi, '');
+  const noAb = s.replace(/AB/gi, "");
   const hasA = /(?:^|[^A-Za-z])A(?:[^A-Za-z]|$)/i.test(noAb);
   const hasB = /(?:^|[^A-Za-z])B(?:[^A-Za-z]|$)/i.test(noAb);
   if (hasA && hasB) return { count: 1, isDouble: false, lane: "AB" };
@@ -239,7 +257,11 @@ function trySolidRunSegment(
 ): Segment | null {
   const nt = numbersText.trim();
   if (!nt || !Number.isFinite(rate) || rate <= 0) return null;
-  if (/\b(?:wpp?|palat(?:e|el)?)\b/i.test(modifierSource) || /पलट/.test(modifierSource)) return null;
+  if (
+    /\b(?:wpp?|palat(?:e|el)?)\b/i.test(modifierSource) ||
+    /पलट/.test(modifierSource)
+  )
+    return null;
 
   const rm = nt.match(/(\d)\1{2,}/);
   if (!rm || rm.index === undefined) return null;
@@ -254,7 +276,15 @@ function trySolidRunSegment(
       .replace(/^[\s*\-_.,:|]+|[\s*\-_.,:|]+$/g, "")
       .replace(/^(?:axb|ab)\.?\s*/i, "")
       .trim() || run;
-  return { line: display, rate, isWP: false, isDouble, lane, count, lineTotal: count * rate };
+  return {
+    line: display,
+    rate,
+    isWP: false,
+    isDouble,
+    lane,
+    count,
+    lineTotal: count * rate,
+  };
 }
 
 /** Same-digit run (length ≥ 3) for multi-x chain values. */
@@ -266,7 +296,9 @@ export const SEP_RATE_RE = /(?<![A-Za-z])(?:x|=+|\*)\s*(\d+)\s*([a-zA-Z]*)/gi;
  * If `trimmed` is `B.1111x9999x50` / `1111x2222x3333x10` shape, return prefix,
  * number chunks, and rate; otherwise null. Used by merge logic and parser.
  */
-export function parseMultiXChainStructure(trimmed: string): { pre: string; nums: string[]; rate: number } | null {
+export function parseMultiXChainStructure(
+  trimmed: string,
+): { pre: string; nums: string[]; rate: number } | null {
   const lead = trimmed.match(/^[,\s.]*?(AB|A|B)\.?\s*/i);
   const pre = lead ? `${lead[1].toUpperCase()}.` : "";
   const rest = lead ? trimmed.slice(lead[0].length).trim() : trimmed;
@@ -277,7 +309,7 @@ export function parseMultiXChainStructure(trimmed: string): { pre: string; nums:
   if (!/^[0-9xX]+$/.test(compact)) return null;
   const parts = compact.split(/x+/i).filter(Boolean);
   if (parts.length < 3) return null;
-  if (!parts.every(p => /^\d+$/.test(p))) return null;
+  if (!parts.every((p) => /^\d+$/.test(p))) return null;
   const rate = parseInt(parts[parts.length - 1], 10);
   if (!(rate > 0)) return null;
   const numParts = parts.slice(0, -1);
@@ -292,7 +324,10 @@ export function parseMultiXChainStructure(trimmed: string): { pre: string; nums:
  * (1111, 9999, …); each is parsed like `B.1111x50` / `B.9999x50`. Runs must be
  * length ≥ 3 and one repeated digit. Optional leading A./B./AB. applies to every value.
  */
-function tryParseMultiXSameDigitChain(trimmed: string, parseOne: (s: string) => Segment[]): Segment[] | null {
+function tryParseMultiXSameDigitChain(
+  trimmed: string,
+  parseOne: (s: string) => Segment[],
+): Segment[] | null {
   const st = parseMultiXChainStructure(trimmed);
   if (!st) return null;
   const { pre, nums: numParts, rate } = st;
@@ -307,7 +342,11 @@ function tryParseMultiXSameDigitChain(trimmed: string, parseOne: (s: string) => 
     const sub = parseOne(syn);
     if (sub.length !== 1) return null;
     const first = sub[0]!;
-    out.push({ ...first, line: pre ? `${pre}${n}` : n, lane: first.lane ?? laneFromPre });
+    out.push({
+      ...first,
+      line: pre ? `${pre}${n}` : n,
+      lane: first.lane ?? laneFromPre,
+    });
   }
   return out;
 }
@@ -336,7 +375,9 @@ export function stripLeadingGameLabels(s: string): string {
   }
   // `Harf. ,B.. 77777x9999x50` — comma/extra dots before lane letter after game label is stripped.
   // Replace trailing dot separator with a space: `AB.x5555` → `AB x5555`.
-  return t.replace(/^[,\s.]*?(AB|A|B)\s*\.+/i, (_, lane) => `${lane.toUpperCase()} `).trim();
+  return t
+    .replace(/^[,\s.]*?(AB|A|B)\s*\.+/i, (_, lane) => `${lane.toUpperCase()} `)
+    .trim();
 }
 
 /** `02..52 x10` — two jodis on one `..` row share the trailing into/× rate (not 02×52). */
@@ -364,7 +405,9 @@ function tryParseTwoPartDoubleDotJodiRow(
 }
 
 /** Merged `NN..RR xRATE` row (Desawr + 10.intu) — not a dot list with inline stakes. */
-function tryParseMergedDoubleDotRowWithTrailRate(trimmed: string): Segment[] | null {
+function tryParseMergedDoubleDotRowWithTrailRate(
+  trimmed: string,
+): Segment[] | null {
   const sepMatches = [...trimmed.matchAll(SEP_RATE_RE)];
   if (sepMatches.length !== 1) return null;
   const m = sepMatches[0]!;
@@ -440,7 +483,9 @@ export function processLine(
     ];
   }
   if (!opts?.skipMultiX) {
-    const multi = tryParseMultiXSameDigitChain(trimmed, s => processLine(s, { skipMultiX: true }));
+    const multi = tryParseMultiXSameDigitChain(trimmed, (s) =>
+      processLine(s, { skipMultiX: true }),
+    );
     if (multi) return multi;
   }
   const mergedDoubleDot = tryParseMergedDoubleDotRowWithTrailRate(trimmed);
@@ -453,7 +498,7 @@ export function processLine(
   while ((match = parenPattern.exec(trimmed)) !== null) {
     const numbersPart = match[1];
     const rate = parseInt(match[2], 10);
-    const suffix = match[3] ?? '';
+    const suffix = match[3] ?? "";
     const solid = trySolidRunSegment(numbersPart, rate, match[0]);
     if (solid) {
       results.push(solid);
@@ -465,9 +510,19 @@ export function processLine(
     const isDouble = isDoubleFlagged;
     const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
     if (count > 0) {
-      const display = numbersPart.replace(/^[\s*\-_.,:|]+|[\s*\-_.,:|]+$/g, '').trim();
+      const display = numbersPart
+        .replace(/^[\s*\-_.,:|]+|[\s*\-_.,:|]+$/g, "")
+        .trim();
       const lane = laneForNonSolid(suffix, isDouble, numbersPart);
-      results.push({ line: display || numbersPart.trim(), rate, isWP, isDouble, lane, count, lineTotal: count * rate });
+      results.push({
+        line: display || numbersPart.trim(),
+        rate,
+        isWP,
+        isDouble,
+        lane,
+        count,
+        lineTotal: count * rate,
+      });
     }
   }
   if (results.length) return results;
@@ -483,7 +538,7 @@ export function processLine(
       const m = sepMatches[si];
       const numbersText = trimmed.slice(prevEnd, m.index);
       const rate = parseInt(m[1], 10);
-      const suffix = m[2] ?? '';
+      const suffix = m[2] ?? "";
       const clauseEnd = (m.index ?? 0) + m[0].length;
       const segmentSlice = trimmed.slice(prevEnd, clauseEnd);
       const solid = trySolidRunSegment(numbersText, rate, segmentSlice);
@@ -498,9 +553,20 @@ export function processLine(
         const isDouble = isDoubleFlagged;
         const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
         if (count > 0) {
-          const display = numbersText.replace(/^\D+/, '').replace(/\D+$/, '').trim();
+          const display = numbersText
+            .replace(/^\D+/, "")
+            .replace(/\D+$/, "")
+            .trim();
           const lane = laneForNonSolid(suffix, isDouble, numbersText);
-          results.push({ line: display || numbersText.trim(), rate, isWP, isDouble, lane, count, lineTotal: count * rate });
+          results.push({
+            line: display || numbersText.trim(),
+            rate,
+            isWP,
+            isDouble,
+            lane,
+            count,
+            lineTotal: count * rate,
+          });
         }
       }
       prevEnd = (m.index ?? 0) + m[0].length;
@@ -512,7 +578,9 @@ export function processLine(
   // Handles: "444 10 Ab", "56 74 50 wp", "13 31 15 palat"
   // Last number before a flag keyword = rate; everything before = numbers.
   {
-    const flagMatch = trimmed.match(/\b(?:wpp?|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i);
+    const flagMatch = trimmed.match(
+      /\b(?:wpp?|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i,
+    );
     if (flagMatch && flagMatch.index !== undefined) {
       const beforeFlag = trimmed.slice(0, flagMatch.index).trim();
       const flagText = trimmed.slice(flagMatch.index);
@@ -531,9 +599,20 @@ export function processLine(
             const isDouble = isDoubleFlagged || has3DigitBet(numbersText);
             const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
             if (count > 0) {
-              const display = numbersText.replace(/^\D+/, '').replace(/\D+$/, '').trim();
+              const display = numbersText
+                .replace(/^\D+/, "")
+                .replace(/\D+$/, "")
+                .trim();
               const lane = laneForNonSolid(flagText, isDouble, numbersText);
-              results.push({ line: display || numbersText.trim(), rate, isWP, isDouble, lane, count, lineTotal: count * rate });
+              results.push({
+                line: display || numbersText.trim(),
+                rate,
+                isWP,
+                isDouble,
+                lane,
+                count,
+                lineTotal: count * rate,
+              });
             }
           }
         }
@@ -547,7 +626,9 @@ export function processLine(
     if (palatChunks && palatChunks.length >= 2) {
       const merged: Segment[] = [];
       for (const chunk of palatChunks) {
-        merged.push(...processLine(chunk, { ...opts, skipPalatCommaSplit: true }));
+        merged.push(
+          ...processLine(chunk, { ...opts, skipPalatCommaSplit: true }),
+        );
       }
       if (merged.length) return merged;
     }
@@ -562,7 +643,7 @@ export function processLine(
       const { isWP: isWPFlag, isDouble: isDoubleFlagged } = parseFlags(after);
       // Strip known AB indicator before the WP fallback check so "अब" doesn't
       // accidentally trigger WP (which fires on any unrecognised trailing text).
-      const afterForWP = after.replace(/अब/g, '').replace(/[ab]/gi, '').trim();
+      const afterForWP = after.replace(/अब/g, "").replace(/[ab]/gi, "").trim();
       const isWP = isWPFlag || (/\S/.test(afterForWP) && afterForWP.length > 0);
       const rate = Number(last[0]);
       const numbersText = trimmed.slice(0, last.index);
@@ -576,9 +657,17 @@ export function processLine(
         if (nums.length > 0) {
           const count = countSegment(nums, isWP) * (isDouble ? 2 : 1);
           if (count > 0) {
-            const display = numbersText.replace(/[,\s.]+$/, '').trim();
+            const display = numbersText.replace(/[,\s.]+$/, "").trim();
             const lane = laneForNonSolid(after, isDouble, numbersText);
-            results.push({ line: display, rate, isWP, isDouble, lane, count, lineTotal: count * rate });
+            results.push({
+              line: display,
+              rate,
+              isWP,
+              isDouble,
+              lane,
+              count,
+              lineTotal: count * rate,
+            });
           }
         }
       }
@@ -594,7 +683,10 @@ export function processLine(
     if (harfRE.test(trimmed)) {
       // Remove keyword; if "x" was glued directly to the keyword ("harufx20") a space
       // appears — SEP_RATE_RE will still find it since the preceding char is now a space.
-      const noHarf = trimmed.replace(/\b(?:haruf|harf|hrf)\b\s*/gi, ' ').replace(/ +/g, ' ').trim();
+      const noHarf = trimmed
+        .replace(/\b(?:haruf|harf|hrf)\b\s*/gi, " ")
+        .replace(/ +/g, " ")
+        .trim();
       const cleaned = normalizeTrailingDashRate(
         normalizeTypoTolerantInput(normalizeIntoRateMarker(noHarf)),
       );
@@ -603,18 +695,18 @@ export function processLine(
         const last = sepM[sepM.length - 1]!;
         const rate = parseInt(last[1], 10);
         if (rate > 0) {
-          const suffix = last[2] ?? '';
+          const suffix = last[2] ?? "";
           const beforeRate = cleaned.slice(0, last.index).trim();
           // Single isolated digit — the "harf" number (0–9).
           const digitM = beforeRate.match(/(?<!\d)(\d)(?!\d)/);
           if (digitM) {
-            const lane = parseLaneFromFlagText(suffix) ?? 'AB';
-            const count = lane === 'AB' ? 2 : 1;
+            const lane = parseLaneFromFlagText(suffix) ?? "AB";
+            const count = lane === "AB" ? 2 : 1;
             results.push({
               line: digitM[1]!,
               rate,
               isWP: false,
-              isDouble: lane === 'AB',
+              isDouble: lane === "AB",
               lane,
               count,
               lineTotal: count * rate,

@@ -11,6 +11,7 @@ interface Props {
   result: CalculationResult;
   onChange: (updated: CalculationResult) => void;
   compact?: boolean;
+  onReportFailedLine?: (failedLine: string) => void;
   /** When true, row 🗑 opens a confirm dialog (e.g. History) instead of deleting immediately. */
   confirmRowDelete?: boolean;
   /** When set, row numbers are toggles (blue / red) for multi-select bulk delete from the parent. */
@@ -136,6 +137,7 @@ export default function EditableBreakdown({
   result,
   onChange,
   compact,
+  onReportFailedLine,
   confirmRowDelete,
   rowSelection,
 }: Props) {
@@ -271,6 +273,15 @@ export default function EditableBreakdown({
                     >
                       Fix ✏️
                     </button>
+                    {onReportFailedLine && (
+                      <button
+                        type="button"
+                        onClick={() => onReportFailedLine(line)}
+                        className="text-xs font-semibold text-[#4f46e5] border border-indigo-200 bg-indigo-50 rounded-lg px-2.5 py-1 shrink-0 hover:bg-indigo-100 transition-colors"
+                      >
+                        Report
+                      </button>
+                    )}
                     <button
                       onClick={() => skipFailedLine(line)}
                       className="text-xs text-gray-400 border border-gray-200 rounded-lg px-2.5 py-1 shrink-0 hover:text-red-400 transition-colors"

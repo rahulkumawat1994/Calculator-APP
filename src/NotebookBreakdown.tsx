@@ -22,6 +22,8 @@ interface Props {
   text: string;
   result: CalculationResult;
   onChange?: (updated: CalculationResult) => void;
+  /** Open report modal with this failed line prefilled. */
+  onReportFailedLine?: (failedLine: string) => void;
   /** 0 = 9px … 11 = 20px (see CHECK_FONT_LEVELS). */
   fontLevel?: number;
 }
@@ -435,6 +437,7 @@ export default function NotebookBreakdown({
   text,
   result,
   onChange,
+  onReportFailedLine,
   fontLevel = DEFAULT_FONT_LEVEL,
 }: Props) {
   const rows = buildNotebookRows(text, result);
@@ -489,7 +492,10 @@ export default function NotebookBreakdown({
   return (
     <div className="space-y-2">
       {failedLines.length > 0 && (
-        <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
+        <div
+          data-parse-error-banner
+          className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5"
+        >
           <span className="text-red-500 text-base shrink-0" aria-hidden>
             ⚠
           </span>
@@ -562,7 +568,7 @@ export default function NotebookBreakdown({
                   </div>
                 ))}
                 {row.error?.isLastInGroup && onChange && fixingLine !== row.error.failedLine && (
-                  <div className="flex gap-1.5 pt-1.5">
+                  <div className="flex flex-wrap gap-1.5 pt-1.5">
                     <button
                       type="button"
                       onClick={() => startFix(row.error!.failedLine)}
@@ -571,6 +577,16 @@ export default function NotebookBreakdown({
                     >
                       Fix
                     </button>
+                    {onReportFailedLine && (
+                      <button
+                        type="button"
+                        onClick={() => onReportFailedLine(row.error!.failedLine)}
+                        className="font-semibold text-[#4f46e5] border border-indigo-200 bg-indigo-50 rounded-md px-2 py-0.5 hover:bg-indigo-100"
+                        style={{ fontSize: btnPx }}
+                      >
+                        Report
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => skipFailedLine(row.error!.failedLine)}

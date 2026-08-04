@@ -1,4 +1,27 @@
-import { useState, useEffect, useMemo, useLayoutEffect } from "react";
+import { useState, useEffect, useMemo, useLayoutEffect, useCallback } from "react";
+import "./calculator/premium-calc.css";
+import "./calculator/premium-motion.css";
+import { AnimatedAmount } from "./calculator/AnimatedAmount";
+import { CalculatorResultsPanel } from "./calculator/CalculatorResultsPanel";
+import { ClearConfirmModal } from "./calculator/ClearConfirmModal";
+import {
+  collectAllParsedWaMessages,
+  collectPlainMarketSlotIds,
+  detectSlotFromTimestamp,
+  getStoredResultViewMode,
+  lineCountFormatter,
+  newBlockId,
+  normPasteText,
+  RESULT_VIEW_MODE_KEY,
+  summarizeWaSlots,
+  uniqueContactLabel,
+  type CalcBlock,
+  type PerUserCalc,
+  type ResultViewMode,
+  type TaggedMessages,
+} from "./calculator/calcHelpers";
+import type { ReportIssuePrefill } from "./calculator/reportIssueTypes";
+import { scrollElementIntoView, scrollToElement } from "./calculator/scrollUtils";
 import { toast } from "react-toastify";
 import {
   calculateTotal,
@@ -9,7 +32,6 @@ import {
   mergeIntoSessions,
   getCurrentSlot,
   formatSlotTime,
-  slotMinutes,
   NO_CONFIGURED_SLOTS_PLACEHOLDER_ID,
   upsertPaymentStubs,
   detectSlotFromMarketLine,
@@ -17,7 +39,6 @@ import {
   ledgerDateStringForSlot,
   CALC_LOCAL_ONLY_CHANGED_EVENT,
   CALCULATE_ALL_SKIP_AUDIT_KEY,
-  type ParsedMessage,
   toastApiError,
 } from "@/lib";
 import type { CalculationAuditPayload } from "@/data/firestoreDb";
@@ -29,14 +50,8 @@ import type {
   PaymentRecord,
 } from "@/types";
 import { useHistoryOverlay } from "@/hooks/useHistoryOverlay";
-import EditableBreakdown from "./EditableBreakdown";
-import NotebookBreakdown, {
-  CHECK_FONT_LEVELS,
-  getStoredCheckFontLevel,
-  persistCheckFontLevel,
-} from "./NotebookBreakdown";
+import { getStoredCheckFontLevel } from "./NotebookBreakdown";
 import ReportIssue from "./ReportIssue";
-import { Button, Card, Modal } from "./ui";
 
 interface Props {
   slots: GameSlot[];
@@ -47,152 +62,6 @@ interface Props {
   savePaymentDoc: (payment: PaymentRecord) => Promise<void>;
   logCalculationAudit: (payload: CalculationAuditPayload) => Promise<void>;
 }
-
-// ─── Auto-detect slot from a timestamp string ─────────────────────────────────
-function detectSlotFromTimestamp(
-  timeStr: string,
-  slots: GameSlot[]
-): GameSlot | null {
-  const match = timeStr.match(/(\d{1,2}):(\d{2})\s*([ap]m)?/i);
-  if (!match) return null;
-  let h = parseInt(match[1]);
-  const m = parseInt(match[2]);
-  const ampm = match[3]?.toLowerCase();
-  if (ampm === "pm" && h !== 12) h += 12;
-  if (ampm === "am" && h === 12) h = 0;
-  const msgMinutes = h * 60 + m;
-  const enabled = slots.filter((s) => s.enabled);
-  const sorted = [...enabled].sort(
-    (a, b) => slotMinutes(a.time) - slotMinutes(b.time)
-  );
-  return (
-    sorted.find((s) => slotMinutes(s.time) > msgMinutes) ?? sorted[0] ?? null
-  );
-}
-
-function newBlockId(): string {
-  return (
-    globalThis.crypto?.randomUUID?.() ??
-    `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-  );
-}
-
-const lineCountFormatter = new Intl.NumberFormat("en-IN");
-
-const RESULT_VIEW_MODE_KEY = "calc-result-view-mode";
-type ResultViewMode = "summary" | "check";
-
-function getStoredResultViewMode(): ResultViewMode {
-  try {
-    const v = localStorage.getItem(RESULT_VIEW_MODE_KEY);
-    if (v === "check" || v === "notebook") return "check";
-    return "summary";
-  } catch {
-    return "summary";
-  }
-}
-
-/** Normalize pasted body text so duplicate segment detection is stable across OS line endings. */
-function normPasteText(s: string): string {
-  return s.trim().replace(/\r\n/g, "\n");
-}
-
-/** WhatsApp header contact(s); empty / missing → `User ${fallbackIndex1}` (1-based). */
-function uniqueContactLabel(
-  messages: ParsedMessage[],
-  fallbackIndex1: number
-): string {
-  const uniq = [
-    ...new Set(
-      messages
-        .map((m) => m.contact.replace(/\s+/g, " ").trim())
-        .filter((c) => c.length > 0)
-    ),
-  ];
-  if (uniq.length === 0) return `User ${fallbackIndex1}`;
-  if (uniq.length === 1) return uniq[0];
-  if (uniq.length <= 3) return uniq.join(", ");
-  return `${uniq.slice(0, 2).join(", ")} +${uniq.length - 2} more`;
-}
-
-type CalcBlock = {
-  id: string;
-  label: string;
-  text: string;
-  labelLocked?: boolean;
-};
-
-type TaggedMessages = ReturnType<typeof parseWhatsAppMessages> extends
-  | (infer T)[]
-  | null
-  ? T & { slotId: string }
-  : never;
-
-/** Unique slot display names in message order (WA per-message assignment). */
-function summarizeWaSlots(
-  tagged: Array<{ slotId: string }>,
-  allSlots: GameSlot[]
-): string {
-  const nameById = new Map(allSlots.map((s) => [s.id, s.name]));
-  const order: string[] = [];
-  const seen = new Set<string>();
-  for (const m of tagged) {
-    const label = nameById.get(m.slotId) ?? m.slotId;
-    if (!seen.has(label)) {
-      seen.add(label);
-      order.push(label);
-    }
-  }
-  return order.join(", ");
-}
-
-/** All WhatsApp messages from every block, in order (for multi-game detection). */
-function collectAllParsedWaMessages(blocks: CalcBlock[]): ParsedMessage[] {
-  const out: ParsedMessage[] = [];
-  for (const b of blocks) {
-    const m = parseWhatsAppMessages(b.text);
-    if (m?.length) out.push(...m);
-  }
-  return out;
-}
-
-/**
- * Plain-text slot ids for the auto-detect banner (non‑WhatsApp blocks only).
- * Only counts blocks where at least one market label was recognized — plain
- * numbers without a tag must not look "auto-detected".
- */
-function collectPlainMarketSlotIds(
-  blocks: CalcBlock[],
-  slots: GameSlot[],
-  fallback: GameSlot
-): string[] {
-  const ids: string[] = [];
-  for (const b of blocks) {
-    const t = normPasteText(b.text);
-    if (!t) continue;
-    if (parseWhatsAppMessages(b.text)) continue;
-    const parts = splitPlainTextByMarketSlots(t, slots, fallback);
-    const labeled = parts.filter(
-      (p) => p.text.trim().length > 0 && p.touchedByMarketLabel
-    );
-    if (labeled.length === 0) continue;
-    for (const p of parts) {
-      if (p.text.trim().length > 0) ids.push(p.slotId);
-    }
-  }
-  return ids;
-}
-
-type PerUserCalc = {
-  blockId: string;
-  label: string;
-  text: string;
-  result: CalculationResult;
-  pendingTagged: TaggedMessages[] | null;
-  isWAMode: boolean;
-  /** WhatsApp messages where timestamp did not map to a game (menu fallback used). */
-  waSlotFallbackCount?: number;
-};
 
 export default function Calculator({
   slots,
@@ -208,7 +77,7 @@ export default function Calculator({
   ]);
   const [userResults, setUserResults] = useState<PerUserCalc[] | null>(null);
   const [resultViewMode, setResultViewMode] = useState<ResultViewMode>(
-    getStoredResultViewMode
+    getStoredResultViewMode,
   );
   const [checkFontLevel, setCheckFontLevel] = useState(getStoredCheckFontLevel);
   /** Which user row has line-by-line breakdown open (accordion, one at a time). */
@@ -220,13 +89,21 @@ export default function Calculator({
     string | null
   >(null);
   const [copied, setCopied] = useState(false);
+  const [isCalculating, setIsCalculating] = useState(false);
+  const [resultsAnimKey, setResultsAnimKey] = useState(0);
+  const [heroCelebrate, setHeroCelebrate] = useState(false);
+  const [ctaSuccess, setCtaSuccess] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [reportPrefill, setReportPrefill] = useState<ReportIssuePrefill>({
+    input: "",
+  });
+  const [reportKey, setReportKey] = useState(0);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   useHistoryOverlay(showReport, () => setShowReport(false));
   useHistoryOverlay(showClearConfirm, () => setShowClearConfirm(false));
   const [saving, setSaving] = useState(false);
   const [skipAuditOnCalculate, setSkipAuditOnCalculate] = useState(
-    getSkipAuditOnCalculateAll
+    getSkipAuditOnCalculateAll,
   );
   useEffect(() => {
     const sync = () => setSkipAuditOnCalculate(getSkipAuditOnCalculateAll());
@@ -236,13 +113,13 @@ export default function Calculator({
     window.addEventListener("storage", onStorage);
     window.addEventListener(
       CALC_LOCAL_ONLY_CHANGED_EVENT,
-      sync as EventListener
+      sync as EventListener,
     );
     return () => {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener(
         CALC_LOCAL_ONLY_CHANGED_EVENT,
-        sync as EventListener
+        sync as EventListener,
       );
     };
   }, []);
@@ -274,7 +151,7 @@ export default function Calculator({
 
   const blocksTextSig = useMemo(
     () => blocks.map((b) => `${b.label}\t${b.text}`).join("\n~\n"),
-    [blocks]
+    [blocks],
   );
 
   useEffect(() => {
@@ -285,11 +162,29 @@ export default function Calculator({
 
   useLayoutEffect(() => {
     if (!accordionScrollToBlockId) return;
-    const el = document.getElementById(
-      `result-user-${accordionScrollToBlockId}`
-    );
-    el?.scrollIntoView({ block: "start", behavior: "auto", inline: "nearest" });
-    setAccordionScrollToBlockId(null);
+    const id = `result-user-${accordionScrollToBlockId}`;
+    const scroll = () => {
+      const el = document.getElementById(id);
+      if (!el) return false;
+      scrollElementIntoView(el, "smooth");
+      // Re-scroll after accordion expand reveals error details.
+      window.setTimeout(() => {
+        const elAfter = document.getElementById(id);
+        if (elAfter) scrollElementIntoView(elAfter, "smooth");
+      }, 560);
+      window.setTimeout(() => {
+        const elLate = document.getElementById(id);
+        if (elLate) scrollElementIntoView(elLate, "smooth");
+      }, 920);
+      setAccordionScrollToBlockId(null);
+      return true;
+    };
+    if (scroll()) return;
+    // Results may mount on the next frame after calculate.
+    const retry = window.setTimeout(() => {
+      scroll();
+    }, 100);
+    return () => window.clearTimeout(retry);
   }, [accordionScrollToBlockId]);
 
   // Auto-detect games from all WhatsApp lines (all blocks); sync dropdown only when a single game applies
@@ -325,11 +220,7 @@ export default function Calculator({
         setSelectedSlotId(uniqueIds[0]);
       }
     } else {
-      const plainIds = collectPlainMarketSlotIds(
-        blocks,
-        slots,
-        fallbackSlot
-      );
+      const plainIds = collectPlainMarketSlotIds(blocks, slots, fallbackSlot);
       if (plainIds.length > 0) {
         setDetectedViaMarket(true);
         const tagged = plainIds.map((id) => ({ slotId: id }));
@@ -402,14 +293,14 @@ export default function Calculator({
       return prev.map((x) =>
         x.id === id
           ? { ...x, text, label: nextLabel, labelLocked: nextLocked }
-          : x
+          : x,
       );
     });
   };
 
   const updateBlockLabel = (id: string, label: string) => {
     setBlocks((prev) =>
-      prev.map((b) => (b.id === id ? { ...b, label, labelLocked: true } : b))
+      prev.map((b) => (b.id === id ? { ...b, label, labelLocked: true } : b)),
     );
   };
 
@@ -423,7 +314,7 @@ export default function Calculator({
 
   const removeBlock = (id: string) => {
     setBlocks((prev) =>
-      prev.length <= 1 ? prev : prev.filter((b) => b.id !== id)
+      prev.length <= 1 ? prev : prev.filter((b) => b.id !== id),
     );
   };
 
@@ -434,16 +325,22 @@ export default function Calculator({
     const skipAuditLog = getSkipAuditOnCalculateAll();
     setSkipAuditOnCalculate(skipAuditLog);
 
-    const hasEnabledSlot = slots.some(s => s.enabled);
-    const hasWaBlock = blocks.some(b => {
+    const hasEnabledSlot = slots.some((s) => s.enabled);
+    const hasWaBlock = blocks.some((b) => {
       const wa = parseWhatsAppMessages(b.text);
       return Boolean(wa && wa.length > 0);
     });
     if (hasWaBlock && !hasEnabledSlot) {
-      toast.error("Add and enable at least one game in Settings before calculating WhatsApp chats.");
+      toast.error(
+        "Add and enable at least one game in Settings before calculating WhatsApp chats.",
+      );
+      scrollToElement("calc-game-section");
       return;
     }
 
+    setIsCalculating(true);
+
+    const runCalculation = () => {
     const ledgerOpDay = new Date();
     const next: PerUserCalc[] = [];
     for (let idx = 0; idx < blocks.length; idx++) {
@@ -508,7 +405,7 @@ export default function Calculator({
         const parts = splitPlainTextByMarketSlots(
           normalized,
           slots,
-          selectedSlot
+          selectedSlot,
         );
         const useMarketSplit =
           parts.length > 1 ||
@@ -573,12 +470,32 @@ export default function Calculator({
           }
         } else {
           const nextResult = calculateTotal(b.text);
+          const timeStr = new Date()
+            .toLocaleTimeString("en-US", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true,
+            })
+            .toLowerCase();
+          const manualDate = ledgerDateStringForSlot(selectedSlot, ledgerOpDay);
           next.push({
             blockId: b.id,
             label: displayLabel,
             text: b.text,
             result: nextResult,
-            pendingTagged: null,
+            pendingTagged: [
+              {
+                id: `manual|${b.id}|0|${Date.now()}-${Math.random()
+                  .toString(36)
+                  .slice(2, 7)}`,
+                contact: displayLabel,
+                date: manualDate,
+                timestamp: timeStr,
+                text: b.text.trim(),
+                result: nextResult,
+                slotId: selectedSlot.id,
+              },
+            ],
             isWAMode: false,
             waSlotFallbackCount: 0,
           });
@@ -598,160 +515,123 @@ export default function Calculator({
     }
 
     if (next.length === 0) {
+      setIsCalculating(false);
       toast.error("Add text in at least one box before calculating.");
+      scrollToElement("calc-inputs-section");
       return;
     }
+
+    const firstErrorBlock = next.find(
+      (u) => (u.result.failedLines?.length ?? 0) > 0,
+    );
+    if (firstErrorBlock) {
+      setResultViewMode("check");
+      try {
+        localStorage.setItem(RESULT_VIEW_MODE_KEY, "check");
+      } catch {
+        /* ignore */
+      }
+    }
     const singleWithLines =
-      next.length === 1 && next[0].result.results.length > 0
+      !firstErrorBlock &&
+      next.length === 1 &&
+      next[0].result.results.length > 0
         ? next[0].blockId
         : null;
-    setExpandedResultBlockId(singleWithLines);
-    setAccordionScrollToBlockId(null);
+    const hadResults = Boolean(userResults?.length);
+    setExpandedResultBlockId(
+      firstErrorBlock?.blockId ?? singleWithLines,
+    );
+    setAccordionScrollToBlockId(firstErrorBlock?.blockId ?? null);
     setUserResults(next);
+    if (!hadResults) setResultsAnimKey((k) => k + 1);
+    setHeroCelebrate(true);
+    setCtaSuccess(true);
+    setIsCalculating(false);
+
+    window.setTimeout(() => setCtaSuccess(false), 320);
+    window.setTimeout(() => setHeroCelebrate(false), 450);
+    };
+
+    requestAnimationFrame(runCalculation);
   };
 
   const handleSave = async (): Promise<boolean> => {
     if (!userResults?.length) return false;
-    if (!canPersistToHistory || selectedSlot.id === NO_CONFIGURED_SLOTS_PLACEHOLDER_ID) {
-      toast.error("Add and enable at least one game in Settings before saving to History.");
+    if (
+      !canPersistToHistory ||
+      selectedSlot.id === NO_CONFIGURED_SLOTS_PLACEHOLDER_ID
+    ) {
+      toast.error(
+        "Add and enable at least one game in Settings before saving to History.",
+      );
+      scrollToElement("calc-game-section");
       return false;
     }
     setSaving(true);
     try {
-      const saveOpDay = new Date();
       const allTagged: TaggedMessages[] = [];
       for (const u of userResults) {
         if (!u.pendingTagged?.length) continue;
         u.pendingTagged.forEach((m) => {
-          const slotObj = slots.find((s) => s.id === m.slotId) ?? selectedSlot;
-          const date = ledgerDateStringForSlot(slotObj, saveOpDay);
-          if (u.isWAMode) {
-            allTagged.push({ ...m } as TaggedMessages);
-          } else {
-            allTagged.push({ ...m, date } as TaggedMessages);
-          }
+          allTagged.push({
+            ...m,
+            result: u.pendingTagged!.length === 1 ? u.result : m.result,
+          } as TaggedMessages);
         });
+      }
+
+      if (allTagged.length === 0) {
+        toast.error("Nothing to save. Calculate again and try saving.");
+        return false;
       }
 
       const slotNames = new Set<string>();
-      let dateSummary = "";
+      const dates = [...new Set(allTagged.map((m) => m.date))];
+      const existing: SavedSession[] = (
+        await Promise.all(dates.map((d) => loadSessionsByDate(d)))
+      ).flat();
 
-      if (allTagged.length > 0) {
-        const dates = [...new Set(allTagged.map((m) => m.date))];
-        const existing: SavedSession[] = (
-          await Promise.all(dates.map((d) => loadSessionsByDate(d)))
-        ).flat();
+      const updated = mergeIntoSessions(existing, allTagged);
+      await Promise.all(updated.map((s) => saveSessionDoc(s)));
 
-        const updated = mergeIntoSessions(existing, allTagged);
-        await Promise.all(updated.map((s) => saveSessionDoc(s)));
+      const dateSlotContactMap = new Map<string, Map<string, Set<string>>>();
+      for (const m of allTagged) {
+        if (!dateSlotContactMap.has(m.date))
+          dateSlotContactMap.set(m.date, new Map());
+        const slotMap = dateSlotContactMap.get(m.date)!;
+        if (!slotMap.has(m.slotId)) slotMap.set(m.slotId, new Set());
+        slotMap.get(m.slotId)!.add(m.contact);
+      }
 
-        const dateSlotContactMap = new Map<string, Map<string, Set<string>>>();
-        for (const m of allTagged) {
-          if (!dateSlotContactMap.has(m.date))
-            dateSlotContactMap.set(m.date, new Map());
-          const slotMap = dateSlotContactMap.get(m.date)!;
-          if (!slotMap.has(m.slotId)) slotMap.set(m.slotId, new Set());
-          slotMap.get(m.slotId)!.add(m.contact);
-        }
-
-        for (const [date, slotMap] of dateSlotContactMap) {
-          const existingPayments = await loadPaymentsByDate(date);
-          const existingIds = new Set(existingPayments.map((p) => p.id));
-          let allPayments = [...existingPayments];
-          for (const [slotId, contacts] of slotMap) {
-            const slotObj = slots.find((s) => s.id === slotId) ?? selectedSlot;
-            allPayments = upsertPaymentStubs(
-              allPayments,
-              [...contacts],
-              slotObj,
-              date,
-              settings.commissionPct
-            );
-          }
-          await Promise.all(
-            allPayments
-              .filter((p) => !existingIds.has(p.id))
-              .map((p) => savePaymentDoc(p))
+      for (const [date, slotMap] of dateSlotContactMap) {
+        const existingPayments = await loadPaymentsByDate(date);
+        const existingIds = new Set(existingPayments.map((p) => p.id));
+        let allPayments = [...existingPayments];
+        for (const [slotId, contacts] of slotMap) {
+          const slotObj = slots.find((s) => s.id === slotId) ?? selectedSlot;
+          allPayments = upsertPaymentStubs(
+            allPayments,
+            [...contacts],
+            slotObj,
+            date,
+            settings.commissionPct,
           );
         }
-
-        dateSummary = [...dateSlotContactMap.keys()].sort().join(", ");
-        allTagged.forEach((m) => {
-          const name = slots.find((s) => s.id === m.slotId)?.name ?? m.slotId;
-          slotNames.add(name);
-        });
-      }
-
-      const manualBlocks = userResults.filter(
-        (u) => !u.isWAMode && !u.pendingTagged?.length
-      );
-      if (manualBlocks.length > 0) {
-        const manualDate = ledgerDateStringForSlot(selectedSlot, saveOpDay);
-        const manualMessages: ParsedMessage[] = manualBlocks.map((u) => {
-          const timeStr = new Date()
-            .toLocaleTimeString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: true,
-            })
-            .toLowerCase();
-          const uniqueId = `manual|${manualDate.replace(/\//g, "-")}|${
-            u.blockId
-          }|${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-          const contact = u.label.trim() || "Manual Entry";
-          return {
-            id: uniqueId,
-            contact,
-            date: manualDate,
-            timestamp: timeStr,
-            text: u.text.trim(),
-            result: u.result,
-            slotId: selectedSlot.id,
-          };
-        });
-
-        const existing = await loadSessionsByDate(manualDate);
-        const updated = mergeIntoSessions(existing, manualMessages);
-        await Promise.all(updated.map((s) => saveSessionDoc(s)));
-
-        const existingPayments = await loadPaymentsByDate(manualDate);
-        const contacts = [...new Set(manualMessages.map((m) => m.contact))];
-        const newPayments = upsertPaymentStubs(
-          existingPayments,
-          contacts,
-          selectedSlot,
-          manualDate,
-          settings.commissionPct
-        );
-        const existingIds = new Set(existingPayments.map((p) => p.id));
         await Promise.all(
-          newPayments
+          allPayments
             .filter((p) => !existingIds.has(p.id))
-            .map((p) => savePaymentDoc(p))
+            .map((p) => savePaymentDoc(p)),
         );
-
-        slotNames.add(selectedSlot.name);
       }
 
-      const manualDates =
-        manualBlocks.length > 0
-          ? [ledgerDateStringForSlot(selectedSlot, saveOpDay)]
-          : [];
-      const parts = [dateSummary, ...manualDates].filter(Boolean);
-      const mergedDates = [
-        ...new Set(
-          parts
-            .join(",")
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean)
-        ),
-      ].join(", ");
+      allTagged.forEach((m) => {
+        const name = slots.find((s) => s.id === m.slotId)?.name ?? m.slotId;
+        slotNames.add(name);
+      });
 
       setSavedInfo({
-        date:
-          mergedDates ||
-          ledgerDateStringForSlot(selectedSlot, saveOpDay),
+        date: dates.sort().join(", "),
         slots: [...slotNames],
       });
       setIsSaved(true);
@@ -760,7 +640,7 @@ export default function Calculator({
       console.error("handleSave failed:", err);
       toastApiError(
         err,
-        "Save failed. Please check your internet connection and try again."
+        "Save failed. Please check your internet connection and try again.",
       );
       return false;
     } finally {
@@ -821,7 +701,7 @@ export default function Calculator({
     setUserResults(
       (prev) =>
         prev?.map((u) => (u.blockId === blockId ? { ...u, result: r } : u)) ??
-        null
+        null,
     );
     setIsSaved(false);
   };
@@ -832,7 +712,7 @@ export default function Calculator({
     const reasons: string[] = [];
     for (const u of userResults) {
       const b = computePatternAccuracy(u.result, {
-        waSlotFallbackCount: u.isWAMode ? u.waSlotFallbackCount ?? 0 : 0,
+        waSlotFallbackCount: u.isWAMode ? (u.waSlotFallbackCount ?? 0) : 0,
       });
       minScore = Math.min(minScore, b.scorePercent);
       for (const r of b.reasons) reasons.push(`${u.label}: ${r}`);
@@ -842,686 +722,341 @@ export default function Calculator({
 
   const grandTotal = userResults?.reduce((s, u) => s + u.result.total, 0) ?? 0;
   const uncountedFailedLines =
-    userResults?.reduce(
-      (s, u) => s + (u.result.failedLines?.length ?? 0),
-      0
-    ) ?? 0;
-  const reportPrefill = blocks
-    .map((b) => b.text.trim())
-    .filter(Boolean)
-    .join("\n\n--- next ---\n\n");
+    userResults?.reduce((s, u) => s + (u.result.failedLines?.length ?? 0), 0) ??
+    0;
+
+  const defaultReportInput = useMemo(
+    () =>
+      blocks
+        .map((b) => b.text.trim())
+        .filter(Boolean)
+        .join("\n\n--- next ---\n\n"),
+    [blocks],
+  );
+
+  const openReport = useCallback(
+    (prefill?: ReportIssuePrefill) => {
+      setReportPrefill({
+        input: prefill?.input ?? defaultReportInput,
+        expected: prefill?.expected ?? "",
+        note: prefill?.note ?? "",
+      });
+      setReportKey((k) => k + 1);
+      setShowReport(true);
+    },
+    [defaultReportInput],
+  );
+
+  const openReportForFailedLine = useCallback(
+    (failedLine: string, contextText: string) => {
+      openReport({
+        input: failedLine,
+        note: contextText
+          ? `From paste:\n${contextText.slice(0, 3000)}`
+          : undefined,
+      });
+    },
+    [openReport],
+  );
 
   const showDetectedBadge = Boolean(detectedSlotsSummary) && !slotOverridden;
 
+  const accuracyFillClass = !patternAccuracyAggregate
+    ? ""
+    : patternAccuracyAggregate.scorePercent >= 100
+      ? "pc-accuracy__fill--ok"
+      : patternAccuracyAggregate.scorePercent >= 99
+        ? "pc-accuracy__fill--warn"
+        : "pc-accuracy__fill--bad";
+
+  const contentPadClass = canSaveBeforeClear
+    ? "pc-content--save-dock"
+    : "pc-content--dock";
+
   return (
-    <>
-      <div className="w-full max-w-[520px] text-center mb-4">
-        <h1 className="text-[26px] font-bold text-[#1a1a1a] leading-tight">
-          Calculator
-        </h1>
-        <details className="mt-2 text-left rounded-[12px] border border-[#e4edf8] bg-[#f9fbfd] px-3 py-2 open:shadow-sm">
-          <summary className="cursor-pointer select-none list-none text-center text-[13px] font-semibold text-[#1d6fb8] hover:text-[#165fa3] [&::-webkit-details-marker]:hidden flex items-center justify-center gap-2">
-            <span aria-hidden className="text-[10px] opacity-80">
-              ▼
-            </span>
-            Tips: pasting chats &amp; multiple users
-          </summary>
-          <p className="text-[15px] text-[#777] mt-2 pt-2 border-t border-[#e8eef5] leading-snug">
-            Paste each person&apos;s WhatsApp text in its own box — names fill
-            in from the chat; otherwise User 1, User 2, … One chat with{" "}
-            <strong>several contacts</strong> splits into separate boxes
-            automatically. Then calculate.
-          </p>
-        </details>
+    <div className="pc-root">
+      <div className="pc-bg" aria-hidden>
+        <div className="pc-orb pc-orb--1" />
+        <div className="pc-orb pc-orb--2" />
+        <div className="pc-orb pc-orb--3" />
       </div>
 
-      <div className="w-full max-w-[520px] mb-4">
-        <div className="bg-white rounded-[18px] shadow-sm border-2 border-[#dde8f8] p-4">
-          <div className="text-[13px] font-bold text-gray-400 uppercase tracking-widest mb-2">
-            📌 These numbers are for (fallback if no timestamp detected):
+      <div className={`pc-content ${contentPadClass}`}>
+        <section id="calc-game-section" className="pc-glass pc-reveal">
+          <div className="pc-glass__head">
+            <h2 className="pc-glass__title">Game</h2>
+            <p className="pc-glass__desc">
+              Fallback when no timestamp or market tag is detected
+            </p>
           </div>
-          {enabledSlots.length === 0 ? (
-            <div className="rounded-[12px] border-2 border-amber-200 bg-amber-50 px-4 py-3 text-left text-[14px] font-semibold text-amber-900">
-              No games yet. Open <strong>Settings</strong>, tap <strong>Add game</strong>, then save — then return here to pick a game for manual entries.
-            </div>
-          ) : (
-            <select
-              value={selectedSlotId}
-              onChange={(e) => {
-                setSelectedSlotId(e.target.value);
-                setSlotOverridden(true);
-              }}
-              className="w-full text-[18px] font-extrabold text-[#1d6fb8] bg-[#f0f6ff] border-2 border-[#c5d8f0] rounded-[12px] px-4 py-3 outline-none cursor-pointer"
-            >
-              {enabledSlots.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.emoji} {s.name} Game — {formatSlotTime(s.time)}
-                </option>
-              ))}
-            </select>
-          )}
-          {showDetectedBadge ? (
-            <div className="mt-2 space-y-1">
-              <p className="text-[12px] text-green-700 font-semibold">
-                🔍{" "}
+          <div className="pc-glass__body">
+            {enabledSlots.length === 0 ? (
+              <p className="pc-note pc-note--warn">
+                Add a game in Settings to continue.
+              </p>
+            ) : (
+              <select
+                value={selectedSlotId}
+                onChange={(e) => {
+                  setSelectedSlotId(e.target.value);
+                  setSlotOverridden(true);
+                }}
+                className="pc-select"
+              >
+                {enabledSlots.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.emoji} {s.name} — {formatSlotTime(s.time)}
+                  </option>
+                ))}
+              </select>
+            )}
+            {showDetectedBadge ? (
+              <p className="pc-note pc-note--ok">
                 {detectedViaMarket
                   ? detectedMultiSlots
-                    ? `Auto-detected from market lines (${detectedSlotsSummary})`
-                    : `Auto-detected from market line (${detectedSlotsSummary} Game)`
+                    ? `Auto-detected · ${detectedSlotsSummary}`
+                    : `Auto-detected · ${detectedSlotsSummary}`
                   : detectedMultiSlots
-                    ? `Auto-detected from message times (${detectedSlotsSummary})`
-                    : `Auto-detected from message time (${detectedSlotsSummary} Game)`}
+                    ? `Auto-detected · ${detectedSlotsSummary}`
+                    : `Auto-detected · ${detectedSlotsSummary}`}
               </p>
-              {detectedMultiSlots && (
-                <p className="text-[11px] text-green-700/90 leading-snug">
-                  {detectedViaMarket
-                    ? "Each section uses the game named on its market tag. The menu above is only a fallback when no tag matches."
-                    : "Each line uses the game for its timestamp. The menu above is only a fallback when a time cannot be read."}
-                </p>
-              )}
-            </div>
-          ) : slotOverridden ? (
-            <p className="text-[12px] text-orange-600 font-semibold mt-2">
-              ✏️ Manually selected ·{" "}
-              <button
-                type="button"
-                className="underline"
-                onClick={() => {
-                  setSlotOverridden(false);
-                  setSelectedSlotId(waSingleFallbackSlotId ?? autoSlot.id);
-                }}
-              >
-                Reset to auto
-              </button>
-            </p>
-          ) : (
-            <p className="text-[12px] text-gray-400 mt-2">
-              WhatsApp messages are auto-assigned per message time. This is only
-              used for manual entries.
-            </p>
-          )}
-        </div>
-      </div>
-
-      <div className="w-full max-w-[520px] bg-white rounded-[20px] shadow-[0_6px_32px_rgba(0,0,0,0.10)] p-2 md:p-4 space-y-5">
-        <div
-          className={`rounded-[14px] border-2 px-3.5 py-3 ${
-            !patternAccuracyAggregate
-              ? "border-[#e4edf8] bg-[#f8fafc]"
-              : patternAccuracyAggregate.scorePercent >= 100
-              ? "border-green-200 bg-green-50/90"
-              : patternAccuracyAggregate.scorePercent >= 99
-              ? "border-amber-200 bg-amber-50/90"
-              : "border-red-200 bg-red-50/90"
-          }`}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-[12px] font-extrabold text-gray-600 uppercase tracking-wide">
-              Pattern accuracy
-            </span>
-            {patternAccuracyAggregate ? (
-              <span
-                className={`text-[22px] font-black tabular-nums leading-none ${
-                  patternAccuracyAggregate.scorePercent >= 100
-                    ? "text-green-800"
-                    : patternAccuracyAggregate.scorePercent >= 99
-                    ? "text-amber-800"
-                    : "text-red-800"
-                }`}
-              >
-                {patternAccuracyAggregate.scorePercent >= 100
-                  ? "100%"
-                  : `${patternAccuracyAggregate.scorePercent.toFixed(1)}%`}
-              </span>
-            ) : (
-              <span className="text-[13px] font-semibold text-gray-400">—</span>
-            )}
-          </div>
-          {patternAccuracyAggregate &&
-            patternAccuracyAggregate.reasons.length > 0 && (
-              <ul className="mt-2 text-[11px] text-gray-700 list-disc pl-4 space-y-1 max-h-[120px] overflow-y-auto">
-                {patternAccuracyAggregate.reasons
-                  .slice(0, 12)
-                  .map((line, i) => (
-                    <li key={i} className="wrap-break-word">
-                      {line}
-                    </li>
-                  ))}
-              </ul>
-            )}
-        </div>
-
-        <div className="flex items-center justify-between gap-2">
-          <label className="block text-[18px] font-bold text-[#222]">
-            User inputs
-          </label>
-          <button
-            type="button"
-            onClick={addBlock}
-            className="shrink-0 text-[13px] font-bold text-[#1d6fb8] bg-[#f0f6ff] border-2 border-[#c5d8f0] rounded-[10px] px-3 py-1.5 active:opacity-80"
-          >
-            + Add user
-          </button>
-        </div>
-
-        {blocks.map((b, idx) => (
-          <div
-            key={b.id}
-            className="rounded-[14px] border-2 border-[#e4edf8] bg-[#fafcff] p-2 md:p-4 space-y-2"
-          >
-            <div className="flex items-center gap-2 flex-wrap">
-              <label className="text-[12px] font-bold text-gray-500 shrink-0">
-                Name
-              </label>
-              <input
-                type="text"
-                value={b.label}
-                onChange={(e) => updateBlockLabel(b.id, e.target.value)}
-                placeholder={`User ${idx + 1} or contact from WhatsApp`}
-                className="flex-1 min-w-[120px] text-[15px] font-semibold border-2 border-[#d5e0f0] rounded-[10px] px-3 py-2 outline-none focus:border-[#1d6fb8] bg-white"
-              />
-              {blocks.length > 1 && (
+            ) : slotOverridden ? (
+              <p className="pc-note pc-note--warn">
+                Manual selection ·{" "}
                 <button
                   type="button"
-                  onClick={() => removeBlock(b.id)}
-                  className="text-[12px] font-bold text-red-600 border border-red-200 rounded-[8px] px-2 py-1.5 hover:bg-red-50"
+                  className="pc-link"
+                  onClick={() => {
+                    setSlotOverridden(false);
+                    setSelectedSlotId(waSingleFallbackSlotId ?? autoSlot.id);
+                  }}
                 >
-                  Remove
+                  Reset
                 </button>
+              </p>
+            ) : (
+              <p className="pc-note">
+                WhatsApp lines auto-assign by message time.
+              </p>
+            )}
+          </div>
+        </section>
+
+        <section className={`pc-hero pc-reveal pc-reveal--1${heroCelebrate ? " pc-hero--celebrate" : ""}`}>
+          <p className="pc-eyebrow">Combined total</p>
+          <AnimatedAmount
+            value={
+              userResults?.length
+                ? lineCountFormatter.format(grandTotal)
+                : "—"
+            }
+            idle={!userResults?.length}
+          />
+          {(userResults?.length || uncountedFailedLines > 0) && (
+            <p className="pc-hero__sub">
+              {userResults?.length
+                ? `${userResults.length} user${userResults.length === 1 ? "" : "s"} calculated`
+                : null}
+              {uncountedFailedLines > 0 &&
+                `${userResults?.length ? " · " : ""}${uncountedFailedLines} line${uncountedFailedLines === 1 ? "" : "s"} not counted`}
+            </p>
+          )}
+        </section>
+
+        {patternAccuracyAggregate && (
+          <section className="pc-glass pc-reveal pc-reveal--2">
+            <div className="pc-accuracy">
+              <div className="pc-accuracy__row">
+                <span className="pc-accuracy__label">Pattern match</span>
+                <span className="pc-accuracy__value">
+                  {patternAccuracyAggregate.scorePercent >= 100
+                    ? "100%"
+                    : `${patternAccuracyAggregate.scorePercent.toFixed(1)}%`}
+                </span>
+              </div>
+              <div className="pc-accuracy__track">
+                <div
+                  className={`pc-accuracy__fill ${accuracyFillClass}`}
+                  style={{
+                    width: `${Math.min(100, patternAccuracyAggregate.scorePercent)}%`,
+                  }}
+                />
+              </div>
+              {patternAccuracyAggregate.reasons.length > 0 && (
+                <ul className="pc-accuracy__reasons">
+                  {patternAccuracyAggregate.reasons
+                    .slice(0, 8)
+                    .map((line, i) => (
+                      <li key={i}>{line}</li>
+                    ))}
+                </ul>
               )}
             </div>
-            <textarea
-              value={b.text}
-              onChange={(e) => updateBlockText(b.id, e.target.value)}
-              placeholder={
-                "43*93*(75)wp\n48--98-(50)wp\nor paste WhatsApp chat…"
-              }
-              spellCheck={false}
-              autoCapitalize="none"
-              autoCorrect="off"
-              className="w-full min-h-[140px] p-3 text-[16px] font-mono border-[3px] border-[#c5cfe0] focus:border-[#1d6fb8] rounded-[12px] resize-y outline-none text-[#111] leading-[1.8] bg-white tracking-wide transition-colors"
-            />
+          </section>
+        )}
+
+        <section id="calc-inputs-section" className="pc-glass pc-reveal pc-reveal--3">
+          <div className="pc-users-head">
+            <div>
+              <h2 className="pc-glass__title">Inputs</h2>
+              <p className="pc-glass__desc">One section per person or chat</p>
+            </div>
+            <button type="button" onClick={addBlock} className="pc-add-btn">
+              Add user
+            </button>
           </div>
-        ))}
 
-        <button
-          type="button"
-          onClick={addBlock}
-          className="block w-full text-[13px] font-bold text-[#1d6fb8] bg-[#f0f6ff] border-2 border-[#c5d8f0] rounded-[10px] px-3 py-2.5 active:opacity-80 hover:bg-[#e8f2ff] transition-colors"
-        >
-          + Add user
-        </button>
-
-        <button
-          type="button"
-          onClick={handleCalculate}
-          className="block w-full py-5 text-[22px] font-bold bg-[#1d6fb8] text-white rounded-[14px] cursor-pointer shadow-[0_4px_14px_rgba(29,111,184,0.35)] active:opacity-85 transition-opacity"
-        >
-          ✅ Calculate all
-        </button>
-        {skipAuditOnCalculate ? (
-          <p className="text-center text-[12px] text-amber-800/90 -mt-2 mb-0 px-1 leading-snug">
-            Audit logging is off: calculation runs in this browser only (no server
-            log). Turn the switch off in{" "}
-            <a
-              className="font-bold text-[#1d6fb8] underline underline-offset-2"
-              href="/admin"
+          {blocks.map((b, idx) => (
+            <div
+              key={b.id}
+              className="pc-user"
+              style={{ animationDelay: `${idx * 0.06}s` }}
             >
-              Admin
-            </a>{" "}
-            to record audits again.
-          </p>
-        ) : null}
+              <div className="pc-user__top">
+                <span className="pc-user__label">Name</span>
+                <input
+                  type="text"
+                  value={b.label}
+                  onChange={(e) => updateBlockLabel(b.id, e.target.value)}
+                  placeholder={`User ${idx + 1}`}
+                  className="pc-user__name"
+                />
+                {blocks.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeBlock(b.id)}
+                    className="pc-user__remove"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              <textarea
+                value={b.text}
+                onChange={(e) => updateBlockText(b.id, e.target.value)}
+                placeholder={
+                  "43*93*(75)wp\n48--98-(50)wp\nor paste WhatsApp chat…"
+                }
+                spellCheck={false}
+                autoCapitalize="none"
+                autoCorrect="off"
+                className="pc-terminal"
+              />
+            </div>
+          ))}
 
-        <button
-          type="button"
-          onClick={requestClear}
-          className="block w-full py-4 text-[18px] font-semibold bg-white text-[#c0392b] border-[2.5px] border-[#e0b0ad] rounded-[14px] cursor-pointer active:opacity-85 transition-opacity"
-        >
-          🗑 Clear all
-        </button>
+          <button type="button" onClick={addBlock} className="pc-ghost-add">
+            Add another user
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setShowReport(true)}
-          className="block w-full py-2.5 text-[13px] font-semibold text-gray-400 hover:text-[#1d6fb8] transition-colors text-center"
-        >
-          🐛 Report a number pattern issue
-        </button>
+          <div className="pc-actions">
+            <button
+              type="button"
+              onClick={requestClear}
+              className="pc-action pc-action--danger"
+            >
+              Clear all
+            </button>
+            <button
+              type="button"
+              onClick={() => openReport()}
+              className="pc-action"
+            >
+              Report issue
+            </button>
+          </div>
+        </section>
+
+        {userResults && userResults.length > 0 && (
+          <CalculatorResultsPanel
+            userResults={userResults}
+            resultsAnimKey={resultsAnimKey}
+            resultViewMode={resultViewMode}
+            onResultViewModeChange={setResultViewMode}
+            checkFontLevel={checkFontLevel}
+            onCheckFontLevelChange={setCheckFontLevel}
+            expandedResultBlockId={expandedResultBlockId}
+            onExpandResult={setExpandedResultBlockId}
+            onAccordionScrollTo={setAccordionScrollToBlockId}
+            onUpdateUserResult={updateUserResult}
+            onReportFailedLine={openReportForFailedLine}
+            grandTotal={grandTotal}
+            copied={copied}
+            onCopy={handleCopy}
+            isSaved={isSaved}
+            savedInfo={savedInfo}
+          />
+        )}
       </div>
+
+      {!canSaveBeforeClear ? (
+      <div className="pc-cta-bar">
+        <div className="pc-cta-bar__inner">
+          <button
+            type="button"
+            onClick={handleCalculate}
+            disabled={isCalculating}
+            className={`pc-cta${isCalculating ? " pc-cta--loading" : ""}${ctaSuccess ? " pc-cta--success" : ""}`}
+          >
+            <span className="pc-cta__label">
+              {isCalculating ? "Calculating…" : "Calculate all"}
+            </span>
+            {isCalculating ? (
+              <span className="pc-cta__spinner" aria-hidden />
+            ) : null}
+          </button>
+          {skipAuditOnCalculate ? (
+            <p className="pc-audit">
+              Local only · enable audit in{" "}
+              <a href="/admin">Admin</a>
+            </p>
+          ) : null}
+        </div>
+      </div>
+      ) : null}
 
       {showReport && (
         <ReportIssue
-          prefillInput={reportPrefill}
+          key={reportKey}
+          prefill={reportPrefill}
           onClose={() => setShowReport(false)}
         />
       )}
 
       {showClearConfirm && (
-        <Modal
-          open
-          onBackdropClick={() => {
-            if (!saving) setShowClearConfirm(false);
-          }}
-          backdrop="dim"
-          overlayClassName="p-4"
-        >
-          <Card
-            surface="panel"
-            className="max-w-[400px]"
-            role="dialog"
-            aria-labelledby="clear-dialog-title"
-            aria-modal="true"
-          >
-            <div className="border-b border-[#e7eef7] px-5 py-4">
-              <h2
-                id="clear-dialog-title"
-                className="text-[18px] font-extrabold text-[#1a1a1a]"
-              >
-                Clear everything?
-              </h2>
-              <p className="mt-2 text-[13px] leading-snug text-gray-600">
-                {canSaveBeforeClear
-                  ? "You have calculated results that are not saved to History yet. Save them first, or clear without saving."
-                  : Boolean(userResults?.length) && isSaved
-                  ? "This will remove all users, pasted text, and the on-screen summary. Your data is already saved in History."
-                  : "You have pasted text or extra user boxes. This will remove all of it."}
-              </p>
-            </div>
-            <div className="flex flex-col gap-2 p-4">
-              {canSaveBeforeClear && (
-                <Button
-                  type="button"
-                  variant="success"
-                  disabled={saving || !canPersistToHistory}
-                  onClick={() => void saveThenClear()}
-                  className="w-full py-3 text-[15px] font-bold"
-                >
-                  {saving ? "⏳ Saving…" : "💾 Save to History & clear"}
-                </Button>
-              )}
-              <Button
-                type="button"
-                variant="outline"
-                disabled={saving}
-                onClick={performClear}
-                className="w-full !border-2 !border-red-200 !bg-red-50 py-3 !font-bold !text-red-700 hover:!bg-red-100"
-              >
-                Clear without saving
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={saving}
-                onClick={() => setShowClearConfirm(false)}
-                className="w-full py-3 text-[15px] font-semibold"
-              >
-                Cancel
-              </Button>
-            </div>
-          </Card>
-        </Modal>
+        <ClearConfirmModal
+          canSaveBeforeClear={canSaveBeforeClear}
+          canPersistToHistory={canPersistToHistory}
+          saving={saving}
+          hasSavedResults={Boolean(userResults?.length) && isSaved}
+          onSaveThenClear={() => void saveThenClear()}
+          onClear={performClear}
+          onCancel={() => setShowClearConfirm(false)}
+        />
       )}
 
-      {userResults && userResults.length > 0 && (
-        <div className={`w-full max-w-[520px] mt-5 space-y-3${canSaveBeforeClear ? " pb-28 sm:pb-24" : ""}`}>
-          <div className="px-1 flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="text-[17px] font-bold text-[#222]">
-                Results by user
-              </h2>
-              <p className="text-[12px] text-gray-500 mt-0.5">
-                {resultViewMode === "check"
-                  ? "Check = see your message and math side by side."
-                  : "Tap a row to show or hide line-by-line details."}
-              </p>
-              {resultViewMode === "check" && (
-                <div
-                  className="flex items-center gap-2 mt-2"
-                  role="group"
-                  aria-label="Check view text size"
-                >
-                  <span className="text-[11px] font-semibold text-gray-500">
-                    Text size
-                  </span>
-                  <button
-                    type="button"
-                    aria-label="Smaller text"
-                    disabled={checkFontLevel <= 0}
-                    onClick={() => {
-                      const next = Math.max(0, checkFontLevel - 1);
-                      setCheckFontLevel(next);
-                      persistCheckFontLevel(next);
-                    }}
-                    className="min-w-[36px] h-8 rounded-lg border-2 border-[#d5e4f5] bg-white text-[15px] font-bold text-[#1d6fb8] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#f0f6fd]"
-                  >
-                    A−
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Bigger text"
-                    disabled={checkFontLevel >= CHECK_FONT_LEVELS.length - 1}
-                    onClick={() => {
-                      const next = Math.min(
-                        CHECK_FONT_LEVELS.length - 1,
-                        checkFontLevel + 1
-                      );
-                      setCheckFontLevel(next);
-                      persistCheckFontLevel(next);
-                    }}
-                    className="min-w-[36px] h-8 rounded-lg border-2 border-[#d5e4f5] bg-white text-[17px] font-bold text-[#1d6fb8] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#f0f6fd]"
-                  >
-                    A+
-                  </button>
-                </div>
-              )}
-            </div>
-            <div
-              className="shrink-0 flex rounded-[10px] border-2 border-[#d5e4f5] bg-white p-0.5"
-              role="group"
-              aria-label="Result view"
-            >
-              {(
-                [
-                  { id: "summary" as const, label: "Summary" },
-                  { id: "check" as const, label: "Check" },
-                ] as const
-              ).map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  aria-pressed={resultViewMode === opt.id}
-                  onClick={() => {
-                    setResultViewMode(opt.id);
-                    try {
-                      localStorage.setItem(RESULT_VIEW_MODE_KEY, opt.id);
-                    } catch {
-                      /* ignore */
-                    }
-                  }}
-                  className={`px-2.5 py-1.5 text-[11px] font-bold rounded-[8px] transition-colors ${
-                    resultViewMode === opt.id
-                      ? "bg-[#1d6fb8] text-white"
-                      : "text-[#4a6685] hover:bg-[#f0f6fd]"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {userResults.map((u) => {
-            const isOpen = expandedResultBlockId === u.blockId;
-            const hasLines = u.result.results.length > 0;
-            const hasExpandable =
-              resultViewMode === "check"
-                ? hasLines || (u.result.failedLines?.length ?? 0) > 0
-                : hasLines;
-            const failedLineCount = u.result.failedLines?.length ?? 0;
-            const hasError = failedLineCount > 0;
-            const lineCount = u.result.results.length;
-            const lineCountLabel = hasLines
-              ? `${lineCountFormatter.format(lineCount)} ${
-                  lineCount === 1 ? "line" : "lines"
-                }`
-              : "";
-            return (
-              <div
-                key={u.blockId}
-                id={`result-user-${u.blockId}`}
-                data-has-parse-error={hasError ? "true" : undefined}
-                className={`bg-white rounded-[18px] border-2 shadow-sm overflow-hidden scroll-mt-[76px] ${
-                  hasError ? "border-red-500" : "border-[#dde8f0]"
-                }`}
-              >
-                <button
-                  type="button"
-                  disabled={!hasExpandable}
-                  aria-expanded={hasExpandable ? isOpen : undefined}
-                  aria-label={
-                    hasExpandable
-                      ? `${u.label}: ${
-                          hasError
-                            ? `${failedLineCount} failed line${
-                                failedLineCount === 1 ? "" : "s"
-                              }. `
-                            : ""
-                        }${
-                          resultViewMode === "summary" && hasLines
-                            ? `${lineCountLabel}, `
-                            : ""
-                        }total ${lineCountFormatter.format(u.result.total)}${
-                          hasError ? " (some lines not counted)" : ""
-                        }`
-                      : `${u.label}: no line items${
-                          hasError
-                            ? `, ${failedLineCount} failed line${
-                                failedLineCount === 1 ? "" : "s"
-                              }`
-                            : ""
-                        }`
-                  }
-                  onMouseDown={(e) => {
-                    if (!hasExpandable) return;
-                    e.preventDefault();
-                  }}
-                  onClick={() => {
-                    if (!hasExpandable) return;
-                    if (expandedResultBlockId === u.blockId) {
-                      setExpandedResultBlockId(null);
-                      return;
-                    }
-                    setExpandedResultBlockId(u.blockId);
-                    setAccordionScrollToBlockId(u.blockId);
-                  }}
-                  className={`w-full flex items-center justify-between gap-3 px-4 py-3.5 bg-[#f6f9fd] text-left transition-colors ${
-                    hasExpandable
-                      ? "hover:bg-[#eef4fc] cursor-pointer border-b border-[#e3edf7]"
-                      : "opacity-70 cursor-default border-b border-[#e3edf7]"
-                  }`}
-                >
-                  <div className="flex flex-col items-start min-w-0 gap-1">
-                    <span className="text-[16px] font-extrabold text-[#1a1a1a] truncate w-full">
-                      {u.label}
-                    </span>
-                    {hasError && (
-                      <span className="inline-flex items-center rounded-[10px] bg-red-50 border border-red-200 px-2.5 py-1">
-                        <span className="text-[11px] font-bold text-red-600">
-                          {failedLineCount} not read
-                        </span>
-                      </span>
-                    )}
-                    {resultViewMode === "summary" &&
-                      (hasLines ? (
-                        <span className="inline-flex items-center gap-2 rounded-[10px] bg-white border border-[#d5e4f5] px-2.5 py-1 shadow-sm">
-                          <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">
-                            Lines
-                          </span>
-                          <span className="text-[15px] font-black tabular-nums text-[#1d6fb8] leading-none">
-                            {lineCountFormatter.format(lineCount)}
-                          </span>
-                        </span>
-                      ) : (
-                        <span className="text-[12px] font-semibold text-gray-600">
-                          No line items to expand
-                        </span>
-                      ))}
-                  </div>
-                  <div className="flex flex-col items-end gap-0.5 shrink-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[22px] font-black text-[#1d6fb8] tabular-nums leading-none">
-                        {lineCountFormatter.format(u.result.total)}
-                        {hasError && (
-                          <span
-                            className="text-red-500"
-                            title={`${failedLineCount} line${
-                              failedLineCount === 1 ? "" : "s"
-                            } not counted in this total`}
-                            aria-hidden
-                          >
-                            *
-                          </span>
-                        )}
-                      </span>
-                      {hasExpandable && (
-                        <span
-                          className="text-[11px] font-bold text-[#4a6685] w-5 text-center select-none"
-                          aria-hidden
-                        >
-                          {isOpen ? "▲" : "▼"}
-                        </span>
-                      )}
-                    </div>
-                    {hasError && (
-                      <span className="text-[10px] font-semibold text-red-600 tabular-nums">
-                        {failedLineCount} line{failedLineCount === 1 ? "" : "s"}{" "}
-                        not counted
-                      </span>
-                    )}
-                  </div>
-                </button>
-                {isOpen && hasExpandable && (
-                  <div className="p-4 border-t border-[#eef2f7]">
-                    {resultViewMode === "check" ? (
-                      <NotebookBreakdown
-                        text={u.text}
-                        result={u.result}
-                        onChange={(r) => updateUserResult(u.blockId, r)}
-                        fontLevel={checkFontLevel}
-                      />
-                    ) : (
-                      hasLines && (
-                        <EditableBreakdown
-                          result={u.result}
-                          onChange={(r) => updateUserResult(u.blockId, r)}
-                          compact
-                        />
-                      )
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-
-          <div className="bg-[#1d6fb8] rounded-[20px] px-6 py-7 shadow-[0_6px_24px_rgba(29,111,184,0.30)] flex items-center justify-between gap-3">
-            <div>
-              <div className="text-[14px] font-semibold text-white/70 uppercase tracking-widest mb-1">
-                All users total
-              </div>
-              <div className="text-[48px] font-extrabold text-white leading-none tabular-nums">
-                {lineCountFormatter.format(grandTotal)}
-                {uncountedFailedLines > 0 && (
-                  <span
-                    className="text-white/90"
-                    title={`${uncountedFailedLines} line${
-                      uncountedFailedLines === 1 ? "" : "s"
-                    } not counted in user totals`}
-                    aria-hidden
-                  >
-                    *
-                  </span>
-                )}
-              </div>
-              {uncountedFailedLines > 0 && (
-                <div className="text-[12px] font-semibold text-white/80 mt-1.5">
-                  * {uncountedFailedLines} line
-                  {uncountedFailedLines === 1 ? "" : "s"} not counted
-                </div>
-              )}
-            </div>
+      {canSaveBeforeClear ? (
+        <div className="pc-dock">
+          <div className="pc-dock__grid">
             <button
               type="button"
-              onClick={handleCopy}
-              className={`shrink-0 px-5 py-3.5 text-[17px] font-bold text-white border-2 border-white/50 rounded-xl cursor-pointer whitespace-nowrap transition-colors ${
-                copied ? "bg-[#27ae60]" : "bg-white/20 hover:bg-white/30"
-              }`}
+              onClick={() => void handleSave()}
+              disabled={saving || !canPersistToHistory}
+              className="pc-dock__save"
             >
-              {copied ? "✓ Copied" : "📋 Copy total"}
+              {saving ? "Saving…" : "Save"}
             </button>
-          </div>
-
-          <div className="mt-1">
-            {isSaved && savedInfo && (
-              <div className="bg-green-50 border-2 border-green-200 rounded-[16px] px-4 py-3.5">
-                <div className="text-[15px] font-bold text-green-700 mb-1">
-                  ✅ Saved to History!
-                </div>
-                <div className="text-[13px] text-green-700">
-                  <span className="font-semibold">Date:</span> {savedInfo.date}
-                </div>
-                <div className="text-[13px] text-green-700">
-                  <span className="font-semibold">
-                    Game{savedInfo.slots.length > 1 ? "s" : ""}:
-                  </span>{" "}
-                  {savedInfo.slots.join(", ")}
-                </div>
-                <div className="text-[12px] text-green-600 mt-1.5">
-                  Go to <span className="font-bold">History</span> or{" "}
-                  <span className="font-bold">Payments</span> tab to review.
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Floating save bar — full-width sticky bottom, best for mobile */}
-      {canSaveBeforeClear ? (
-        <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-40 bg-white p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:p-4 sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">
-          <div className="pointer-events-auto mx-auto w-full max-w-[520px] overflow-hidden rounded-2xl bg-white shadow-[0_12px_48px_-8px_rgba(15,23,42,0.22),0_0_0_1px_rgba(15,23,42,0.06)]">
-            <div className="grid grid-cols-2 gap-px bg-slate-100">
-              <button
-                type="button"
-                onClick={() => void handleSave()}
-                disabled={saving || !canPersistToHistory}
-                className="flex items-center justify-center gap-2 bg-green-600 px-4 py-4 text-[15px] font-bold text-white transition hover:bg-green-700 active:bg-green-800 disabled:opacity-50"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={2}
-                  stroke="currentColor"
-                  className="h-5 w-5 shrink-0"
-                  aria-hidden
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z"
-                  />
-                </svg>
-                {saving ? "Saving…" : "Save"}
-              </button>
-              <button
-                type="button"
-                onClick={requestClear}
-                disabled={saving}
-                className="flex items-center justify-center gap-2 bg-white px-4 py-4 text-[15px] font-bold text-red-600 transition hover:bg-red-50 active:bg-red-100 disabled:opacity-50"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={2}
-                  stroke="currentColor"
-                  className="h-5 w-5 shrink-0"
-                  aria-hidden
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-                  />
-                </svg>
-                Clear
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={requestClear}
+              disabled={saving}
+              className="pc-dock__clear"
+            >
+              Clear
+            </button>
           </div>
         </div>
       ) : null}
-    </>
+    </div>
   );
 }

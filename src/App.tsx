@@ -12,18 +12,26 @@ import {
   Button,
   Card,
   IconTabBar,
+  IconTabBarAction,
   Modal,
   PageContainer,
   TabSuspenseFallback,
 } from "./ui";
+import {
+  TabAdminIcon,
+  TabCalculateIcon,
+  TabLoginIcon,
+  TabPaymentsIcon,
+  TabSettingsIcon,
+} from "./ui/shellTabIcons";
 
 const GamesView = lazy(() => import("./GamesView"));
 const SlotsSettings = lazy(() => import("./SlotsSettings"));
 
-const TABS: { id: ShellTab; icon: string; label: string }[] = [
-  { id: "calculator", icon: "🧮", label: "Calculate" },
-  { id: "games", icon: "💰", label: "Payments" },
-  { id: "settings", icon: "⚙️", label: "Settings" },
+const TABS: { id: ShellTab; icon: React.ReactNode; label: string }[] = [
+  { id: "calculator", icon: <TabCalculateIcon />, label: "Calculate" },
+  { id: "games", icon: <TabPaymentsIcon />, label: "Payments" },
+  { id: "settings", icon: <TabSettingsIcon />, label: "Settings" },
 ];
 
 export default function App() {
@@ -63,30 +71,30 @@ export default function App() {
 
   return (
     <LoadingProvider>
-      <div className="min-h-screen bg-[#eef2f7] font-serif">
+      <div className="min-h-screen bg-[#eef2f7] font-sans">
         <IconTabBar
           items={TABS}
           value={tab}
           onChange={setTab}
+          variant={tab === "calculator" ? "premium" : "light"}
           trailing={
             appAuthed ? (
-              <a
+              <IconTabBarAction
                 href="/admin"
-                className="flex shrink-0 items-center justify-center self-center rounded-md px-2 py-1 text-[11px] font-bold tracking-wide text-[#1d6fb8] hover:underline"
-              >
-                Admin
-              </a>
+                icon={<TabAdminIcon />}
+                label="Admin"
+                variant={tab === "calculator" ? "premium" : "light"}
+              />
             ) : (
-              <button
-                type="button"
+              <IconTabBarAction
+                icon={<TabLoginIcon />}
+                label="Login"
+                variant={tab === "calculator" ? "premium" : "light"}
                 onClick={() => {
                   setPostLoginAdminCta(false);
                   setLoginModalOpen(true);
                 }}
-                className="flex shrink-0 items-center justify-center self-center rounded-md px-2 py-1 text-[11px] font-bold tracking-wide text-[#1d6fb8] hover:underline"
-              >
-                Login
-              </button>
+              />
             )
           }
         />
@@ -105,11 +113,11 @@ export default function App() {
           </AlertBanner>
         )}
 
-        <PageContainer>
+        <PageContainer className={tab === "calculator" ? "!px-0 !pt-2" : ""}>
           {/* Calculator is always mounted to preserve input state between tab switches */}
           <div
             className={
-              tab === "calculator" ? "flex flex-col items-center" : "hidden"
+              tab === "calculator" ? "flex flex-col items-center w-full" : "hidden"
             }
           >
             <Calculator
