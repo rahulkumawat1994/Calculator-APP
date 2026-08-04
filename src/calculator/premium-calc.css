@@ -38,12 +38,7 @@
 .pc-orb {
   position: absolute;
   border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.45;
-}
-
-.pc-bg--illuminated .pc-orb {
-  will-change: transform;
+  opacity: 0.38;
 }
 
 .pc-orb--1 {
@@ -53,7 +48,7 @@
   max-height: 420px;
   top: -18%;
   left: -12%;
-  background: radial-gradient(circle, #c7d2fe 0%, transparent 70%);
+  background: radial-gradient(circle, #c7d2fe 0%, #c7d2fe00 68%);
   animation: pc-float-1 18s var(--pc-ease) infinite;
 }
 
@@ -64,7 +59,7 @@
   max-height: 360px;
   top: 8%;
   right: -18%;
-  background: radial-gradient(circle, #bae6fd 0%, transparent 70%);
+  background: radial-gradient(circle, #bae6fd 0%, #bae6fd00 68%);
   animation: pc-float-2 22s var(--pc-ease) infinite;
 }
 
@@ -75,7 +70,7 @@
   max-height: 380px;
   bottom: 5%;
   left: 15%;
-  background: radial-gradient(circle, #fde68a88 0%, transparent 70%);
+  background: radial-gradient(circle, #fde68a99 0%, #fde68a00 68%);
   animation: pc-float-3 26s var(--pc-ease) infinite;
 }
 

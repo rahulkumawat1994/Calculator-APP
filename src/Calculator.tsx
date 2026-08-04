@@ -3,9 +3,9 @@ import { flushSync } from "react-dom";
 import "./calculator/premium-calc.css";
 import "./calculator/premium-motion.css";
 import "./calculator/premium-hero-effect.css";
+import "./calculator/premium-page-light.css";
 import type { AmountMotion } from "./calculator/AnimatedAmount";
 import { HeroAmount, CLEAR_FINISH_MS, HERO_DEPART_MS } from "./calculator/HeroAmount";
-import { PageBgShift } from "./calculator/PageBgShift";
 import { HeroSubcaption } from "./calculator/HeroSubcaption";
 import {
   HeroCalculateEffect,
@@ -119,10 +119,6 @@ export default function Calculator({
   const [resultsExiting, setResultsExiting] = useState(false);
   const heroAmountRef = useRef<HTMLDivElement>(null);
   const ctaRef = useRef<HTMLButtonElement>(null);
-  const [bgShiftToken, setBgShiftToken] = useState(0);
-  const [bgShiftOrigin, setBgShiftOrigin] = useState({ x: 0, y: 0 });
-  const [bgGlowHold, setBgGlowHold] = useState(false);
-  const bgGlowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** While clear animations run, block edits must not wipe userResults early. */
   const preserveResultsOnBlockChangeRef = useRef(false);
   const [showReport, setShowReport] = useState(false);
@@ -185,21 +181,6 @@ export default function Calculator({
     () => blocks.map((b) => b.text).join("\n~\n"),
     [blocks],
   );
-
-  useEffect(() => {
-    return () => {
-      if (bgGlowTimerRef.current) clearTimeout(bgGlowTimerRef.current);
-    };
-  }, []);
-
-  const holdBgGlow = useCallback((ms = 8000) => {
-    if (bgGlowTimerRef.current) clearTimeout(bgGlowTimerRef.current);
-    setBgGlowHold(true);
-    bgGlowTimerRef.current = setTimeout(() => {
-      setBgGlowHold(false);
-      bgGlowTimerRef.current = null;
-    }, ms);
-  }, []);
 
   useEffect(() => {
     if (!enabledSlots.find((s) => s.id === selectedSlotId)) {
@@ -409,18 +390,6 @@ export default function Calculator({
     );
   };
 
-  const lightOriginFrom = (el: HTMLElement | null) => {
-    const rect = el?.getBoundingClientRect();
-    return rect
-      ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
-      : { x: window.innerWidth / 2, y: window.innerHeight * 0.88 };
-  };
-
-  const fireBgShift = (el: HTMLElement | null) => {
-    setBgShiftOrigin(lightOriginFrom(el));
-    setBgShiftToken((token) => token + 1);
-  };
-
   const handleCalculate = () => {
     setCopied(false);
     setIsSaved(false);
@@ -434,7 +403,6 @@ export default function Calculator({
     }
 
     flushSync(() => setIsCalculating(true));
-    fireBgShift(ctaRef.current);
 
     const runCalculation = () => {
     const hasEnabledSlot = slots.some((s) => s.enabled);
@@ -663,7 +631,6 @@ export default function Calculator({
       setHeroEffectToken((token) => token + 1);
       setIsCalculating(false);
     });
-    holdBgGlow();
 
     if (!firstErrorBlock) {
       let minPatternScore = 100;
@@ -800,11 +767,6 @@ export default function Calculator({
     setWaSingleFallbackSlotId(null);
     setDetectedViaMarket(false);
     setSlotOverridden(false);
-    setBgGlowHold(false);
-    if (bgGlowTimerRef.current) {
-      clearTimeout(bgGlowTimerRef.current);
-      bgGlowTimerRef.current = null;
-    }
   };
 
   const resetClearMotion = () => {
@@ -963,26 +925,37 @@ export default function Calculator({
   const isClearingAnim = resultsExiting || Boolean(departTotal);
   const showSaveDock = canSaveBeforeClear && !isClearingAnim;
   const showCtaBar = !showSaveDock;
-  const bgActive = isCalculating || bgGlowHold;
+  const bgActive =
+    isCalculating ||
+    (Boolean(userResults?.length) && !isClearingAnim);
 
   const contentPadClass = showSaveDock
     ? "pc-content--save-dock"
     : "pc-content--dock";
 
   return (
-    <div className={`pc-root${bgActive ? " pc-root--illuminated" : ""}`}>
+    <div className="pc-root">
       <div
         className={`pc-bg${bgActive ? " pc-bg--illuminated" : ""}`}
         aria-hidden
       >
-        <PageBgShift
-          token={bgShiftToken}
-          origin={bgShiftOrigin}
-          active={bgActive}
-        />
-        <div className="pc-orb pc-orb--1" />
-        <div className="pc-orb pc-orb--2" />
-        <div className="pc-orb pc-orb--3" />
+        {bgActive ? (
+          prefersReducedMotion() ? (
+            <div className="pc-bg__shift pc-bg__shift--static" />
+          ) : (
+            <div className="pc-bg__shift">
+              <div className="pc-bg__shift-track">
+                <div className="pc-bg__shift-inner" />
+              </div>
+            </div>
+          )
+        ) : (
+          <>
+            <div className="pc-orb pc-orb--1" />
+            <div className="pc-orb pc-orb--2" />
+            <div className="pc-orb pc-orb--3" />
+          </>
+        )}
       </div>
 
       <div className={`pc-content ${contentPadClass}`}>
