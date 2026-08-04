@@ -5,6 +5,7 @@ import "./calculator/premium-motion.css";
 import "./calculator/premium-hero-effect.css";
 import type { AmountMotion } from "./calculator/AnimatedAmount";
 import { HeroAmount, CLEAR_FINISH_MS, HERO_DEPART_MS } from "./calculator/HeroAmount";
+import { PageBgShift } from "./calculator/PageBgShift";
 import { HeroSubcaption } from "./calculator/HeroSubcaption";
 import {
   HeroCalculateEffect,
@@ -103,7 +104,6 @@ export default function Calculator({
   const [copied, setCopied] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
   const [resultsAnimKey, setResultsAnimKey] = useState(0);
-  const [heroCelebrate, setHeroCelebrate] = useState(false);
   const [ctaSuccess, setCtaSuccess] = useState(false);
   const [heroEffectToken, setHeroEffectToken] = useState(0);
   const [heroEffectVariant, setHeroEffectVariant] =
@@ -115,6 +115,9 @@ export default function Calculator({
   const [heroSubExiting, setHeroSubExiting] = useState(false);
   const [resultsExiting, setResultsExiting] = useState(false);
   const heroAmountRef = useRef<HTMLDivElement>(null);
+  const ctaRef = useRef<HTMLButtonElement>(null);
+  const [bgShiftToken, setBgShiftToken] = useState(0);
+  const [bgShiftOrigin, setBgShiftOrigin] = useState({ x: 0, y: 0 });
   /** While clear animations run, block edits must not wipe userResults early. */
   const preserveResultsOnBlockChangeRef = useRef(false);
   const [showReport, setShowReport] = useState(false);
@@ -344,6 +347,18 @@ export default function Calculator({
     );
   };
 
+  const lightOriginFrom = (el: HTMLElement | null) => {
+    const rect = el?.getBoundingClientRect();
+    return rect
+      ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+      : { x: window.innerWidth / 2, y: window.innerHeight * 0.88 };
+  };
+
+  const fireBgShift = (el: HTMLElement | null) => {
+    setBgShiftOrigin(lightOriginFrom(el));
+    setBgShiftToken((token) => token + 1);
+  };
+
   const handleCalculate = () => {
     setCopied(false);
     setIsSaved(false);
@@ -353,11 +368,11 @@ export default function Calculator({
 
     if (!blocks.some((b) => b.text.trim())) {
       toast.error("Add text in at least one box before calculating.");
-      scrollToElement("calc-inputs-section");
       return;
     }
 
     flushSync(() => setIsCalculating(true));
+    fireBgShift(ctaRef.current);
 
     const runCalculation = () => {
     const hasEnabledSlot = slots.some((s) => s.enabled);
@@ -584,7 +599,6 @@ export default function Calculator({
       setAccuracyExiting(false);
       setHeroSubExiting(false);
       setResultsExiting(false);
-      setHeroCelebrate(true);
       setCtaSuccess(true);
       setHeroEffectVariant(firstErrorBlock ? "warn" : "success");
       setHeroEffectToken((token) => token + 1);
@@ -592,8 +606,7 @@ export default function Calculator({
     });
 
     window.setTimeout(() => setCtaSuccess(false), 280);
-    window.setTimeout(() => setAmountMotion("idle"), 340);
-    window.setTimeout(() => setHeroCelebrate(false), 720);
+    window.setTimeout(() => setAmountMotion("idle"), 520);
     };
 
     window.setTimeout(runCalculation, 0);
@@ -719,7 +732,6 @@ export default function Calculator({
     setResultsExiting(false);
     setDepartTotal(null);
     setAmountMotion("idle");
-    setHeroCelebrate(false);
   };
 
   const performClear = () => {
@@ -731,7 +743,6 @@ export default function Calculator({
       return;
     }
 
-    setHeroCelebrate(false);
     preserveResultsOnBlockChangeRef.current = true;
     clearInputs();
     setDepartTotal(lineCountFormatter.format(grandTotal));
@@ -870,14 +881,25 @@ export default function Calculator({
   const isClearingAnim = resultsExiting || Boolean(departTotal);
   const showSaveDock = canSaveBeforeClear && !isClearingAnim;
   const showCtaBar = !showSaveDock;
+  const bgActive =
+    isCalculating ||
+    (Boolean(userResults?.length) && !isClearingAnim);
 
   const contentPadClass = showSaveDock
     ? "pc-content--save-dock"
     : "pc-content--dock";
 
   return (
-    <div className="pc-root">
-      <div className="pc-bg" aria-hidden>
+    <div className={`pc-root${bgActive ? " pc-root--illuminated" : ""}`}>
+      <div
+        className={`pc-bg${bgActive ? " pc-bg--illuminated" : ""}`}
+        aria-hidden
+      >
+        <PageBgShift
+          token={bgShiftToken}
+          origin={bgShiftOrigin}
+          active={bgActive}
+        />
         <div className="pc-orb pc-orb--1" />
         <div className="pc-orb pc-orb--2" />
         <div className="pc-orb pc-orb--3" />
@@ -944,7 +966,7 @@ export default function Calculator({
           </div>
         </section>
 
-        <section className={`pc-hero pc-reveal pc-reveal--1${heroCelebrate ? " pc-hero--celebrate" : ""}`}>
+        <section className="pc-hero pc-reveal pc-reveal--1">
           <HeroCalculateEffect
             token={heroEffectToken}
             variant={heroEffectVariant}
@@ -1068,7 +1090,9 @@ export default function Calculator({
       {!showCtaBar ? null : (
         <div className="pc-cta-bar">
           <div className="pc-cta-bar__inner">
+            <div className="pc-cta-shell">
             <button
+              ref={ctaRef}
               type="button"
               onClick={handleCalculate}
               disabled={isCalculating}
@@ -1082,6 +1106,7 @@ export default function Calculator({
                 <span className="pc-cta__spinner" aria-hidden />
               ) : null}
             </button>
+            </div>
             {skipAuditOnCalculate ? (
               <p className="pc-audit">
                 Local only · enable audit in{" "}

@@ -40,14 +40,16 @@ export function AnimatedAmount({
       return;
     }
 
-    // Enter/exit motion handles the visual — show the final value immediately.
-    if (motion === "arrive" || motion === "depart") {
+    if (motion === "depart") {
       setDisplay(formatDisplayAmount(target));
       prevNumeric.current = target;
       return;
     }
 
-    const from = prevNumeric.current ?? target;
+    const from =
+      motion === "arrive"
+        ? (prevNumeric.current ?? 0)
+        : (prevNumeric.current ?? target);
     prevNumeric.current = target;
 
     if (prefersReducedMotion() || from === target) {
@@ -57,10 +59,10 @@ export function AnimatedAmount({
 
     setPulse(true);
     const start = performance.now();
-    const duration = Math.min(
-      180,
-      80 + Math.log10(Math.abs(target - from) + 1) * 28,
-    );
+    const duration =
+      motion === "arrive"
+        ? Math.min(480, 140 + Math.log10(Math.abs(target - from) + 1) * 40)
+        : Math.min(180, 80 + Math.log10(Math.abs(target - from) + 1) * 28);
 
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / duration);

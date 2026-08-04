@@ -179,24 +179,32 @@
   font-size: clamp(2.75rem, 12vw, 3.5rem);
   font-weight: 400;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
-  line-height: 1;
+  letter-spacing: -0.015em;
+  line-height: 1.05;
+  transition: transform 0.28s var(--pc-ease), filter 0.28s var(--pc-ease);
+}
+
+.pc-hero__amount--value {
+  display: inline-block;
   background: linear-gradient(
-    135deg,
-    #0f172a 0%,
-    #334155 45%,
-    var(--pc-accent-warm) 100%
+    168deg,
+    #334155 0%,
+    #0f172a 38%,
+    #0f172a 62%,
+    #1e40af 100%
   );
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  transition: transform 0.28s var(--pc-ease), filter 0.28s var(--pc-ease);
+  filter: drop-shadow(0 6px 16px rgba(15, 23, 42, 0.1));
 }
 
 .pc-hero__amount--idle {
-  background: linear-gradient(135deg, #cbd5e1, #94a3b8);
+  background: linear-gradient(135deg, #cbd5e1 0%, #94a3b8 100%);
   -webkit-background-clip: text;
   background-clip: text;
+  color: transparent;
+  filter: none;
 }
 
 .pc-hero__amount--pulse {
@@ -208,9 +216,9 @@
     transform: scale(1);
     filter: brightness(1);
   }
-  35% {
-    transform: scale(1.04);
-    filter: brightness(1.25);
+  40% {
+    transform: scale(1.015);
+    filter: brightness(1.05);
   }
   100% {
     transform: scale(1);
@@ -589,6 +597,109 @@
   margin-inline: auto;
 }
 
+/* Glass LED border — lights run along the edge */
+@property --pc-led-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.pc-cta-shell {
+  position: relative;
+  border-radius: 17px;
+  padding: 1.5px;
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow: 0 0 24px -8px rgba(79, 70, 229, 0.2);
+}
+
+.pc-cta-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--pc-led-angle),
+    transparent 0deg,
+    transparent 12deg,
+    rgba(255, 255, 255, 0.03) 22deg,
+    rgba(255, 255, 255, 0.14) 40deg,
+    rgba(199, 210, 254, 0.34) 60deg,
+    rgba(165, 180, 252, 0.5) 80deg,
+    rgba(129, 140, 248, 0.44) 92deg,
+    rgba(165, 180, 252, 0.5) 104deg,
+    rgba(199, 210, 254, 0.34) 124deg,
+    rgba(255, 255, 255, 0.14) 144deg,
+    rgba(255, 255, 255, 0.03) 158deg,
+    transparent 168deg,
+    transparent 192deg,
+    rgba(255, 255, 255, 0.03) 202deg,
+    rgba(255, 255, 255, 0.14) 220deg,
+    rgba(199, 210, 254, 0.34) 240deg,
+    rgba(165, 180, 252, 0.5) 260deg,
+    rgba(129, 140, 248, 0.44) 272deg,
+    rgba(165, 180, 252, 0.5) 284deg,
+    rgba(199, 210, 254, 0.34) 304deg,
+    rgba(255, 255, 255, 0.14) 324deg,
+    rgba(255, 255, 255, 0.03) 338deg,
+    transparent 348deg,
+    transparent 360deg
+  );
+  filter: blur(0.75px);
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  animation: pc-cta-led-run 4.2s linear infinite;
+  pointer-events: none;
+}
+
+.pc-cta-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid rgba(129, 140, 248, 0.14);
+  animation: pc-cta-led-breathe 3.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes pc-cta-led-run {
+  to {
+    --pc-led-angle: 360deg;
+  }
+}
+
+@keyframes pc-cta-led-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+    box-shadow: inset 0 0 10px rgba(129, 140, 248, 0.06);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: inset 0 0 18px rgba(129, 140, 248, 0.14);
+  }
+}
+
+.pc-cta-shell:has(.pc-cta:disabled)::before,
+.pc-cta-shell:has(.pc-cta:disabled)::after {
+  animation-play-state: paused;
+  opacity: 0.35;
+}
+
+.pc-cta-shell .pc-cta {
+  position: relative;
+  z-index: 1;
+  border: none;
+  border-radius: 15px;
+}
+
 .pc-cta {
   position: relative;
   width: 100%;
@@ -600,39 +711,26 @@
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #fff;
-  background: linear-gradient(135deg, #2563eb 0%, #4f46e5 50%, #2563eb 100%);
-  background-size: 200% 100%;
+  color: #4338ca;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   cursor: pointer;
   box-shadow:
-    0 0 32px -8px rgba(79, 70, 229, 0.45),
-    0 8px 24px -8px rgba(15, 23, 42, 0.15);
-  transition: transform 0.12s var(--pc-ease), box-shadow 0.2s;
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  transition:
+    transform 0.12s var(--pc-ease),
+    box-shadow 0.2s,
+    background 0.2s,
+    color 0.2s;
 }
 
-.pc-cta::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    105deg,
-    transparent 40%,
-    rgba(255, 255, 255, 0.45) 50%,
-    transparent 60%
-  );
-  transform: translateX(-120%);
-  animation: pc-shimmer 4s ease-in-out infinite;
-}
-
-@keyframes pc-shimmer {
-  0%,
-  70%,
-  100% {
-    transform: translateX(-120%);
-  }
-  85% {
-    transform: translateX(120%);
-  }
+.pc-cta:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow:
+    0 4px 14px -4px rgba(79, 70, 229, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 1);
 }
 
 .pc-cta:active {
@@ -961,7 +1059,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .pc-orb,
-  .pc-cta::after,
   .pc-reveal,
   .pc-slide-up,
   .pc-user,
@@ -969,10 +1066,6 @@
   .pc-accuracy__fill,
   .pc-hero__amount--pulse {
     animation: none !important;
-  }
-
-  .pc-cta::after {
-    display: none;
   }
 }
 

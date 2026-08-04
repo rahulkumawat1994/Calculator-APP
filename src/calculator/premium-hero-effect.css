@@ -134,12 +134,12 @@
 @keyframes pc-amount-arrive {
   0% {
     opacity: 0;
-    transform: translateY(18px) scale(0.92);
-    filter: blur(4px);
+    transform: translateY(14px) scale(0.96);
+    filter: blur(3px);
   }
-  45% {
+  55% {
     opacity: 1;
-    transform: translateY(-2px) scale(1.01);
+    transform: translateY(-1px) scale(1.005);
     filter: blur(0);
   }
   100% {
@@ -162,8 +162,8 @@
   }
   100% {
     opacity: 0;
-    transform: translateY(34px) scale(0.84);
-    filter: blur(6px);
+    transform: translateY(22px) scale(0.96);
+    filter: blur(4px);
   }
 }
 
