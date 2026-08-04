@@ -5,6 +5,8 @@ import {
   CALC_LOCAL_ONLY_CHANGED_EVENT,
   calculateTotal,
   filterRowsByLocalDateRange,
+  filterRowsByInputSearch,
+  filterRowsByAuditMode,
   formatAuditDateTimeParts,
   getSkipAuditOnCalculateAll,
   setSkipAuditOnCalculateAll,
@@ -39,6 +41,7 @@ import {
   REPORT_PUSH_ENABLED_KEY,
 } from "@/hooks/useReportIssuePush";
 import ConfirmDialog from "./ConfirmDialog";
+import AdminAuditAnalytics from "./AdminAuditAnalytics";
 import { DangerActionDialog, Modal } from "./ui";
 
 const REPORT_PUSH_TOOLTIP =
@@ -314,14 +317,34 @@ export default function AdminPage() {
   /** Inclusive local date range on `createdAt` (`YYYY-MM-DD`); both empty = no filter. */
   const [auditDateFrom, setAuditDateFrom] = useState("");
   const [auditDateTo, setAuditDateTo] = useState("");
+  /** Substring search on stored pasted input (case-insensitive). */
+  const [auditInputSearch, setAuditInputSearch] = useState("");
+  /** When true, manual-mode audits are hidden from table and analytics. */
+  const [hideManualAudits, setHideManualAudits] = useState(false);
 
   const hasDateRangeFilter = Boolean(
     auditDateFrom.trim() || auditDateTo.trim()
   );
+  const hasInputSearchFilter = Boolean(auditInputSearch.trim());
+  const hasAuditViewFilter =
+    hasDateRangeFilter || hasInputSearchFilter || hideManualAudits;
 
   const dateFilteredAuditRows = useMemo(
     () => filterRowsByLocalDateRange(auditRows, auditDateFrom, auditDateTo),
     [auditRows, auditDateFrom, auditDateTo]
+  );
+
+  const searchFilteredAuditRows = useMemo(
+    () => filterRowsByInputSearch(dateFilteredAuditRows, auditInputSearch),
+    [dateFilteredAuditRows, auditInputSearch]
+  );
+
+  const auditRowsInView = useMemo(
+    () =>
+      filterRowsByAuditMode(searchFilteredAuditRows, {
+        hideManual: hideManualAudits,
+      }),
+    [searchFilteredAuditRows, hideManualAudits]
   );
 
   /** Re-run parser on stored input; flags rows where current engine total ≠ saved audit total. */
@@ -344,7 +367,7 @@ export default function AdminPage() {
   }, [auditRows]);
 
   const displayAuditRows = useMemo(() => {
-    const rows = [...dateFilteredAuditRows];
+    const rows = [...auditRowsInView];
     const diffKey = (r: CalculationAuditLog) =>
       auditTotalRecalc.get(r.id)?.differs === true ? 1 : 0;
     const fc = (r: CalculationAuditLog) => r.failedCount ?? 0;
@@ -367,16 +390,16 @@ export default function AdminPage() {
       return (b.createdAt ?? 0) - (a.createdAt ?? 0);
     });
     return rows;
-  }, [dateFilteredAuditRows, auditStatusSort, auditDiffSort, auditTotalRecalc]);
+  }, [auditRowsInView, auditStatusSort, auditDiffSort, auditTotalRecalc]);
 
-  /** Sum of stored `total` (calculator grand total) for the current date filter. */
+  /** Sum of stored `total` (calculator grand total) for rows in the current view. */
   const dateFilteredTotalSum = useMemo(
     () =>
-      dateFilteredAuditRows.reduce(
+      auditRowsInView.reduce(
         (s, r) => s + (Number.isFinite(r.total) ? r.total : 0),
         0
       ),
-    [dateFilteredAuditRows]
+    [auditRowsInView]
   );
   /**
    * Sum of current-engine totals **per audit row** (same rows as Total loaded).
@@ -384,11 +407,11 @@ export default function AdminPage() {
    */
   const dateFilteredFreshParsedTotal = useMemo(
     () =>
-      dateFilteredAuditRows.reduce((s, r) => {
+      auditRowsInView.reduce((s, r) => {
         const p = auditTotalRecalc.get(r.id)?.parsedTotal;
         return s + (typeof p === "number" && Number.isFinite(p) ? p : 0);
       }, 0),
-    [dateFilteredAuditRows, auditTotalRecalc]
+    [auditRowsInView, auditTotalRecalc]
   );
   const dateFilteredProfit5Pct = useMemo(
     () => Math.round(dateFilteredTotalSum * 0.05),
@@ -422,6 +445,24 @@ export default function AdminPage() {
     }
     return parts.join("\n\n");
   }, [displayAuditRows, auditRows, selectedAuditIds]);
+
+  const visibleAuditSelectedCount = useMemo(
+    () => displayAuditRows.filter((r) => selectedAuditIds.has(r.id)).length,
+    [displayAuditRows, selectedAuditIds],
+  );
+
+  const allVisibleAuditsSelected =
+    displayAuditRows.length > 0 &&
+    visibleAuditSelectedCount === displayAuditRows.length;
+
+  const auditAnalyticsScopeLabel = [
+    hasAuditViewFilter ? "Based on current filters" : "Based on all loaded audits",
+    hideManualAudits ? "manual entries hidden" : null,
+    hasInputSearchFilter ? "search applied" : null,
+    hasDateRangeFilter ? "date range applied" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const load = async () => {
     setLoading(true);
@@ -662,6 +703,14 @@ export default function AdminPage() {
       else next.add(id);
       return next;
     });
+  };
+
+  const selectAllVisibleAudits = () => {
+    setSelectedAuditIds(new Set(displayAuditRows.map((r) => r.id)));
+  };
+
+  const clearAuditSelection = () => {
+    setSelectedAuditIds(new Set());
   };
 
   const toggleReportSelect = (id: string) => {
@@ -1134,11 +1183,38 @@ export default function AdminPage() {
                     </h2>
                     <p className="mt-1 text-[12px] text-slate-500 sm:text-[13px]">
                       {displayAuditRows.length} in view
-                      {hasDateRangeFilter
+                      {hasAuditViewFilter
                         ? ` · ${auditRows.length} loaded from server`
                         : ` · ${auditRows.length} loaded`}
                     </p>
                     <div className="mt-3 flex flex-col gap-3 rounded-xl border border-slate-200/60 bg-white p-3 sm:p-3.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                        Search input
+                      </p>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[12px] font-medium text-slate-600">
+                          Find pasted text
+                        </span>
+                        <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-center">
+                          <input
+                            type="search"
+                            value={auditInputSearch}
+                            onChange={(e) => setAuditInputSearch(e.target.value)}
+                            placeholder="e.g. jodi, into5, WhatsApp contact…"
+                            className="min-h-10 w-full min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50/50 px-2.5 py-2 text-[13px] text-slate-900 shadow-inner outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                            aria-label="Search audit logs by pasted input"
+                          />
+                          {hasInputSearchFilter ? (
+                            <button
+                              type="button"
+                              onClick={() => setAuditInputSearch("")}
+                              className="h-10 shrink-0 rounded-lg border border-slate-200 bg-white px-3.5 text-[12px] font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
+                            >
+                              Clear search
+                            </button>
+                          ) : null}
+                        </div>
+                      </label>
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
                         Date range
                       </p>
@@ -1181,6 +1257,22 @@ export default function AdminPage() {
                             Clear range
                           </button>
                         ) : null}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
+                        <label className="flex cursor-pointer items-center gap-2.5">
+                          <input
+                            type="checkbox"
+                            checked={hideManualAudits}
+                            onChange={(e) => setHideManualAudits(e.target.checked)}
+                            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500/30"
+                          />
+                          <span className="text-[12px] font-medium text-slate-700">
+                            Hide manual entries
+                          </span>
+                        </label>
+                        <p className="text-[11px] text-slate-500">
+                          Show WhatsApp audits only in table and analytics
+                        </p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2.5 border-t border-slate-100 pt-3 sm:gap-3">
                         <div
@@ -1286,6 +1378,13 @@ export default function AdminPage() {
                   </div>
                 </div>
               </div>
+              {!loading && !auditListLoadError && auditRows.length > 0 ? (
+                <AdminAuditAnalytics
+                  rows={auditRowsInView}
+                  differsById={auditTotalRecalc}
+                  scopeLabel={auditAnalyticsScopeLabel}
+                />
+              ) : null}
               {loading ? (
                 <div className="flex min-h-[120px] items-center justify-center p-6 text-slate-500 sm:p-8">
                   <div className="text-center text-[14px]">
@@ -1321,26 +1420,86 @@ export default function AdminPage() {
               ) : displayAuditRows.length === 0 ? (
                 <div className="p-6 text-center text-sm sm:p-8">
                   <p className="font-semibold text-slate-800">
-                    No rows in this range
+                    No rows match your filters
                   </p>
                   <p className="mt-1.5 max-w-sm mx-auto text-[12px] text-slate-500 leading-relaxed">
-                    Try a different range or clear the date filter. Only a
-                    recent batch is loaded — older days may be missing.
+                    {hasInputSearchFilter
+                      ? "Try different search text, adjust the date range, or clear filters. Only a recent batch is loaded — older rows may be missing."
+                      : "Try a different range or clear the date filter. Only a recent batch is loaded — older days may be missing."}
                   </p>
-                  {hasDateRangeFilter ? (
+                  {hasAuditViewFilter ? (
                     <button
                       type="button"
                       onClick={() => {
                         setAuditDateFrom("");
                         setAuditDateTo("");
+                        setAuditInputSearch("");
+                        setHideManualAudits(false);
                       }}
                       className="mt-4 rounded-lg border border-blue-200 bg-white px-4 py-2 text-[12px] font-semibold text-blue-700 shadow-sm transition hover:bg-slate-50"
                     >
-                      Clear range
+                      Clear filters
                     </button>
                   ) : null}
                 </div>
               ) : (
+                <>
+                  <div className="flex flex-col gap-2 border-b border-slate-100 bg-slate-50/40 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+                    <p className="text-[12px] text-slate-600">
+                      {selectedAuditIds.size > 0 ? (
+                        <>
+                          <span className="font-semibold text-slate-800">
+                            {visibleAuditSelectedCount}
+                          </span>{" "}
+                          of {displayAuditRows.length} in view selected
+                          {selectedAuditIds.size > visibleAuditSelectedCount ? (
+                            <span className="text-slate-500">
+                              {" "}
+                              · {selectedAuditIds.size} total selected
+                            </span>
+                          ) : null}
+                        </>
+                      ) : (
+                        <>
+                          {displayAuditRows.length} row
+                          {displayAuditRows.length === 1 ? "" : "s"} in view —
+                          tap # to select
+                        </>
+                      )}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={selectAllVisibleAudits}
+                        disabled={
+                          loading ||
+                          clearingAudit ||
+                          pruningAuditDupes ||
+                          bulkAuditDeleting ||
+                          allVisibleAuditsSelected
+                        }
+                        title={`Select all ${displayAuditRows.length} row(s) currently shown (search + date filters)`}
+                        className="h-9 rounded-lg border border-blue-200 bg-white px-3 text-[12px] font-semibold text-blue-700 shadow-sm transition hover:bg-sky-50/80 disabled:opacity-50"
+                      >
+                        Select all in view
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearAuditSelection}
+                        disabled={
+                          loading ||
+                          clearingAudit ||
+                          pruningAuditDupes ||
+                          bulkAuditDeleting ||
+                          selectedAuditIds.size === 0
+                        }
+                        title="Clear all selected audit rows"
+                        className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Clear selection
+                      </button>
+                    </div>
+                  </div>
                 <div className="overflow-x-auto overscroll-x-contain">
                   <table className="w-full min-w-[720px] text-left text-[11px] sm:text-[12px]">
                     <thead className="bg-slate-100/80 text-slate-600">
@@ -1605,6 +1764,7 @@ export default function AdminPage() {
                     </tbody>
                   </table>
                 </div>
+                </>
               )}
             </section>
           )}
@@ -2296,9 +2456,20 @@ export default function AdminPage() {
               <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
                 Selected
               </span>
-              <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-bold tabular-nums text-white shadow-sm">
-                {selectedAuditIds.size}
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={clearAuditSelection}
+                  disabled={bulkAuditDeleting}
+                  className="rounded-md px-2 py-0.5 text-[10px] font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-45"
+                  title="Clear selection"
+                >
+                  Clear
+                </button>
+                <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-bold tabular-nums text-white shadow-sm">
+                  {selectedAuditIds.size}
+                </span>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-px bg-slate-100 p-px">
               <button

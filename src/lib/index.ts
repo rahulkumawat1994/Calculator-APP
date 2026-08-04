@@ -8,6 +8,7 @@ export {
 } from "./format/dateTime";
 export type { AuditDateTimeParts } from "./format/dateTime";
 export * from "./audit/auditDateFilter";
+export * from "./audit/auditAnalytics";
 export * from "./preferences/calcLocalAudit";
 export { apiErrorMessage, toastApiError } from "./toast/apiToast";
 export * from "./calcUtils";

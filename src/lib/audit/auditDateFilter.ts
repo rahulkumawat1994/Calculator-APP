@@ -4,7 +4,7 @@
  * (overnight game sessions — e.g. Disawar 3 AM — belong to the prior game day).
  * Duplicated in Admin/Audit only where needed for display; this module owns range filtering.
  */
-function localDateKeyFromTimestamp(ts: number | undefined): string {
+export function localGameDayKeyFromTimestamp(ts: number | undefined): string {
   if (ts == null || !Number.isFinite(ts)) return "";
   const d = new Date(ts);
   // Treat anything before 06:00 AM as the previous game day.
@@ -39,10 +39,46 @@ export function filterRowsByLocalDateRange<T extends { createdAt: number }>(
   }
 
   return rows.filter((r) => {
-    const k = localDateKeyFromTimestamp(r.createdAt);
+    const k = localGameDayKeyFromTimestamp(r.createdAt);
     if (!k) return false;
     return k >= lo && k <= hi;
   });
+}
+
+/** Case-insensitive substring match on stored pasted `input`. Empty query = no filter. */
+export function filterRowsByInputSearch<T extends { input?: string }>(
+  rows: T[],
+  query: string,
+): T[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return rows;
+  return rows.filter((r) => (r.input ?? "").toLowerCase().includes(q));
+}
+
+/** Optionally exclude manual or WhatsApp rows. Both false = no filter. */
+export function filterRowsByAuditMode<T extends { mode: "manual" | "wa" }>(
+  rows: T[],
+  options: { hideManual?: boolean; hideWhatsApp?: boolean },
+): T[] {
+  const { hideManual = false, hideWhatsApp = false } = options;
+  if (!hideManual && !hideWhatsApp) return rows;
+  return rows.filter((r) => {
+    if (hideManual && r.mode === "manual") return false;
+    if (hideWhatsApp && r.mode === "wa") return false;
+    return true;
+  });
+}
+
+/** Filter by game-day month (`YYYY-MM`). Empty = no filter. */
+export function filterRowsByGameMonth<T extends { createdAt: number }>(
+  rows: T[],
+  monthKey: string,
+): T[] {
+  const m = monthKey.trim();
+  if (!m) return rows;
+  return rows.filter((r) =>
+    localGameDayKeyFromTimestamp(r.createdAt).startsWith(`${m}-`),
+  );
 }
 
 export function totalLabelForDateRange(
