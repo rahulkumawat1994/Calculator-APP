@@ -25,7 +25,22 @@
 
 .pc-slide-up,
 .pc-results-enter {
-  animation: pc-results-in 0.38s var(--pc-spring) both;
+  animation: pc-results-in 0.28s var(--pc-spring) both;
+}
+
+.pc-results-exit {
+  animation: pc-results-out 0.38s var(--pc-spring) both;
+}
+
+@keyframes pc-results-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(32px) scale(0.98);
+  }
 }
 
 @keyframes pc-results-in {
@@ -196,9 +211,9 @@
 /* CTA loading + success */
 .pc-cta {
   transition:
-    transform 0.25s var(--pc-spring),
-    box-shadow 0.3s var(--pc-ease),
-    filter 0.3s ease;
+    transform 0.12s var(--pc-ease),
+    box-shadow 0.2s var(--pc-ease),
+    filter 0.15s ease;
 }
 
 .pc-cta__label {
@@ -268,7 +283,7 @@
 }
 
 .pc-cta--success {
-  animation: pc-cta-success 0.6s var(--pc-spring);
+  animation: pc-cta-success 0.35s var(--pc-spring);
 }
 
 @keyframes pc-cta-success {
@@ -291,8 +306,8 @@
 }
 
 .pc-cta:not(:disabled):active {
-  transform: scale(0.98) translateY(0);
-  transition-duration: 0.1s;
+  transform: scale(0.97) translateY(0);
+  transition-duration: 0.05s;
 }
 
 /* Chips & actions */
@@ -374,6 +389,7 @@
   .pc-reveal,
   .pc-slide-up,
   .pc-results-enter,
+  .pc-results-exit,
   .pc-user,
   .pc-result,
   .pc-total-card,

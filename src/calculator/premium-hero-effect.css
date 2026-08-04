@@ -1,0 +1,322 @@
+.pc-hero {
+  isolation: isolate;
+}
+
+.pc-hero__amount-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.pc-hero-fx {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.pc-hero > :not(.pc-hero-fx) {
+  position: relative;
+  z-index: 1;
+}
+
+.pc-hero-fx__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.pc-hero-fx__ring {
+  position: absolute;
+  left: 50%;
+  top: 54%;
+  width: 3.5rem;
+  height: 3.5rem;
+  margin: -1.75rem 0 0 -1.75rem;
+  border-radius: 50%;
+  border: 1px solid rgba(79, 70, 229, 0.42);
+  opacity: 0;
+  animation: pc-hero-fx-ring 0.95s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.pc-hero-fx--warn .pc-hero-fx__ring {
+  border-color: rgba(217, 119, 6, 0.42);
+}
+
+.pc-hero-fx__ring--b {
+  animation-delay: 0.08s;
+  border-width: 1.5px;
+}
+
+@keyframes pc-hero-fx-ring {
+  0% {
+    opacity: 0.65;
+    transform: scale(0.55);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(3.4);
+  }
+}
+
+.pc-hero-fx__shimmer {
+  position: absolute;
+  inset: 18% 8% 28%;
+  overflow: hidden;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.pc-hero-fx__shimmer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -70%;
+  width: 42%;
+  height: 100%;
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.05) 18%,
+    rgba(255, 255, 255, 0.55) 50%,
+    rgba(255, 255, 255, 0.05) 82%,
+    transparent 100%
+  );
+  transform: skewX(-16deg);
+  animation: pc-hero-fx-shimmer 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.06s both;
+}
+
+.pc-hero-fx--warn .pc-hero-fx__shimmer::after {
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    rgba(255, 251, 235, 0.05) 18%,
+    rgba(255, 247, 237, 0.62) 50%,
+    rgba(255, 251, 235, 0.05) 82%,
+    transparent 100%
+  );
+}
+
+@keyframes pc-hero-fx-shimmer {
+  from {
+    left: -70%;
+  }
+  to {
+    left: 130%;
+  }
+}
+
+.pc-hero--celebrate::before {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(79, 70, 229, 0.18) 0%,
+    rgba(99, 102, 241, 0.08) 42%,
+    transparent 72%
+  );
+  animation: pc-hero-glow 0.95s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.pc-hero--celebrate .pc-eyebrow {
+  animation: pc-hero-fx-fade 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.pc-hero--celebrate .pc-hero__sub {
+  animation: pc-hero-fx-rise 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.08s both;
+}
+
+/* Number enter — rises into place on calculate */
+.pc-hero__amount--arrive {
+  animation: pc-amount-arrive 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes pc-amount-arrive {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.92);
+    filter: blur(4px);
+  }
+  45% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.01);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+/* Number exit — falls away on clear (reverse of arrive) */
+.pc-hero__amount--depart {
+  animation: pc-amount-depart 0.48s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes pc-amount-depart {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(34px) scale(0.84);
+    filter: blur(6px);
+  }
+}
+
+/* Idle dash — hidden while a total is showing */
+.pc-hero__amount--dash {
+  display: none;
+}
+
+.pc-hero__amount-wrap--idle .pc-hero__amount--dash {
+  display: block;
+}
+
+/* Clear: total falls away while dash rises in underneath */
+.pc-hero__amount-wrap--depart .pc-hero__amount--value {
+  position: relative;
+  z-index: 1;
+}
+
+.pc-hero__amount-wrap--depart .pc-hero__amount--dash {
+  display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  text-align: center;
+  opacity: 0;
+  animation: pc-dash-rise 0.2s cubic-bezier(0.22, 1, 0.36, 1) 0.28s forwards;
+}
+
+@keyframes pc-dash-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.9);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.pc-hero__amount-wrap--depart::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0.35rem;
+  height: 0.35rem;
+  margin: -0.175rem 0 0 -0.175rem;
+  border-radius: 50%;
+  background: #94a3b8;
+  opacity: 0;
+  box-shadow:
+    -18px -6px 0 -1px rgba(148, 163, 184, 0.55),
+    16px -10px 0 -1px rgba(148, 163, 184, 0.45),
+    -8px 12px 0 -1px rgba(148, 163, 184, 0.4),
+    20px 8px 0 -1px rgba(148, 163, 184, 0.35);
+  animation: pc-amount-blast 0.48s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  pointer-events: none;
+}
+
+@keyframes pc-amount-blast {
+  0% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+
+@keyframes pc-hero-fx-fade {
+  from {
+    opacity: 0.45;
+    letter-spacing: 0.14em;
+  }
+  to {
+    opacity: 1;
+    letter-spacing: 0.2em;
+  }
+}
+
+@keyframes pc-hero-fx-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pc-hero__sub-shell {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-top: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition:
+    grid-template-rows 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.4s ease,
+    margin-top 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pc-hero__sub-shell__inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.pc-hero__sub-shell.pc-hero__sub-shell--open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  margin-top: 0.65rem;
+}
+
+.pc-hero__sub-shell.pc-hero__sub-shell--exit {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-top: 0;
+}
+
+.pc-hero__sub-shell .pc-hero__sub {
+  margin-top: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pc-hero-fx,
+  .pc-hero--celebrate .pc-eyebrow,
+  .pc-hero--celebrate .pc-hero__sub,
+  .pc-hero__amount--arrive,
+  .pc-hero__amount--depart,
+  .pc-hero__amount-wrap--depart::after {
+    animation: none !important;
+  }
+
+  .pc-hero__amount-wrap--depart .pc-hero__amount--dash {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+
+  .pc-hero__sub-shell {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    margin-top: 0.65rem;
+    transition: none;
+  }
+
+  .pc-hero__sub-shell.pc-hero__sub-shell--exit {
+    display: none;
+  }
+}

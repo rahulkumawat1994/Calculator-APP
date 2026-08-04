@@ -111,6 +111,7 @@
   max-width: 440px;
   margin-inline: auto;
   padding: 0.25rem 1rem 1rem;
+  transition: padding-bottom 0.22s var(--pc-ease);
 }
 
 /* Entrance animations */
@@ -606,7 +607,7 @@
   box-shadow:
     0 0 32px -8px rgba(79, 70, 229, 0.45),
     0 8px 24px -8px rgba(15, 23, 42, 0.15);
-  transition: transform 0.2s var(--pc-ease), box-shadow 0.2s;
+  transition: transform 0.12s var(--pc-ease), box-shadow 0.2s;
 }
 
 .pc-cta::after {
@@ -635,7 +636,8 @@
 }
 
 .pc-cta:active {
-  transform: scale(0.985);
+  transform: scale(0.97);
+  transition-duration: 0.05s;
 }
 
 .pc-cta--with-dock {

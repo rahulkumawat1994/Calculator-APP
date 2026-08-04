@@ -14,6 +14,7 @@ import {
 export type CalculatorResultsPanelProps = {
   userResults: PerUserCalc[];
   resultsAnimKey: number;
+  exiting?: boolean;
   resultViewMode: ResultViewMode;
   onResultViewModeChange: (mode: ResultViewMode) => void;
   checkFontLevel: number;
@@ -33,6 +34,7 @@ export type CalculatorResultsPanelProps = {
 export function CalculatorResultsPanel({
   userResults,
   resultsAnimKey,
+  exiting = false,
   resultViewMode,
   onResultViewModeChange,
   checkFontLevel,
@@ -51,7 +53,10 @@ export function CalculatorResultsPanel({
   if (!userResults.length) return null;
 
   return (
-    <div key={resultsAnimKey} className="pc-results pc-results-enter">
+    <div
+      key={resultsAnimKey}
+      className={`pc-results ${exiting ? "pc-results-exit" : "pc-results-enter"}`}
+    >
       <div className="pc-results__head">
         <div className="min-w-0">
           <h2 className="pc-glass__title">Breakdown</h2>

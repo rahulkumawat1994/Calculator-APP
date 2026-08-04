@@ -1,0 +1,64 @@
+.pc-accuracy-shell.pc-glass {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-bottom: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition:
+    grid-template-rows 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.4s ease,
+    margin-bottom 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pc-accuracy-shell__inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.pc-accuracy-shell.pc-glass.pc-accuracy-shell--open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  margin-bottom: 0.85rem;
+}
+
+.pc-accuracy-shell.pc-glass.pc-accuracy-shell--open .pc-accuracy__fill {
+  transform-origin: left center;
+  animation: pc-bar-grow 0.52s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both;
+}
+
+.pc-accuracy-shell.pc-glass.pc-accuracy-shell--exit {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-bottom: 0;
+  pointer-events: none;
+}
+
+.pc-accuracy-shell.pc-glass.pc-accuracy-shell--exit .pc-accuracy__fill {
+  width: 0 !important;
+  transition: width 0.45s cubic-bezier(0.45, 0, 0.55, 1);
+  animation: none;
+}
+
+.pc-accuracy-shell.pc-glass.pc-accuracy-shell--exit .pc-accuracy__value,
+.pc-accuracy-shell.pc-glass.pc-accuracy-shell--exit .pc-accuracy__label,
+.pc-accuracy-shell.pc-glass.pc-accuracy-shell--exit .pc-accuracy__reasons {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pc-accuracy-shell.pc-glass {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    margin-bottom: 0.85rem;
+    transition: none;
+  }
+
+  .pc-accuracy-shell.pc-glass.pc-accuracy-shell--exit {
+    display: none;
+  }
+
+  .pc-accuracy-shell.pc-glass.pc-accuracy-shell--open .pc-accuracy__fill {
+    animation: none;
+  }
+}

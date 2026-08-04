@@ -6,14 +6,22 @@ import {
   prefersReducedMotion,
 } from "./motion";
 
+export type AmountMotion = "idle" | "arrive" | "depart";
+
 type Props = {
   value: string;
   className?: string;
   idle?: boolean;
+  motion?: AmountMotion;
 };
 
-/** Hero total with count-up + celebration pulse when the value changes. */
-export function AnimatedAmount({ value, className = "", idle = false }: Props) {
+/** Hero total with count-up + directional enter/exit motion. */
+export function AnimatedAmount({
+  value,
+  className = "",
+  idle = false,
+  motion = "idle",
+}: Props) {
   const [display, setDisplay] = useState(value);
   const [pulse, setPulse] = useState(false);
   const rafRef = useRef<number | null>(null);
@@ -32,24 +40,26 @@ export function AnimatedAmount({ value, className = "", idle = false }: Props) {
       return;
     }
 
-    const from = prevNumeric.current ?? 0;
+    // Enter/exit motion handles the visual — show the final value immediately.
+    if (motion === "arrive" || motion === "depart") {
+      setDisplay(formatDisplayAmount(target));
+      prevNumeric.current = target;
+      return;
+    }
+
+    const from = prevNumeric.current ?? target;
     prevNumeric.current = target;
 
     if (prefersReducedMotion() || from === target) {
       setDisplay(formatDisplayAmount(target));
-      if (from !== target) {
-        setPulse(true);
-        const t = window.setTimeout(() => setPulse(false), 280);
-        return () => window.clearTimeout(t);
-      }
       return;
     }
 
     setPulse(true);
     const start = performance.now();
     const duration = Math.min(
-      320,
-      120 + Math.log10(Math.abs(target - from) + 1) * 40,
+      180,
+      80 + Math.log10(Math.abs(target - from) + 1) * 28,
     );
 
     const tick = (now: number) => {
@@ -61,7 +71,7 @@ export function AnimatedAmount({ value, className = "", idle = false }: Props) {
         rafRef.current = requestAnimationFrame(tick);
       } else {
         setDisplay(formatDisplayAmount(target));
-        window.setTimeout(() => setPulse(false), 220);
+        window.setTimeout(() => setPulse(false), 120);
       }
     };
 
@@ -69,11 +79,18 @@ export function AnimatedAmount({ value, className = "", idle = false }: Props) {
     return () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     };
-  }, [value, idle]);
+  }, [value, idle, motion]);
+
+  const motionClass =
+    motion === "arrive"
+      ? " pc-hero__amount--arrive"
+      : motion === "depart"
+        ? " pc-hero__amount--depart"
+        : "";
 
   return (
     <span
-      className={`pc-hero__amount${pulse ? " pc-hero__amount--pulse" : ""}${idle ? " pc-hero__amount--idle" : ""} ${className}`.trim()}
+      className={`pc-hero__amount${pulse ? " pc-hero__amount--pulse" : ""}${idle ? " pc-hero__amount--idle" : ""}${motionClass} ${className}`.trim()}
       aria-live="polite"
     >
       {display}

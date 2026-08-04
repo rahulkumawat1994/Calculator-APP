@@ -1,8 +1,19 @@
-import { useState, useEffect, useMemo, useLayoutEffect, useCallback } from "react";
+import { useState, useEffect, useMemo, useLayoutEffect, useCallback, useRef } from "react";
+import { flushSync } from "react-dom";
 import "./calculator/premium-calc.css";
 import "./calculator/premium-motion.css";
-import { AnimatedAmount } from "./calculator/AnimatedAmount";
+import "./calculator/premium-hero-effect.css";
+import type { AmountMotion } from "./calculator/AnimatedAmount";
+import { HeroAmount, CLEAR_FINISH_MS, HERO_DEPART_MS } from "./calculator/HeroAmount";
+import { HeroSubcaption } from "./calculator/HeroSubcaption";
+import {
+  HeroCalculateEffect,
+  type HeroEffectVariant,
+} from "./calculator/HeroCalculateEffect";
 import { CalculatorResultsPanel } from "./calculator/CalculatorResultsPanel";
+import {
+  PatternAccuracyPanel,
+} from "./calculator/PatternAccuracyPanel";
 import { ClearConfirmModal } from "./calculator/ClearConfirmModal";
 import {
   collectAllParsedWaMessages,
@@ -22,6 +33,7 @@ import {
 } from "./calculator/calcHelpers";
 import type { ReportIssuePrefill } from "./calculator/reportIssueTypes";
 import { scrollElementIntoView, scrollToElement } from "./calculator/scrollUtils";
+import { prefersReducedMotion } from "./calculator/motion";
 import { toast } from "react-toastify";
 import {
   calculateTotal,
@@ -93,6 +105,18 @@ export default function Calculator({
   const [resultsAnimKey, setResultsAnimKey] = useState(0);
   const [heroCelebrate, setHeroCelebrate] = useState(false);
   const [ctaSuccess, setCtaSuccess] = useState(false);
+  const [heroEffectToken, setHeroEffectToken] = useState(0);
+  const [heroEffectVariant, setHeroEffectVariant] =
+    useState<HeroEffectVariant>("success");
+  const [amountMotion, setAmountMotion] = useState<AmountMotion>("idle");
+  const [departTotal, setDepartTotal] = useState<string | null>(null);
+  const [accuracyExiting, setAccuracyExiting] = useState(false);
+  const [heroSubHold, setHeroSubHold] = useState<string | null>(null);
+  const [heroSubExiting, setHeroSubExiting] = useState(false);
+  const [resultsExiting, setResultsExiting] = useState(false);
+  const heroAmountRef = useRef<HTMLDivElement>(null);
+  /** While clear animations run, block edits must not wipe userResults early. */
+  const preserveResultsOnBlockChangeRef = useRef(false);
   const [showReport, setShowReport] = useState(false);
   const [reportPrefill, setReportPrefill] = useState<ReportIssuePrefill>({
     input: "",
@@ -240,9 +264,11 @@ export default function Calculator({
         if (!slotOverridden) setSelectedSlotId(autoSlot.id);
       }
     }
-    setUserResults(null);
-    setIsSaved(false);
-    setSavedInfo(null);
+    if (!preserveResultsOnBlockChangeRef.current) {
+      setUserResults(null);
+      setIsSaved(false);
+      setSavedInfo(null);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- slotOverridden omitted like original; selectedSlotId needed for fallback assignment
   }, [blocksTextSig, slots, autoSlot.id, selectedSlotId]);
 
@@ -325,12 +351,22 @@ export default function Calculator({
     const skipAuditLog = getSkipAuditOnCalculateAll();
     setSkipAuditOnCalculate(skipAuditLog);
 
+    if (!blocks.some((b) => b.text.trim())) {
+      toast.error("Add text in at least one box before calculating.");
+      scrollToElement("calc-inputs-section");
+      return;
+    }
+
+    flushSync(() => setIsCalculating(true));
+
+    const runCalculation = () => {
     const hasEnabledSlot = slots.some((s) => s.enabled);
     const hasWaBlock = blocks.some((b) => {
       const wa = parseWhatsAppMessages(b.text);
       return Boolean(wa && wa.length > 0);
     });
     if (hasWaBlock && !hasEnabledSlot) {
+      setIsCalculating(false);
       toast.error(
         "Add and enable at least one game in Settings before calculating WhatsApp chats.",
       );
@@ -338,9 +374,6 @@ export default function Calculator({
       return;
     }
 
-    setIsCalculating(true);
-
-    const runCalculation = () => {
     const ledgerOpDay = new Date();
     const next: PerUserCalc[] = [];
     for (let idx = 0; idx < blocks.length; idx++) {
@@ -539,21 +572,31 @@ export default function Calculator({
         ? next[0].blockId
         : null;
     const hadResults = Boolean(userResults?.length);
-    setExpandedResultBlockId(
-      firstErrorBlock?.blockId ?? singleWithLines,
-    );
-    setAccordionScrollToBlockId(firstErrorBlock?.blockId ?? null);
-    setUserResults(next);
-    if (!hadResults) setResultsAnimKey((k) => k + 1);
-    setHeroCelebrate(true);
-    setCtaSuccess(true);
-    setIsCalculating(false);
+    flushSync(() => {
+      setUserResults(next);
+      if (!hadResults) setResultsAnimKey((k) => k + 1);
+      setExpandedResultBlockId(
+        firstErrorBlock?.blockId ?? singleWithLines,
+      );
+      setAccordionScrollToBlockId(firstErrorBlock?.blockId ?? null);
+      setAmountMotion("arrive");
+      setDepartTotal(null);
+      setAccuracyExiting(false);
+      setHeroSubExiting(false);
+      setResultsExiting(false);
+      setHeroCelebrate(true);
+      setCtaSuccess(true);
+      setHeroEffectVariant(firstErrorBlock ? "warn" : "success");
+      setHeroEffectToken((token) => token + 1);
+      setIsCalculating(false);
+    });
 
-    window.setTimeout(() => setCtaSuccess(false), 320);
-    window.setTimeout(() => setHeroCelebrate(false), 450);
+    window.setTimeout(() => setCtaSuccess(false), 280);
+    window.setTimeout(() => setAmountMotion("idle"), 340);
+    window.setTimeout(() => setHeroCelebrate(false), 720);
     };
 
-    requestAnimationFrame(runCalculation);
+    window.setTimeout(runCalculation, 0);
   };
 
   const handleSave = async (): Promise<boolean> => {
@@ -648,13 +691,16 @@ export default function Calculator({
     }
   };
 
-  const performClear = () => {
-    setShowClearConfirm(false);
-    setExpandedResultBlockId(null);
-    setAccordionScrollToBlockId(null);
+  const clearInputs = () => {
     setBlocks([
       { id: newBlockId(), label: "User 1", text: "", labelLocked: false },
     ]);
+  };
+
+  const resetCalculatorState = (inputsAlreadyCleared = false) => {
+    setExpandedResultBlockId(null);
+    setAccordionScrollToBlockId(null);
+    if (!inputsAlreadyCleared) clearInputs();
     setUserResults(null);
     setCopied(false);
     setIsSaved(false);
@@ -664,6 +710,49 @@ export default function Calculator({
     setWaSingleFallbackSlotId(null);
     setDetectedViaMarket(false);
     setSlotOverridden(false);
+  };
+
+  const resetClearMotion = () => {
+    setAccuracyExiting(false);
+    setHeroSubHold(null);
+    setHeroSubExiting(false);
+    setResultsExiting(false);
+    setDepartTotal(null);
+    setAmountMotion("idle");
+    setHeroCelebrate(false);
+  };
+
+  const performClear = () => {
+    setShowClearConfirm(false);
+
+    if (prefersReducedMotion() || !userResults?.length) {
+      resetCalculatorState();
+      resetClearMotion();
+      return;
+    }
+
+    setHeroCelebrate(false);
+    preserveResultsOnBlockChangeRef.current = true;
+    clearInputs();
+    setDepartTotal(lineCountFormatter.format(grandTotal));
+    setAmountMotion("depart");
+    setAccuracyExiting(true);
+    setResultsExiting(true);
+    if (heroSubLabel) {
+      setHeroSubHold(heroSubLabel);
+      setHeroSubExiting(true);
+    }
+
+    window.setTimeout(() => {
+      setDepartTotal(null);
+      setAmountMotion("idle");
+    }, HERO_DEPART_MS);
+
+    window.setTimeout(() => {
+      preserveResultsOnBlockChangeRef.current = false;
+      resetCalculatorState(true);
+      resetClearMotion();
+    }, CLEAR_FINISH_MS);
   };
 
   const needsClearConfirm =
@@ -725,6 +814,24 @@ export default function Calculator({
     userResults?.reduce((s, u) => s + (u.result.failedLines?.length ?? 0), 0) ??
     0;
 
+  const heroSubLabel = useMemo(() => {
+    if (!userResults?.length && uncountedFailedLines <= 0) return null;
+    const parts: string[] = [];
+    if (userResults?.length) {
+      parts.push(
+        `${userResults.length} user${userResults.length === 1 ? "" : "s"} calculated`,
+      );
+    }
+    if (uncountedFailedLines > 0) {
+      parts.push(
+        `${uncountedFailedLines} line${uncountedFailedLines === 1 ? "" : "s"} not counted`,
+      );
+    }
+    return parts.join(" · ");
+  }, [uncountedFailedLines, userResults?.length]);
+
+  const heroSubText = heroSubExiting ? heroSubHold : heroSubLabel;
+
   const defaultReportInput = useMemo(
     () =>
       blocks
@@ -760,16 +867,11 @@ export default function Calculator({
   );
 
   const showDetectedBadge = Boolean(detectedSlotsSummary) && !slotOverridden;
+  const isClearingAnim = resultsExiting || Boolean(departTotal);
+  const showSaveDock = canSaveBeforeClear && !isClearingAnim;
+  const showCtaBar = !showSaveDock;
 
-  const accuracyFillClass = !patternAccuracyAggregate
-    ? ""
-    : patternAccuracyAggregate.scorePercent >= 100
-      ? "pc-accuracy__fill--ok"
-      : patternAccuracyAggregate.scorePercent >= 99
-        ? "pc-accuracy__fill--warn"
-        : "pc-accuracy__fill--bad";
-
-  const contentPadClass = canSaveBeforeClear
+  const contentPadClass = showSaveDock
     ? "pc-content--save-dock"
     : "pc-content--dock";
 
@@ -843,57 +945,30 @@ export default function Calculator({
         </section>
 
         <section className={`pc-hero pc-reveal pc-reveal--1${heroCelebrate ? " pc-hero--celebrate" : ""}`}>
-          <p className="pc-eyebrow">Combined total</p>
-          <AnimatedAmount
-            value={
-              userResults?.length
-                ? lineCountFormatter.format(grandTotal)
-                : "—"
-            }
-            idle={!userResults?.length}
+          <HeroCalculateEffect
+            token={heroEffectToken}
+            variant={heroEffectVariant}
+            amountRef={heroAmountRef}
           />
-          {(userResults?.length || uncountedFailedLines > 0) && (
-            <p className="pc-hero__sub">
-              {userResults?.length
-                ? `${userResults.length} user${userResults.length === 1 ? "" : "s"} calculated`
-                : null}
-              {uncountedFailedLines > 0 &&
-                `${userResults?.length ? " · " : ""}${uncountedFailedLines} line${uncountedFailedLines === 1 ? "" : "s"} not counted`}
-            </p>
-          )}
+          <p className="pc-eyebrow">Combined total</p>
+          <HeroAmount
+            amountRef={heroAmountRef}
+            total={userResults?.length ? grandTotal : null}
+            motion={amountMotion}
+            departTotal={departTotal}
+            resultsExiting={resultsExiting}
+          />
+          {heroSubText ? (
+            <HeroSubcaption label={heroSubText} exiting={heroSubExiting} />
+          ) : null}
         </section>
 
-        {patternAccuracyAggregate && (
-          <section className="pc-glass pc-reveal pc-reveal--2">
-            <div className="pc-accuracy">
-              <div className="pc-accuracy__row">
-                <span className="pc-accuracy__label">Pattern match</span>
-                <span className="pc-accuracy__value">
-                  {patternAccuracyAggregate.scorePercent >= 100
-                    ? "100%"
-                    : `${patternAccuracyAggregate.scorePercent.toFixed(1)}%`}
-                </span>
-              </div>
-              <div className="pc-accuracy__track">
-                <div
-                  className={`pc-accuracy__fill ${accuracyFillClass}`}
-                  style={{
-                    width: `${Math.min(100, patternAccuracyAggregate.scorePercent)}%`,
-                  }}
-                />
-              </div>
-              {patternAccuracyAggregate.reasons.length > 0 && (
-                <ul className="pc-accuracy__reasons">
-                  {patternAccuracyAggregate.reasons
-                    .slice(0, 8)
-                    .map((line, i) => (
-                      <li key={i}>{line}</li>
-                    ))}
-                </ul>
-              )}
-            </div>
-          </section>
-        )}
+        {patternAccuracyAggregate ? (
+          <PatternAccuracyPanel
+            data={patternAccuracyAggregate}
+            exiting={accuracyExiting}
+          />
+        ) : null}
 
         <section id="calc-inputs-section" className="pc-glass pc-reveal pc-reveal--3">
           <div className="pc-users-head">
@@ -967,8 +1042,9 @@ export default function Calculator({
           </div>
         </section>
 
-        {userResults && userResults.length > 0 && (
+        {userResults && userResults.length > 0 ? (
           <CalculatorResultsPanel
+            exiting={resultsExiting}
             userResults={userResults}
             resultsAnimKey={resultsAnimKey}
             resultViewMode={resultViewMode}
@@ -986,34 +1062,35 @@ export default function Calculator({
             isSaved={isSaved}
             savedInfo={savedInfo}
           />
-        )}
+        ) : null}
       </div>
 
-      {!canSaveBeforeClear ? (
-      <div className="pc-cta-bar">
-        <div className="pc-cta-bar__inner">
-          <button
-            type="button"
-            onClick={handleCalculate}
-            disabled={isCalculating}
-            className={`pc-cta${isCalculating ? " pc-cta--loading" : ""}${ctaSuccess ? " pc-cta--success" : ""}`}
-          >
-            <span className="pc-cta__label">
-              {isCalculating ? "Calculating…" : "Calculate all"}
-            </span>
-            {isCalculating ? (
-              <span className="pc-cta__spinner" aria-hidden />
+      {!showCtaBar ? null : (
+        <div className="pc-cta-bar">
+          <div className="pc-cta-bar__inner">
+            <button
+              type="button"
+              onClick={handleCalculate}
+              disabled={isCalculating}
+              aria-busy={isCalculating}
+              className={`pc-cta${isCalculating ? " pc-cta--loading" : ""}${ctaSuccess ? " pc-cta--success" : ""}`}
+            >
+              <span className="pc-cta__label">
+                {isCalculating ? "Calculating…" : "Calculate all"}
+              </span>
+              {isCalculating ? (
+                <span className="pc-cta__spinner" aria-hidden />
+              ) : null}
+            </button>
+            {skipAuditOnCalculate ? (
+              <p className="pc-audit">
+                Local only · enable audit in{" "}
+                <a href="/admin">Admin</a>
+              </p>
             ) : null}
-          </button>
-          {skipAuditOnCalculate ? (
-            <p className="pc-audit">
-              Local only · enable audit in{" "}
-              <a href="/admin">Admin</a>
-            </p>
-          ) : null}
+          </div>
         </div>
-      </div>
-      ) : null}
+      )}
 
       {showReport && (
         <ReportIssue
@@ -1035,7 +1112,7 @@ export default function Calculator({
         />
       )}
 
-      {canSaveBeforeClear ? (
+      {showSaveDock ? (
         <div className="pc-dock">
           <div className="pc-dock__grid">
             <button
