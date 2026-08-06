@@ -17,6 +17,7 @@ import {
   findRateHighlightStart,
   shouldBoldRateOnLine,
 } from "./notebookRateHighlight";
+import { BreakdownEditIcon, BreakdownWarningIcon } from "./calculator/breakdownIcons";
 
 interface Props {
   text: string;
@@ -154,7 +155,7 @@ function MessageWithBoldRate({
   return (
     <span style={{ fontSize }}>
       {before}
-      <strong className="font-extrabold text-[#1d6fb8] underline underline-offset-2">
+      <strong className="pc-check__rate-hl">
         {highlighted}
       </strong>
       {after}
@@ -162,21 +163,17 @@ function MessageWithBoldRate({
   );
 }
 
-const GROUP_BG = [
-  "bg-[#f4f8ff]",
-  "bg-[#fffef5]",
-  "bg-[#f0fdf6]",
-  "bg-[#fdf4ff]",
+const GROUP_ROW_CLASS = [
+  "pc-check__row--g0",
+  "pc-check__row--g1",
+  "pc-check__row--g2",
+  "pc-check__row--g3",
 ] as const;
 
 function rowBgClass(row: NotebookRow): string {
-  if (row.error) return "bg-red-50";
-  return groupBgClass(row.groupIndex);
-}
-
-function groupBgClass(groupIndex: number | null): string {
-  if (groupIndex === null) return "bg-white";
-  return GROUP_BG[groupIndex % GROUP_BG.length]!;
+  if (row.error) return "pc-check__row--error";
+  if (row.groupIndex === null) return "pc-check__row--plain";
+  return GROUP_ROW_CLASS[row.groupIndex % GROUP_ROW_CLASS.length]!;
 }
 
 function rawLineMatchesFailed(raw: string, failed: string): boolean {
@@ -234,8 +231,8 @@ function attachFailedLines(rows: NotebookRow[], failedLines: string[]): Notebook
         groupIndex: null,
         error: { failedLine: failed, isLastInGroup: isLast },
         right: isLast
-          ? ["⚠ Could not read this line", "Not added to total"]
-          : ["↳ not counted"],
+          ? ["Could not read this line", "Not added to total"]
+          : ["Not counted (continued)"],
       };
     });
   }
@@ -243,7 +240,7 @@ function attachFailedLines(rows: NotebookRow[], failedLines: string[]): Notebook
   for (const failed of unmatched) {
     next.push({
       left: failed,
-      right: ["⚠ Could not read this line", "Not added to total"],
+      right: ["Could not read this line", "Not added to total"],
       key: `failed-${failed}`,
       groupIndex: null,
       error: { failedLine: failed, isLastInGroup: true },
@@ -493,77 +490,54 @@ export default function NotebookBreakdown({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="pc-check">
       {failedLines.length > 0 && (
-        <div
-          data-parse-error-banner
-          className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5"
-        >
-          <span className="text-red-500 text-base shrink-0" aria-hidden>
-            ⚠
+        <div data-parse-error-banner className="pc-check__alert">
+          <span className="pc-check__alert-icon" aria-hidden>
+            <BreakdownWarningIcon className="h-4 w-4" />
           </span>
           <div className="min-w-0">
-            <p className="text-[13px] font-semibold text-red-700">
+            <p className="pc-check__alert-title">
               {failedLines.length} line{failedLines.length > 1 ? "s" : ""} could
               not be read
             </p>
-            <p className="text-[11px] text-red-500 mt-0.5">
-              Shown in red below — not included in the total
+            <p className="pc-check__alert-desc">
+              Highlighted in red below — not included in the total
             </p>
           </div>
         </div>
       )}
 
-      <div className="rounded-xl border border-[#d5e4f5] overflow-hidden bg-[#fffef8]">
-        <div className="grid grid-cols-2 border-b-2 border-[#c5d9ea] bg-[#f6f9fd]">
-          <div className="px-2.5 py-1.5 border-r border-[#dde8f0]">
-            <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500">
-              Your message
-            </span>
-          </div>
-          <div className="px-2.5 py-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500">
-              Calculation
-            </span>
-          </div>
+      <div className="pc-check__table">
+        <div className="pc-check__head">
+          <div className="pc-check__head-cell">Your message</div>
+          <div className="pc-check__head-cell">Calculation</div>
         </div>
 
         {rows.length === 0 && failedLines.length === 0 && (
-          <div className="px-3 py-4 text-center text-[12px] text-gray-500">
-            No lines to show
-          </div>
+          <div className="pc-check__empty">No lines to show</div>
         )}
 
         {rows.map((row) => (
           <div key={row.key}>
-            <div
-              className={`grid grid-cols-2 border-b min-h-[36px] items-start ${rowBgClass(row)} ${
-                row.error ? "border-red-100" : "border-[#e8eef5]"
-              }`}
-            >
-              <div
-                className={`px-2.5 py-2 border-r font-mono wrap-break-word leading-relaxed ${
-                  row.error
-                    ? "border-red-100 text-red-800"
-                    : "border-[#e8eef5] text-[#333]"
-                }`}
-              >
+            <div className={`pc-check__row ${rowBgClass(row)}`}>
+              <div className="pc-check__cell-left">
                 <MessageWithBoldRate
                   text={row.left}
                   rate={row.boldRate}
                   fontSize={cellPx}
                 />
               </div>
-              <div className="px-2.5 py-2 space-y-0.5">
+              <div className="pc-check__cell-right">
                 {row.right.map((line, j) => (
                   <div
                     key={j}
-                    className={`font-mono leading-relaxed wrap-break-word ${
+                    className={`pc-check__calc-line ${
                       row.error
-                        ? "text-red-600 font-semibold"
+                        ? "pc-check__calc-line--error"
                         : j === 0
-                          ? "text-gray-600"
-                          : "font-bold text-[#1d6fb8]"
+                          ? "pc-check__calc-line--meta"
+                          : "pc-check__calc-line--total"
                     }`}
                     style={{ fontSize: cellPx }}
                   >
@@ -571,20 +545,21 @@ export default function NotebookBreakdown({
                   </div>
                 ))}
                 {row.error?.isLastInGroup && onChange && fixingLine !== row.error.failedLine && (
-                  <div className="flex flex-wrap gap-1.5 pt-1.5">
+                  <div className="pc-check__actions">
                     <button
                       type="button"
                       onClick={() => startFix(row.error!.failedLine)}
-                      className="font-semibold bg-[#1d6fb8] text-white rounded-md px-2 py-0.5 hover:bg-[#165fa3]"
+                      className="pc-check__btn pc-check__btn--primary"
                       style={{ fontSize: btnPx }}
                     >
+                      <BreakdownEditIcon className="h-3.5 w-3.5" />
                       Fix
                     </button>
                     {onReportFailedLine && (
                       <button
                         type="button"
                         onClick={() => onReportFailedLine(row.error!.failedLine)}
-                        className="font-semibold text-[#4f46e5] border border-indigo-200 bg-indigo-50 rounded-md px-2 py-0.5 hover:bg-indigo-100"
+                        className="pc-check__btn pc-check__btn--report"
                         style={{ fontSize: btnPx }}
                       >
                         Report
@@ -593,7 +568,7 @@ export default function NotebookBreakdown({
                     <button
                       type="button"
                       onClick={() => skipFailedLine(row.error!.failedLine)}
-                      className="text-gray-500 border border-gray-200 rounded-md px-2 py-0.5 hover:text-red-500"
+                      className="pc-check__btn pc-check__btn--ghost"
                       style={{ fontSize: btnPx }}
                     >
                       Skip
@@ -620,29 +595,21 @@ export default function NotebookBreakdown({
           </div>
         ))}
 
-        <div className="grid grid-cols-2 bg-[#eef4fc] border-t-2 border-[#c5d9ea]">
-          <div className="px-2.5 py-2.5 border-r border-[#dde8f0]" />
-          <div className="px-2.5 py-2.5">
+        <div className="pc-check__foot">
+          <div className="pc-check__foot-left" />
+          <div className="pc-check__foot-right">
             {sumLine && (
-              <div
-                className="font-mono text-gray-500 mb-0.5"
-                style={{ fontSize: sumPx }}
-              >
+              <div className="pc-check__sum" style={{ fontSize: sumPx }}>
                 {sumLine}
               </div>
             )}
-            <div
-              className="font-mono font-extrabold text-[#1d6fb8] tabular-nums"
-              style={{ fontSize: totalPx }}
-            >
+            <div className="pc-check__total" style={{ fontSize: totalPx }}>
               Total {result.total}
             </div>
             {failedLines.length > 0 && (
-              <div
-                className="font-mono text-red-500 mt-1"
-                style={{ fontSize: sumPx }}
-              >
-                {failedLines.length} line{failedLines.length > 1 ? "s" : ""} not counted
+              <div className="pc-check__foot-note">
+                {failedLines.length} line{failedLines.length > 1 ? "s" : ""} not
+                counted
               </div>
             )}
           </div>

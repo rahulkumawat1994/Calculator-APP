@@ -3,6 +3,7 @@ import NotebookBreakdown, {
   CHECK_FONT_LEVELS,
   persistCheckFontLevel,
 } from "../NotebookBreakdown";
+import { BreakdownChevronIcon } from "./breakdownIcons";
 import { AnimatedAmount } from "./AnimatedAmount";
 import {
   lineCountFormatter,
@@ -211,9 +212,10 @@ export function CalculatorResultsPanel({
                   {hasError && <span aria-hidden>*</span>}
                 </span>
                 {hasExpandable && (
-                  <span className="pc-glass__desc" aria-hidden>
-                    ▼
-                  </span>
+                  <BreakdownChevronIcon
+                    className="h-4 w-4 text-slate-400"
+                    open={isOpen}
+                  />
                 )}
               </div>
             </button>

@@ -42,10 +42,39 @@ import {
 } from "@/hooks/useReportIssuePush";
 import ConfirmDialog from "./ConfirmDialog";
 import AdminAuditAnalytics from "./AdminAuditAnalytics";
+import {
+  AdminAuditMobileCard,
+  AdminReportMobileCard,
+} from "./admin/AdminMobileCards";
+import {
+  AdminPanelLabel,
+  AdminSelectionActionBar,
+  AdminSortButton,
+  AdminStatTile,
+  formatAuditModeLabel,
+} from "./admin/adminUi";
 import { DangerActionDialog, Modal } from "./ui";
 
 const REPORT_PUSH_TOOLTIP =
   "Notify this browser when someone submits a pattern issue from the calculator.";
+
+function cycleTriStateSort(
+  current: "off" | "asc" | "desc"
+): "off" | "asc" | "desc" {
+  return current === "off" ? "desc" : current === "desc" ? "asc" : "off";
+}
+
+function auditDiffSortLabel(sort: "off" | "asc" | "desc"): string {
+  if (sort === "desc") return "Differs first";
+  if (sort === "asc") return "Match first";
+  return "Total";
+}
+
+function auditStatusSortLabel(sort: "off" | "asc" | "desc"): string {
+  if (sort === "desc") return "Failed first";
+  if (sort === "asc") return "OK first";
+  return "Status";
+}
 
 function AdminDateTimeStack({
   createdAt,
@@ -713,6 +742,10 @@ export default function AdminPage() {
     setSelectedAuditIds(new Set());
   };
 
+  const clearReportSelection = () => {
+    setSelectedReportIds(new Set());
+  };
+
   const toggleReportSelect = (id: string) => {
     setSelectedReportIds((prev) => {
       const next = new Set(prev);
@@ -1030,8 +1063,9 @@ export default function AdminPage() {
     <div className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-50 to-slate-100 font-sans text-slate-900 antialiased">
       <div
         className={`mx-auto w-full max-w-[1300px] px-4 py-6 sm:px-6 sm:py-8 ${
-          activeTab === "audit" && selectedAuditIds.size > 0
-            ? "pb-28 sm:pb-24"
+          (activeTab === "audit" && selectedAuditIds.size > 0) ||
+          (activeTab === "report" && selectedReportIds.size > 0)
+            ? "pb-36 sm:pb-32"
             : ""
         }`}
       >
@@ -1048,11 +1082,8 @@ export default function AdminPage() {
               <h1 className="mt-0.5 text-2xl font-bold tracking-tight text-slate-900 sm:text-[26px]">
                 Admin
               </h1>
-              <p className="mt-1 max-w-md text-[13px] leading-relaxed text-slate-500">
-                <span className="hidden sm:inline">
-                  Calculation audits and{" "}
-                </span>
-                user pattern reports in one place
+              <p className="mt-1 max-w-lg text-[13px] leading-relaxed text-slate-500">
+                Review saved calculations and user-submitted pattern reports.
               </p>
               <div className="mt-4 flex w-full max-w-lg flex-wrap items-stretch gap-1 rounded-xl bg-slate-100/90 p-1 sm:w-auto sm:max-w-none">
                 <div
@@ -1097,9 +1128,14 @@ export default function AdminPage() {
             </div>
             <div className="flex w-full min-w-0 flex-col gap-3 sm:w-[min(100%,20rem)] sm:shrink-0 sm:items-stretch">
               <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-200/60 bg-gradient-to-r from-amber-50/90 to-amber-50/30 px-3.5 py-2.5 shadow-sm">
-                <p className="min-w-0 text-[12px] font-medium leading-snug text-amber-950/90 sm:text-[13px]">
-                  Local calculate only
-                </p>
+                <div className="min-w-0">
+                  <p className="text-[12px] font-semibold leading-snug text-amber-950/90 sm:text-[13px]">
+                    Local calculate only
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-snug text-amber-900/70">
+                    Skips saving audits to the server on Calculate All.
+                  </p>
+                </div>
                 <button
                   type="button"
                   role="switch"
@@ -1182,19 +1218,45 @@ export default function AdminPage() {
                       Calculation audits
                     </h2>
                     <p className="mt-1 text-[12px] text-slate-500 sm:text-[13px]">
-                      {displayAuditRows.length} in view
-                      {hasAuditViewFilter
-                        ? ` · ${auditRows.length} loaded from server`
-                        : ` · ${auditRows.length} loaded`}
+                      <span className="font-semibold text-slate-700">
+                        {displayAuditRows.length}
+                      </span>{" "}
+                      shown
+                      {hasAuditViewFilter ? (
+                        <>
+                          {" "}
+                          ·{" "}
+                          <span className="font-semibold text-slate-700">
+                            {auditRows.length}
+                          </span>{" "}
+                          loaded from server
+                        </>
+                      ) : (
+                        <>
+                          {" "}
+                          ·{" "}
+                          <span className="font-semibold text-slate-700">
+                            {auditRows.length}
+                          </span>{" "}
+                          loaded
+                        </>
+                      )}
                     </p>
-                    <div className="mt-3 flex flex-col gap-3 rounded-xl border border-slate-200/60 bg-white p-3 sm:p-3.5">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                        Search input
-                      </p>
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[12px] font-medium text-slate-600">
-                          Find pasted text
-                        </span>
+                    <div className="mt-3 overflow-hidden rounded-xl border border-slate-200/60 bg-white">
+                      <div className="border-b border-slate-100 bg-slate-50/60 px-3 py-2.5 sm:px-3.5">
+                        <p className="text-[11px] font-bold text-slate-800">
+                          Filters & totals
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-slate-500">
+                          Summary amounts update with your filters below.
+                        </p>
+                      </div>
+                      <div className="flex flex-col gap-4 p-3 sm:p-3.5">
+                      <label className="flex flex-col gap-1.5">
+                        <AdminPanelLabel
+                          title="Search pasted text"
+                          hint="Matches any part of the stored input."
+                        />
                         <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-center">
                           <input
                             type="search"
@@ -1215,10 +1277,9 @@ export default function AdminPage() {
                           ) : null}
                         </div>
                       </label>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                        Date range
-                      </p>
-                      <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:flex-wrap min-[420px]:items-end min-[420px]:gap-3">
+                      <div>
+                        <AdminPanelLabel title="Date range" />
+                        <div className="mt-2 flex flex-col gap-2 min-[420px]:flex-row min-[420px]:flex-wrap min-[420px]:items-end min-[420px]:gap-3">
                         <label className="flex min-h-[40px] flex-1 flex-col gap-1 sm:min-h-0 sm:min-w-[8rem] sm:max-w-[10rem]">
                           <span className="shrink-0 text-[12px] font-medium text-slate-600">
                             From
@@ -1258,81 +1319,67 @@ export default function AdminPage() {
                           </button>
                         ) : null}
                       </div>
-                      <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
-                        <label className="flex cursor-pointer items-center gap-2.5">
+                      </div>
+                      <div className="border-t border-slate-100 pt-3">
+                        <label className="flex cursor-pointer items-start gap-2.5">
                           <input
                             type="checkbox"
                             checked={hideManualAudits}
                             onChange={(e) => setHideManualAudits(e.target.checked)}
-                            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500/30"
+                            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500/30"
                           />
-                          <span className="text-[12px] font-medium text-slate-700">
-                            Hide manual entries
+                          <span>
+                            <span className="block text-[12px] font-medium text-slate-700">
+                              WhatsApp only
+                            </span>
+                            <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+                              Hide manual calculator entries from the list and
+                              analytics.
+                            </span>
                           </span>
                         </label>
-                        <p className="text-[11px] text-slate-500">
-                          Show WhatsApp audits only in table and analytics
-                        </p>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2.5 border-t border-slate-100 pt-3 sm:gap-3">
-                        <div
-                          className="rounded-lg bg-slate-100/80 px-2.5 py-1.5 sm:px-3"
+                      <div className="grid grid-cols-2 gap-2 border-t border-slate-100 pt-3 sm:grid-cols-3">
+                        <AdminStatTile
+                          label={totalLabelForDateRange(
+                            auditDateFrom,
+                            auditDateTo
+                          )}
+                          value={`₹${dateFilteredTotalSum.toLocaleString("en-IN", {
+                            maximumFractionDigits: 0,
+                          })}`}
+                          tone="blue"
                           title="Sum of totals as they were stored when each calculation ran (historical snapshot)."
-                        >
-                          <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                            {totalLabelForDateRange(auditDateFrom, auditDateTo)}
-                          </p>
-                          <p className="whitespace-nowrap text-[15px] font-bold tabular-nums text-blue-600">
-                            ₹
-                            {dateFilteredTotalSum.toLocaleString("en-IN", {
-                              maximumFractionDigits: 0,
-                            })}
-                          </p>
-                        </div>
+                        />
                         {auditSavedVersusParserDiffers ? (
-                          <>
-                            <div
-                              className="h-8 w-px bg-slate-200"
-                              aria-hidden
-                            />
-                            <div
-                              className="rounded-lg border border-amber-100/80 bg-amber-50/50 px-2.5 py-1.5 sm:px-3"
-                              title="Sum of what the current parser produces on each row’s stored input (today’s engine)."
-                            >
-                              <p className="text-[10px] font-medium uppercase tracking-wide text-amber-800/80">
-                                {freshParsedTotalLabelForDateRange(
-                                  auditDateFrom,
-                                  auditDateTo
-                                )}
-                              </p>
-                              <p className="whitespace-nowrap text-[15px] font-bold tabular-nums text-amber-900">
-                                ₹
-                                {dateFilteredFreshParsedTotal.toLocaleString(
-                                  "en-IN",
-                                  {
-                                    maximumFractionDigits: 0,
-                                  }
-                                )}
-                              </p>
-                            </div>
-                          </>
+                          <AdminStatTile
+                            label={freshParsedTotalLabelForDateRange(
+                              auditDateFrom,
+                              auditDateTo
+                            )}
+                            value={`₹${dateFilteredFreshParsedTotal.toLocaleString(
+                              "en-IN",
+                              { maximumFractionDigits: 0 }
+                            )}`}
+                            tone="amber"
+                            title="Sum of what the current parser produces on each row’s stored input (today’s engine)."
+                          />
                         ) : null}
-                        <div className="h-8 w-px bg-slate-200" aria-hidden />
-                        <div className="rounded-lg border border-emerald-100/80 bg-emerald-50/50 px-2.5 py-1.5 sm:px-3">
-                          <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-700/80">
-                            Profit (5%)
-                          </p>
-                          <p className="whitespace-nowrap text-[15px] font-bold tabular-nums text-emerald-800">
-                            ₹
-                            {dateFilteredProfit5Pct.toLocaleString("en-IN", {
-                              maximumFractionDigits: 0,
-                            })}
-                          </p>
-                        </div>
+                        <AdminStatTile
+                          label="Profit (5%)"
+                          value={`₹${dateFilteredProfit5Pct.toLocaleString("en-IN", {
+                            maximumFractionDigits: 0,
+                          })}`}
+                          tone="emerald"
+                        />
+                      </div>
                       </div>
                     </div>
                   </div>
                   <div className="flex w-full flex-col justify-start gap-2 sm:w-[min(100%,11rem)] sm:shrink-0">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">
+                      Tools
+                    </p>
                     <button
                       type="button"
                       onClick={() => setAllAuditInputsOpen(true)}
@@ -1444,63 +1491,124 @@ export default function AdminPage() {
                 </div>
               ) : (
                 <>
-                  <div className="flex flex-col gap-2 border-b border-slate-100 bg-slate-50/40 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-                    <p className="text-[12px] text-slate-600">
-                      {selectedAuditIds.size > 0 ? (
-                        <>
-                          <span className="font-semibold text-slate-800">
-                            {visibleAuditSelectedCount}
-                          </span>{" "}
-                          of {displayAuditRows.length} in view selected
-                          {selectedAuditIds.size > visibleAuditSelectedCount ? (
-                            <span className="text-slate-500">
-                              {" "}
-                              · {selectedAuditIds.size} total selected
-                            </span>
-                          ) : null}
-                        </>
-                      ) : (
-                        <>
-                          {displayAuditRows.length} row
-                          {displayAuditRows.length === 1 ? "" : "s"} in view —
-                          tap # to select
-                        </>
-                      )}
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={selectAllVisibleAudits}
-                        disabled={
-                          loading ||
-                          clearingAudit ||
-                          pruningAuditDupes ||
-                          bulkAuditDeleting ||
-                          allVisibleAuditsSelected
-                        }
-                        title={`Select all ${displayAuditRows.length} row(s) currently shown (search + date filters)`}
-                        className="h-9 rounded-lg border border-blue-200 bg-white px-3 text-[12px] font-semibold text-blue-700 shadow-sm transition hover:bg-sky-50/80 disabled:opacity-50"
-                      >
-                        Select all in view
-                      </button>
-                      <button
-                        type="button"
-                        onClick={clearAuditSelection}
-                        disabled={
-                          loading ||
-                          clearingAudit ||
-                          pruningAuditDupes ||
-                          bulkAuditDeleting ||
-                          selectedAuditIds.size === 0
-                        }
-                        title="Clear all selected audit rows"
-                        className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
-                      >
-                        Clear selection
-                      </button>
+                  <div className="border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
+                    <div className="flex flex-col gap-3">
+                      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-[13px] font-semibold text-slate-800">
+                            {selectedAuditIds.size > 0 ? (
+                              <>
+                                {visibleAuditSelectedCount} of{" "}
+                                {displayAuditRows.length} selected
+                                {selectedAuditIds.size >
+                                visibleAuditSelectedCount ? (
+                                  <span className="font-normal text-slate-500">
+                                    {" "}
+                                    · {selectedAuditIds.size} total
+                                  </span>
+                                ) : null}
+                              </>
+                            ) : (
+                              <>
+                                {displayAuditRows.length} audit
+                                {displayAuditRows.length === 1 ? "" : "s"}
+                              </>
+                            )}
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-slate-500">
+                            Tap a row number to select · bulk actions appear at
+                            the bottom
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={selectAllVisibleAudits}
+                            disabled={
+                              loading ||
+                              clearingAudit ||
+                              pruningAuditDupes ||
+                              bulkAuditDeleting ||
+                              allVisibleAuditsSelected
+                            }
+                            title={`Select all ${displayAuditRows.length} row(s) currently shown (search + date filters)`}
+                            className="h-9 rounded-lg border border-blue-200 bg-white px-3 text-[12px] font-semibold text-blue-700 shadow-sm transition hover:bg-sky-50/80 disabled:opacity-50"
+                          >
+                            Select all
+                          </button>
+                          <button
+                            type="button"
+                            onClick={clearAuditSelection}
+                            disabled={
+                              loading ||
+                              clearingAudit ||
+                              pruningAuditDupes ||
+                              bulkAuditDeleting ||
+                              selectedAuditIds.size === 0
+                            }
+                            title="Clear all selected audit rows"
+                            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+                          >
+                            Clear selection
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                        <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">
+                          Sort
+                        </span>
+                        <AdminSortButton
+                          label={auditDiffSortLabel(auditDiffSort)}
+                          active={auditDiffSort !== "off"}
+                          direction={auditDiffSort}
+                          onClick={() =>
+                            setAuditDiffSort((s) => cycleTriStateSort(s))
+                          }
+                          title="Sort: Differs first → match first → default order"
+                          activeTone="orange"
+                        />
+                        <AdminSortButton
+                          label={auditStatusSortLabel(auditStatusSort)}
+                          active={auditStatusSort !== "off"}
+                          direction={auditStatusSort}
+                          onClick={() =>
+                            setAuditStatusSort((s) => cycleTriStateSort(s))
+                          }
+                          title="Sort: failed first → OK first → default order"
+                          activeTone="blue"
+                        />
+                      </div>
                     </div>
                   </div>
-                <div className="overflow-x-auto overscroll-x-contain">
+                <div className="md:hidden space-y-3.5 bg-gradient-to-b from-slate-50/90 to-white p-3.5">
+                  {displayAuditRows.map((r, rowIdx) => {
+                    const recalc = auditTotalRecalc.get(r.id);
+                    return (
+                      <AdminAuditMobileCard
+                        key={r.id}
+                        row={r}
+                        rowIndex={rowIdx}
+                        selected={selectedAuditIds.has(r.id)}
+                        differs={recalc?.differs}
+                        parsedTotal={recalc?.parsedTotal}
+                        disabled={
+                          loading ||
+                          clearingAudit ||
+                          pruningAuditDupes ||
+                          bulkAuditDeleting
+                        }
+                        busy={busyAuditId === r.id}
+                        onToggleSelect={() => toggleAuditSelect(r.id)}
+                        onView={() => openAuditPreview(r)}
+                        onDelete={() => void deleteAudit(r.id)}
+                        onCopyInput={() =>
+                          void copyAuditInputToClipboard(r.input ?? "")
+                        }
+                      />
+                    );
+                  })}
+                </div>
+                <div className="hidden md:block overflow-x-auto overscroll-x-contain">
                   <table className="w-full min-w-[720px] text-left text-[11px] sm:text-[12px]">
                     <thead className="bg-slate-100/80 text-slate-600">
                       <tr>
@@ -1622,7 +1730,7 @@ export default function AdminPage() {
                         </th>
                         <th
                           scope="col"
-                          className="min-w-[300px] px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                          className="md:min-w-[300px] px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
                         >
                           Input
                         </th>
@@ -1672,7 +1780,7 @@ export default function AdminPage() {
                             <AdminDateTimeStack createdAt={r.createdAt} />
                           </td>
                           <td className="px-2 py-2.5 font-medium text-slate-800 sm:px-3">
-                            {r.mode}
+                            {formatAuditModeLabel(r.mode)}
                           </td>
                           <td className="px-2 py-2.5 sm:px-3">
                             <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
@@ -1777,8 +1885,21 @@ export default function AdminPage() {
                     <h2 className="text-lg font-bold text-slate-900 sm:text-xl">
                       User reports
                     </h2>
-                    <p className="mt-0.5 text-[12px] text-slate-500 sm:text-[13px]">
-                      {reportRows.length} in list
+                    <p className="mt-1 text-[12px] text-slate-500 sm:text-[13px]">
+                      <span className="font-semibold text-slate-700">
+                        {reportRows.length}
+                      </span>{" "}
+                      report{reportRows.length === 1 ? "" : "s"}
+                      {selectedReportIds.size > 0 ? (
+                        <>
+                          {" "}
+                          ·{" "}
+                          <span className="font-semibold text-red-700">
+                            {selectedReportIds.size}
+                          </span>{" "}
+                          selected
+                        </>
+                      ) : null}
                     </p>
                   </div>
                   <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
@@ -1838,7 +1959,37 @@ export default function AdminPage() {
                   <p className="text-slate-400">No user reports</p>
                 </div>
               ) : (
-                <div className="overflow-x-auto overscroll-x-contain">
+                <>
+                {selectedReportIds.size === 0 ? (
+                  <div className="border-b border-slate-100 bg-white px-4 py-3 md:hidden sm:px-5">
+                    <p className="text-[13px] font-semibold text-slate-800">
+                      {reportRows.length} report
+                      {reportRows.length === 1 ? "" : "s"}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      Tap a row number to select · actions appear at the bottom
+                    </p>
+                  </div>
+                ) : null}
+                <div className="md:hidden space-y-3.5 bg-gradient-to-b from-slate-50/90 to-white p-3.5">
+                  {reportRows.map((r, rowIdx) => (
+                    <AdminReportMobileCard
+                      key={r.id}
+                      row={r}
+                      rowIndex={rowIdx}
+                      selected={selectedReportIds.has(r.id)}
+                      disabled={
+                        loading || clearingReport || bulkReportDeleting
+                      }
+                      busy={busyReportId === r.id}
+                      busyFixed={busyFixedReportId === r.id}
+                      onToggleSelect={() => toggleReportSelect(r.id)}
+                      onToggleFixed={(fixed) => void setReportFixed(r.id, fixed)}
+                      onDelete={() => void deleteReport(r.id)}
+                    />
+                  ))}
+                </div>
+                <div className="hidden md:block overflow-x-auto overscroll-x-contain">
                   <table className="w-full min-w-[720px] text-left text-[11px] sm:text-[12px]">
                     <thead className="bg-slate-100/80 text-slate-600">
                       <tr>
@@ -1862,19 +2013,19 @@ export default function AdminPage() {
                         </th>
                         <th
                           scope="col"
-                          className="min-w-[230px] px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                          className="md:min-w-[230px] px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
                         >
                           Input
                         </th>
                         <th
                           scope="col"
-                          className="min-w-[170px] px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                          className="md:min-w-[170px] px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
                         >
                           Expected
                         </th>
                         <th
                           scope="col"
-                          className="min-w-[170px] px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
+                          className="md:min-w-[170px] px-2 py-2.5 text-[10px] font-semibold uppercase tracking-wider"
                         >
                           Note
                         </th>
@@ -1974,6 +2125,7 @@ export default function AdminPage() {
                     </tbody>
                   </table>
                 </div>
+                </>
               )}
             </section>
           )}
@@ -2446,110 +2598,61 @@ export default function AdminPage() {
       )}
 
       {activeTab === "audit" && selectedAuditIds.size > 0 ? (
-        <div className="pointer-events-none fixed bottom-0 right-0 z-40 max-w-[min(100vw,1300px)] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pl-6 sm:p-4 sm:pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pl-8">
-          <div
-            className="pointer-events-auto ml-auto w-[min(100%,17.5rem)] overflow-hidden rounded-2xl bg-white shadow-[0_12px_48px_-8px_rgba(15,23,42,0.22),0_0_0_1px_rgba(15,23,42,0.06)] ring-1 ring-slate-900/4"
-            role="toolbar"
-            aria-label={`Bulk actions for ${selectedAuditIds.size} selected audit rows`}
-          >
-            <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-linear-to-r from-slate-50 to-white px-3 py-2">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                Selected
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={clearAuditSelection}
-                  disabled={bulkAuditDeleting}
-                  className="rounded-md px-2 py-0.5 text-[10px] font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-45"
-                  title="Clear selection"
-                >
-                  Clear
-                </button>
-                <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-bold tabular-nums text-white shadow-sm">
-                  {selectedAuditIds.size}
-                </span>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-px bg-slate-100 p-px">
-              <button
-                type="button"
-                onClick={() =>
-                  void copyAuditInputToClipboard(
-                    combinedSelectedAuditInput,
-                    `Copied ${selectedAuditIds.size} input(s)`
-                  )
-                }
-                disabled={
-                  loading ||
-                  clearingAudit ||
-                  pruningAuditDupes ||
-                  bulkAuditDeleting
-                }
-                title={`Copy ${selectedAuditIds.size} selected input(s) — joined with a blank line`}
-                aria-label={`Copy ${selectedAuditIds.size} selected inputs`}
-                className="group flex min-h-21 flex-col items-center justify-center gap-1 bg-white py-3 transition hover:bg-sky-50/90 active:bg-sky-100/80 disabled:opacity-45"
-              >
-                <span className="sr-only">
-                  Copy {selectedAuditIds.size} selected inputs
-                </span>
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={1.5}
-                  stroke="currentColor"
-                  className="h-7 w-7 text-sky-600 transition group-hover:scale-105 group-hover:text-sky-700"
-                  aria-hidden
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M8.25 7.5V6.108c0-1.036.84-1.875 1.875-1.875h3.75c1.036 0 1.875.84 1.875 1.875V7.5m6 9V18a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 18v-1.5m15-10.5a2.25 2.25 0 012.25 2.25v10.5A2.25 2.25 0 0118 21H6.75a2.25 2.25 0 01-2.25-2.25V10.5a2.25 2.25 0 012.25-2.25h7.5"
-                  />
-                </svg>
-                <span className="text-[11px] font-semibold text-slate-600 group-hover:text-sky-800">
-                  Copy
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirmBulkAuditIds([...selectedAuditIds])}
-                disabled={
-                  loading ||
-                  clearingAudit ||
-                  pruningAuditDupes ||
-                  bulkAuditDeleting
-                }
-                title={`Delete ${selectedAuditIds.size} selected audit log(s)`}
-                aria-label={`Delete ${selectedAuditIds.size} selected audit logs`}
-                className="group flex min-h-21 flex-col items-center justify-center gap-1 bg-white py-3 transition hover:bg-rose-50 active:bg-rose-100/80 disabled:opacity-45"
-              >
-                <span className="sr-only">
-                  Delete {selectedAuditIds.size} selected audit logs
-                </span>
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={1.5}
-                  stroke="currentColor"
-                  className="h-7 w-7 text-rose-500 transition group-hover:scale-105 group-hover:text-rose-600"
-                  aria-hidden
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-                  />
-                </svg>
-                <span className="text-[11px] font-semibold text-slate-600 group-hover:text-rose-800">
-                  Delete
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>
+        <AdminSelectionActionBar
+          count={selectedAuditIds.size}
+          itemLabel={selectedAuditIds.size === 1 ? "audit selected" : "audits selected"}
+          onClear={clearAuditSelection}
+          clearDisabled={bulkAuditDeleting}
+          ariaLabel={`Bulk actions for ${selectedAuditIds.size} selected audit rows`}
+          actions={[
+            {
+              label: "Copy inputs",
+              onClick: () =>
+                void copyAuditInputToClipboard(
+                  combinedSelectedAuditInput,
+                  `Copied ${selectedAuditIds.size} input(s)`
+                ),
+              disabled:
+                loading ||
+                clearingAudit ||
+                pruningAuditDupes ||
+                bulkAuditDeleting,
+              title: `Copy ${selectedAuditIds.size} selected input(s) — joined with a blank line`,
+            },
+            {
+              label: "Delete",
+              onClick: () => setConfirmBulkAuditIds([...selectedAuditIds]),
+              disabled:
+                loading ||
+                clearingAudit ||
+                pruningAuditDupes ||
+                bulkAuditDeleting,
+              variant: "danger",
+              title: `Delete ${selectedAuditIds.size} selected audit log(s)`,
+            },
+          ]}
+        />
+      ) : null}
+
+      {activeTab === "report" && selectedReportIds.size > 0 ? (
+        <AdminSelectionActionBar
+          count={selectedReportIds.size}
+          itemLabel={
+            selectedReportIds.size === 1 ? "report selected" : "reports selected"
+          }
+          onClear={clearReportSelection}
+          clearDisabled={bulkReportDeleting}
+          ariaLabel={`Bulk actions for ${selectedReportIds.size} selected reports`}
+          actions={[
+            {
+              label: "Delete reports",
+              onClick: () => setConfirmBulkReportIds([...selectedReportIds]),
+              disabled: loading || clearingReport || bulkReportDeleting,
+              variant: "danger",
+              title: `Delete ${selectedReportIds.size} selected report(s)`,
+            },
+          ]}
+        />
       ) : null}
 
       <ConfirmDialog

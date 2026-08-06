@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { DangerActionDialog } from "./ui";
 import {
+  BreakdownDeleteIcon,
+  BreakdownEditIcon,
+  BreakdownIconButton,
+  BreakdownWarningIcon,
+} from "./calculator/breakdownIcons";
+import {
   extractPairedNumbers,
   formatSegmentLineForPairListDisplay,
   processLine,
@@ -239,8 +245,13 @@ export default function EditableBreakdown({
       {failedLines.length > 0 && (
         <div className="rounded-xl border border-red-200 overflow-hidden">
           {/* Banner */}
-          <div className="flex items-start gap-2 p-3 bg-red-50">
-            <span className="text-red-500 text-lg shrink-0">⚠️</span>
+          <div className="flex items-start gap-2.5 p-3 bg-red-50">
+            <span
+              className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600"
+              aria-hidden
+            >
+              <BreakdownWarningIcon className="h-4 w-4" />
+            </span>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-red-700">
                 {failedLines.length} line{failedLines.length > 1 ? "s" : ""} could not be parsed
@@ -263,15 +274,22 @@ export default function EditableBreakdown({
                   />
                 ) : (
                   <div className="flex items-center gap-2 px-3 py-2.5 bg-red-50">
-                    <span className="text-red-400 shrink-0 text-sm">↳</span>
+                    <span
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-100/80 text-[10px] font-bold text-red-600"
+                      aria-hidden
+                    >
+                      !
+                    </span>
                     <span className="flex-1 font-mono text-sm text-red-700 truncate min-w-0" title={line}>
                       {line}
                     </span>
                     <button
+                      type="button"
                       onClick={() => startFix(line)}
-                      className="text-xs font-semibold bg-[#1d6fb8] text-white rounded-lg px-2.5 py-1 shrink-0 hover:bg-[#165fa3] transition-colors"
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold bg-[#1d6fb8] text-white rounded-lg px-2.5 py-1.5 shrink-0 hover:bg-[#165fa3] transition-colors"
                     >
-                      Fix ✏️
+                      <BreakdownEditIcon className="h-3.5 w-3.5" />
+                      Fix
                     </button>
                     {onReportFailedLine && (
                       <button
@@ -350,9 +368,17 @@ export default function EditableBreakdown({
                   <span className={`${compact ? "text-base" : "text-[20px]"} font-extrabold text-[#1d6fb8]`}>= {r.lineTotal}</span>
                 </div>
               </div>
-              <div className="flex flex-col gap-1 shrink-0">
-                <button onClick={() => startEdit(i, r)} title="Edit" className="text-[12px] text-[#1d6fb8] border border-[#c5cfe0] rounded-lg px-2 py-1 hover:bg-blue-50 transition-colors">✏️</button>
-                <button onClick={() => requestDeleteRow(i)} title="Delete" className="text-[12px] text-gray-400 border border-gray-200 rounded-lg px-2 py-1 hover:text-red-400 hover:border-red-200 transition-colors">🗑</button>
+              <div className="flex flex-col gap-1.5 shrink-0">
+                <BreakdownIconButton
+                  label="Edit line"
+                  tone="edit"
+                  onClick={() => startEdit(i, r)}
+                />
+                <BreakdownIconButton
+                  label="Delete line"
+                  tone="danger"
+                  onClick={() => requestDeleteRow(i)}
+                />
               </div>
             </div>
           )}

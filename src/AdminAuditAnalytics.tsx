@@ -96,12 +96,49 @@ export default function AdminAuditAnalytics({
     ? selectedMonthSummary?.label ?? selectedMonth
     : "all days in view";
 
+  const [open, setOpen] = useState(false);
+
+  const headerSummary =
+    analytics.rowCount > 0
+      ? `₹${formatInr(analytics.totalAmount)} total · ₹${formatInr(analytics.profit5Pct)} profit · ${analytics.rowCount} calc${analytics.rowCount === 1 ? "" : "s"}`
+      : "No calculations in view";
+
   return (
-    <div className="border-b border-slate-100 bg-white px-4 py-4 sm:px-5">
-      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
-        <div>
+    <div className="border-b border-slate-100 bg-white">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-start justify-between gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50/80 sm:px-5"
+      >
+        <div className="min-w-0 flex-1">
           <h3 className="text-[13px] font-bold text-slate-900">Analytics</h3>
-          <p className="text-[11px] text-slate-500">{scopeLabel}</p>
+          <p className="mt-0.5 text-[11px] text-slate-500">{scopeLabel}</p>
+          {!open ? (
+            <p className="mt-1.5 text-[12px] font-semibold tabular-nums text-blue-700">
+              {headerSummary}
+            </p>
+          ) : null}
+        </div>
+        <span
+          className="mt-0.5 shrink-0 text-[11px] font-semibold text-slate-400 transition-transform duration-300"
+          aria-hidden
+        >
+          {open ? "▼" : "▶"}
+        </span>
+      </button>
+
+      <div
+        className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+        }`}
+      >
+        <div className="overflow-hidden min-h-0">
+          <div className="border-t border-slate-100 px-4 pb-4 pt-3 sm:px-5">
+      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+        <div className="sr-only">
+          <h3>Analytics</h3>
+          <p>{scopeLabel}</p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex flex-col gap-1">
@@ -455,6 +492,9 @@ export default function AdminAuditAnalytics({
         {analytics.rowCount} calculation{analytics.rowCount === 1 ? "" : "s"}{" "}
         {selectedMonth ? "in selected month" : "in view"}
       </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
