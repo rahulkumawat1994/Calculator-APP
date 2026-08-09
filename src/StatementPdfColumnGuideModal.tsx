@@ -4,10 +4,12 @@ import { RenderingCancelledException } from "pdfjs-dist";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { debounce } from "./lib/debounce";
 import {
-  computeStatementPdfOverlayPagesFromDocument,
+  buildStatementPageGuideCaches,
+  computeOverlayPagesFromGuideCaches,
   DEFAULT_COLUMN_BAND_DELTAS,
   resolveStatementColumnBandDeltas,
   type StatementColumnBandDeltas,
+  type StatementPageGuideCache,
   type StatementPdfOverlayPage,
 } from "./statement/extractStatementColumnsFromPdf";
 
@@ -165,6 +167,7 @@ export function StatementPdfColumnGuideModal({
   fileName,
   fileIndex,
   totalFiles,
+  profileName,
   onNavigatePrev,
   onNavigateNext,
   columnBandDeltas,
@@ -175,6 +178,7 @@ export function StatementPdfColumnGuideModal({
   fileName: string;
   fileIndex: number;
   totalFiles: number;
+  profileName: string;
   onNavigatePrev?: () => void;
   onNavigateNext?: () => void;
   columnBandDeltas: StatementColumnBandDeltas;
@@ -182,6 +186,7 @@ export function StatementPdfColumnGuideModal({
   onClose: () => void;
 }) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+  const [guideCaches, setGuideCaches] = useState<StatementPageGuideCache[]>([]);
   const [overlays, setOverlays] = useState<StatementPdfOverlayPage[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [draftDeltas, setDraftDeltas] = useState<StatementColumnBandDeltas>(() =>
@@ -208,18 +213,7 @@ export function StatementPdfColumnGuideModal({
     debouncedToParent.cancel();
     suppressNextDebouncedEmitRef.current = true;
     setDraftDeltas(resolveStatementColumnBandDeltas({ columnBandDeltas }));
-  }, [
-    data,
-    columnBandDeltas.txnDateDeltaLeft,
-    columnBandDeltas.txnDateDeltaRight,
-    columnBandDeltas.transactionDeltaLeft,
-    columnBandDeltas.transactionDeltaRight,
-    columnBandDeltas.withdrawalDeltaLeft,
-    columnBandDeltas.withdrawalDeltaRight,
-    columnBandDeltas.depositDeltaLeft,
-    columnBandDeltas.depositDeltaRight,
-    debouncedToParent,
-  ]);
+  }, [data, debouncedToParent]);
 
   useEffect(() => {
     if (suppressNextDebouncedEmitRef.current) {
@@ -244,6 +238,7 @@ export function StatementPdfColumnGuideModal({
     (async () => {
       try {
         setLoadErr(null);
+        setGuideCaches([]);
         setOverlays([]);
         const doc = await pdfjs.getDocument({ data: data.slice(0) }).promise;
         if (cancelled) {
@@ -260,6 +255,7 @@ export function StatementPdfColumnGuideModal({
     return () => {
       cancelled = true;
       setPdf(null);
+      setGuideCaches([]);
       setOverlays([]);
       if (loaded && typeof loaded.destroy === "function") void loaded.destroy();
       loaded = null;
@@ -269,11 +265,14 @@ export function StatementPdfColumnGuideModal({
   useEffect(() => {
     if (!pdf) return;
     let cancelled = false;
-    void computeStatementPdfOverlayPagesFromDocument(pdf, PREVIEW_SCALE, {
-      columnBandDeltas: draftDeltas,
-    })
-      .then((ov) => {
-        if (!cancelled) setOverlays(ov);
+    void buildStatementPageGuideCaches(pdf, PREVIEW_SCALE)
+      .then((caches) => {
+        if (!cancelled) {
+          setGuideCaches(caches);
+          setOverlays(
+            computeOverlayPagesFromGuideCaches(caches, { columnBandDeltas: draftRef.current }),
+          );
+        }
       })
       .catch((e) => {
         if (!cancelled)
@@ -282,8 +281,15 @@ export function StatementPdfColumnGuideModal({
     return () => {
       cancelled = true;
     };
+  }, [pdf]);
+
+  useEffect(() => {
+    if (guideCaches.length === 0) return;
+    setOverlays(
+      computeOverlayPagesFromGuideCaches(guideCaches, { columnBandDeltas: draftDeltas }),
+    );
   }, [
-    pdf,
+    guideCaches,
     draftDeltas.txnDateDeltaLeft,
     draftDeltas.txnDateDeltaRight,
     draftDeltas.transactionDeltaLeft,
@@ -360,8 +366,9 @@ export function StatementPdfColumnGuideModal({
               Column guide overlay
             </h2>
             <p className="text-xs text-gray-500 mt-0.5">
-              Drag the sliders for a live overlay; the table behind this window catches up shortly after
-              you stop.
+              Drag the sliders for a live overlay; changes are saved for{" "}
+              <span className="font-medium text-gray-700">{profileName}</span> and reused on future
+              uploads for this profile.
             </p>
             <p className="text-xs text-gray-500 mt-1">
               PDF {fileIndex + 1} / {totalFiles}: <span className="font-medium text-gray-700">{fileName}</span>

@@ -1,5 +1,9 @@
-const LS_KEY = "statement-saved-txn-searches-v1";
+const LS_KEY_PREFIX = "statement-saved-txn-searches-v1";
 const MAX_SAVED = 25;
+
+function storageKeyForProfile(profileId: string): string {
+  return `${LS_KEY_PREFIX}:${profileId}`;
+}
 
 export type SavedTransactionSearch = {
   id: string;
@@ -23,10 +27,10 @@ function newSavedSearchId(): string {
   return `ss-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-export function loadSavedTransactionSearches(): SavedTransactionSearch[] {
+export function loadSavedTransactionSearches(profileId: string): SavedTransactionSearch[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(LS_KEY);
+    const raw = localStorage.getItem(storageKeyForProfile(profileId));
     if (!raw) return [];
     const data = JSON.parse(raw) as unknown;
     if (!Array.isArray(data)) return [];
@@ -50,10 +54,16 @@ export function loadSavedTransactionSearches(): SavedTransactionSearch[] {
   }
 }
 
-export function persistSavedTransactionSearches(items: SavedTransactionSearch[]): void {
+export function persistSavedTransactionSearches(
+  profileId: string,
+  items: SavedTransactionSearch[],
+): void {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(items.slice(0, MAX_SAVED)));
+    localStorage.setItem(
+      storageKeyForProfile(profileId),
+      JSON.stringify(items.slice(0, MAX_SAVED)),
+    );
   } catch {
     /* quota / private mode */
   }

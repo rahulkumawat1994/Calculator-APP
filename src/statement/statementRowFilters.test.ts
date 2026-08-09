@@ -26,4 +26,18 @@ describe("filterStatementVisibleRows", () => {
     });
     expect(out.map((r) => r.transaction)).toEqual(["UPI B"]);
   });
+
+  it("drops empty rows before other filters", () => {
+    const rows: StatementWdDpRow[] = [
+      row("01/01/2025", "UPI A"),
+      { page: 1, txnDate: "", transaction: "", withdrawals: "", deposits: "" },
+    ];
+    const out = filterStatementVisibleRows(rows, {
+      transactionTermsLower: [],
+      dateFrom: "",
+      dateTo: "",
+    });
+    expect(out.length).toBe(1);
+    expect(out[0]!.transaction).toBe("UPI A");
+  });
 });

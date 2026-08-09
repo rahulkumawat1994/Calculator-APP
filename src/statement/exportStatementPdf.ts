@@ -1,13 +1,9 @@
 import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
+import autoTable, { type CellHookData } from "jspdf-autotable";
 import type { StatementWdDpRow } from "./extractStatementColumnsFromPdf";
+import { formatStatementInrMoney, parseStatementMoneyAmount, sumStatementWdDpRows } from "./statementMoneyParse";
 
-function formatInrMoney(n: number): string {
-  return new Intl.NumberFormat("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
-}
+const FOOTER_RESERVE_MM = 22;
 
 function profitLossLabel(net: number): string {
   if (net > 0) return "Profit";
@@ -19,19 +15,51 @@ export type StatementPdfExportSection = {
   source: "firebase" | "local";
   fileName: string;
   rows: StatementWdDpRow[];
-  deposits: number;
-  withdrawals: number;
 };
 
 export type StatementPdfExportInput = {
   generatedAt: Date;
-  /** Raw transaction search text, if any (mirrors on-screen filter). */
   transactionFilterRaw: string | null;
-  /** Human-readable Txn date range line, if any. */
   dateRangeSummary: string | null;
-  grandTotals: { deposits: number; withdrawals: number; net: number; scopeLabel: string } | null;
   sections: StatementPdfExportSection[];
 };
+
+type MoneyPair = { withdrawals: number; deposits: number };
+
+class ExportPdfPageTracker {
+  private readonly perPage = new Map<number, MoneyPair>();
+  private readonly seenRows = new Set<string>();
+
+  addRow(pageNumber: number, rowKey: string, withdrawals: number, deposits: number) {
+    if (this.seenRows.has(rowKey)) return;
+    this.seenRows.add(rowKey);
+    const bucket = this.perPage.get(pageNumber) ?? { withdrawals: 0, deposits: 0 };
+    bucket.withdrawals += withdrawals;
+    bucket.deposits += deposits;
+    this.perPage.set(pageNumber, bucket);
+  }
+
+  pageTotal(pageNumber: number): MoneyPair {
+    return this.perPage.get(pageNumber) ?? { withdrawals: 0, deposits: 0 };
+  }
+
+  runningTotalThrough(pageNumber: number): MoneyPair {
+    let withdrawals = 0;
+    let deposits = 0;
+    for (const [page, sums] of this.perPage) {
+      if (page <= pageNumber) {
+        withdrawals += sums.withdrawals;
+        deposits += sums.deposits;
+      }
+    }
+    return { withdrawals, deposits };
+  }
+
+  hasRowsOnPage(pageNumber: number): boolean {
+    const sums = this.perPage.get(pageNumber);
+    return sums != null && (sums.withdrawals > 0 || sums.deposits > 0);
+  }
+}
 
 function lastAutoTableBottom(doc: jsPDF): number {
   const last = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable;
@@ -40,21 +68,104 @@ function lastAutoTableBottom(doc: jsPDF): number {
 
 function ensureSpace(doc: jsPDF, y: number, neededMm: number): number {
   const pageH = doc.internal.pageSize.getHeight();
-  const marginBottom = 16;
-  if (y + neededMm > pageH - marginBottom) {
+  if (y + neededMm > pageH - FOOTER_RESERVE_MM) {
     doc.addPage();
     return 18;
   }
   return y;
 }
 
-/** Builds a PDF matching visible (filtered) rows and triggers a browser download. */
+const TABLE_STYLES = {
+  fontSize: 7,
+  cellPadding: 1.2,
+  textColor: [15, 23, 42] as [number, number, number],
+  lineColor: [226, 232, 240] as [number, number, number],
+  lineWidth: 0.1,
+};
+
+const TABLE_HEAD_STYLES = {
+  fillColor: [241, 245, 249] as [number, number, number],
+  textColor: [71, 85, 105] as [number, number, number],
+  fontStyle: "bold" as const,
+  fontSize: 7,
+};
+
+const TRANSACTION_COLUMN_STYLES = {
+  0: { cellWidth: 9, halign: "right" as const },
+  1: { cellWidth: 10, halign: "center" as const },
+  2: { cellWidth: 22 },
+  3: { cellWidth: "auto" as const },
+  4: { cellWidth: 24, halign: "right" as const },
+  5: { cellWidth: 24, halign: "right" as const },
+};
+
+function drawExportPageFooters(
+  doc: jsPDF,
+  tracker: ExportPdfPageTracker,
+  margin: number,
+  finalTotals: MoneyPair & { net: number },
+) {
+  const totalPages = doc.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page += 1) {
+    if (!tracker.hasRowsOnPage(page)) continue;
+    doc.setPage(page);
+    const pageH = doc.internal.pageSize.getHeight();
+    const pageTotal = tracker.pageTotal(page);
+    const isLastPage = page === totalPages;
+    const running = tracker.runningTotalThrough(page);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(30, 41, 59);
+
+    let y = pageH - FOOTER_RESERVE_MM + 4;
+    doc.text(
+      `Page ${page} total — Withdrawals ${formatStatementInrMoney(pageTotal.withdrawals)} · Deposits ${formatStatementInrMoney(pageTotal.deposits)}`,
+      margin,
+      y,
+    );
+    y += 4;
+
+    if (isLastPage) {
+      doc.text(
+        `Final total — Withdrawals ${formatStatementInrMoney(finalTotals.withdrawals)} · Deposits ${formatStatementInrMoney(finalTotals.deposits)} · Net ${formatStatementInrMoney(finalTotals.net)} (${profitLossLabel(finalTotals.net)})`,
+        margin,
+        y,
+      );
+    } else {
+      doc.text(
+        `Running total — Withdrawals ${formatStatementInrMoney(running.withdrawals)} · Deposits ${formatStatementInrMoney(running.deposits)}`,
+        margin,
+        y,
+      );
+    }
+  }
+}
+
+/** Builds a PDF matching visible rows and triggers a browser download. */
 export function downloadStatementExtractPdf(input: StatementPdfExportInput): void {
-  const { generatedAt, transactionFilterRaw, dateRangeSummary, grandTotals, sections } = input;
+  const { generatedAt, transactionFilterRaw, dateRangeSummary, sections } = input;
   if (sections.length === 0) return;
+
+  const filtersActive =
+    Boolean(transactionFilterRaw?.trim()) || Boolean(dateRangeSummary?.trim());
+
+  let finalWithdrawals = 0;
+  let finalDeposits = 0;
+  for (const sec of sections) {
+    const sums = sumStatementWdDpRows(sec.rows);
+    finalWithdrawals += sums.withdrawals;
+    finalDeposits += sums.deposits;
+  }
+  const finalTotals = {
+    withdrawals: finalWithdrawals,
+    deposits: finalDeposits,
+    net: finalDeposits - finalWithdrawals,
+  };
 
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const margin = 14;
+  const tracker = new ExportPdfPageTracker();
   let y = 16;
 
   doc.setFont("helvetica", "bold");
@@ -66,7 +177,11 @@ export function downloadStatementExtractPdf(input: StatementPdfExportInput): voi
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.setTextColor(71, 85, 105);
-  doc.text(`Generated ${generatedAt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`, margin, y);
+  doc.text(
+    `Generated ${generatedAt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`,
+    margin,
+    y,
+  );
   y += 5;
 
   if (transactionFilterRaw?.trim()) {
@@ -89,27 +204,10 @@ export function downloadStatementExtractPdf(input: StatementPdfExportInput): voi
 
   y += 2;
 
-  if (grandTotals) {
-    y = ensureSpace(doc, y, 28);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(30, 41, 59);
-    doc.text(`${grandTotals.scopeLabel} · visible rows`, margin, y);
-    y += 6;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    const netLabel = profitLossLabel(grandTotals.net);
-    doc.text(
-      `Deposits ${formatInrMoney(grandTotals.deposits)} · Withdrawals ${formatInrMoney(grandTotals.withdrawals)} · Net ${formatInrMoney(grandTotals.net)} (${netLabel})`,
-      margin,
-      y,
-    );
-    y += 8;
-  }
-
   for (let s = 0; s < sections.length; s += 1) {
     const sec = sections[s]!;
-    const net = sec.deposits - sec.withdrawals;
+    const rowSums = sumStatementWdDpRows(sec.rows);
+    const net = rowSums.deposits - rowSums.withdrawals;
     const badge = sec.source === "firebase" ? "Firebase" : "Local PDF";
     y = ensureSpace(doc, y, 22);
 
@@ -123,46 +221,53 @@ export function downloadStatementExtractPdf(input: StatementPdfExportInput): voi
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
     doc.setTextColor(71, 85, 105);
-    const sumLine = `Deposits ${formatInrMoney(sec.deposits)} · Withdrawals ${formatInrMoney(sec.withdrawals)} · Net ${formatInrMoney(net)} (${profitLossLabel(net)}) · ${sec.rows.length} row${sec.rows.length === 1 ? "" : "s"}`;
-    doc.text(sumLine, margin, y);
+    doc.text(
+      `${sec.rows.length} row${sec.rows.length === 1 ? "" : "s"} · Deposits ${formatStatementInrMoney(rowSums.deposits)} · Withdrawals ${formatStatementInrMoney(rowSums.withdrawals)} · Net ${formatStatementInrMoney(net)}`,
+      margin,
+      y,
+    );
     y += 6;
+
+    const rowKeys = sec.rows.map((row, index) => `${sec.fileName}|${s}|${index}|${row.page}|${row.transaction}`);
+    const rowAmounts = sec.rows.map((row) => ({
+      withdrawals: parseStatementMoneyAmount(row.withdrawals),
+      deposits: parseStatementMoneyAmount(row.deposits),
+    }));
 
     autoTable(doc, {
       startY: y,
-      margin: { left: margin, right: margin },
+      margin: { left: margin, right: margin, bottom: FOOTER_RESERVE_MM },
       head: [["#", "Pg", "Txn date", "Transaction", "Withdrawals", "Deposits"]],
-      body: sec.rows.map((r, i) => [
-        String(i + 1),
+      body: sec.rows.map((r, index) => [
+        String(index + 1),
         String(r.page),
         r.txnDate || "—",
         r.transaction || "—",
         r.withdrawals || "—",
         r.deposits || "—",
       ]),
-      styles: { fontSize: 7, cellPadding: 1.2, textColor: [15, 23, 42], lineColor: [226, 232, 240], lineWidth: 0.1 },
-      headStyles: {
-        fillColor: [241, 245, 249],
-        textColor: [71, 85, 105],
-        fontStyle: "bold",
-        fontSize: 7,
-      },
+      styles: TABLE_STYLES,
+      headStyles: TABLE_HEAD_STYLES,
       alternateRowStyles: { fillColor: [248, 250, 252] },
-      columnStyles: {
-        0: { cellWidth: 9, halign: "right" },
-        1: { cellWidth: 10, halign: "center" },
-        2: { cellWidth: 22 },
-        3: { cellWidth: "auto" },
-        4: { cellWidth: 24, halign: "right" },
-        5: { cellWidth: 24, halign: "right" },
-      },
+      columnStyles: TRANSACTION_COLUMN_STYLES,
       showHead: "everyPage",
       tableLineColor: [226, 232, 240],
       tableLineWidth: 0.1,
+      didDrawCell: (data: CellHookData) => {
+        if (data.section !== "body" || data.column.index !== 0) return;
+        const amt = rowAmounts[data.row.index];
+        const key = rowKeys[data.row.index];
+        if (!amt || !key) return;
+        tracker.addRow(data.pageNumber, key, amt.withdrawals, amt.deposits);
+      },
     });
 
     y = lastAutoTableBottom(doc) + (s < sections.length - 1 ? 10 : 6);
   }
 
+  drawExportPageFooters(doc, tracker, margin, finalTotals);
+
   const stamp = generatedAt.toISOString().slice(0, 10);
-  doc.save(`statement-extract-${stamp}.pdf`);
+  const filterSuffix = filtersActive ? "-filtered" : "";
+  doc.save(`statement-extract-${stamp}${filterSuffix}.pdf`);
 }

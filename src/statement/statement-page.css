@@ -1,0 +1,38 @@
+.stmt-accordion-panel {
+  animation: stmt-panel-in 0.22s ease-out;
+}
+
+@keyframes stmt-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.stmt-table-scroll {
+  max-height: min(72vh, 720px);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.stmt-table-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: rgb(248 250 252 / 0.98);
+  box-shadow: 0 1px 0 rgb(226 232 240);
+}
+
+.stmt-file-card {
+  transition:
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.stmt-file-card:hover {
+  box-shadow: 0 4px 14px -4px rgb(15 23 42 / 0.12);
+}

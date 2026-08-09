@@ -1,4 +1,5 @@
 import type { StatementWdDpRow } from "./extractStatementColumnsFromPdf";
+import { dropEmptyStatementRows } from "./extractStatementColumnsFromPdf";
 import { filterStatementRowsByDateRange } from "./statementDateRangeFilter";
 import { filterStatementRowsByTransactionTerms } from "./transactionSearchFilter";
 
@@ -14,6 +15,7 @@ export function filterStatementVisibleRows(
   rows: StatementWdDpRow[],
   p: StatementVisibleRowParams,
 ): StatementWdDpRow[] {
-  const byTerms = filterStatementRowsByTransactionTerms(rows, p.transactionTermsLower);
+  const nonEmpty = dropEmptyStatementRows(rows);
+  const byTerms = filterStatementRowsByTransactionTerms(nonEmpty, p.transactionTermsLower);
   return filterStatementRowsByDateRange(byTerms, p.dateFrom, p.dateTo);
 }

@@ -6,7 +6,7 @@
  *   config/settings       → { commissionPct: number }
  *   sessions/{sessionId}  → SavedSession  (one doc per session)
  *   payments/{paymentId}  → PaymentRecord (one doc per payment)
- *   statementExtracts/{fingerprint}  → extracted statement rows (no PDF), see saveStatementExtractIfNew
+ *   statementExtracts/{profileId}__{fingerprint}  → extracted statement rows (no PDF)
  *
  * Sessions and payments each carry:
  *   date:    "DD/MM/YYYY"  — used for display and exact-match queries
@@ -34,6 +34,12 @@ import {
 import { db } from "../config/firebase";
 import type { StatementWdDpRow } from "../statement/extractStatementColumnsFromPdf";
 import { fingerprintStatementExtract } from "../statement/statementExtractFingerprint";
+import {
+  decodeStatementRowsFromFirestore,
+  encodeStatementRowsForFirestore,
+  STATEMENT_ROWS_ENCODING_GZIP_CHUNKED,
+} from "../statement/statementExtractStorage";
+import { DEFAULT_STATEMENT_PROFILE_ID } from "../statement/statementProfiles";
 import { toastApiError } from "../lib/toast/apiToast";
 import { withFirestoreRetry } from "../lib/firestoreRetry";
 import type {
@@ -284,10 +290,15 @@ export type SaveStatementExtractResult =
  * Stores parsed rows + metadata only.
  */
 export async function saveStatementExtractIfNew(params: {
+  profileId: string;
   fileName: string;
   rows: StatementWdDpRow[];
 }): Promise<SaveStatementExtractResult> {
-  const { fileName, rows } = params;
+  const { profileId, fileName, rows } = params;
+  const trimmedProfileId = profileId.trim();
+  if (trimmedProfileId.length === 0) {
+    return { status: "error", message: "Missing profile." };
+  }
   const trimmedName = fileName.trim();
   if (trimmedName.length === 0) {
     return { status: "error", message: "Missing file name." };
@@ -306,20 +317,22 @@ export async function saveStatementExtractIfNew(params: {
     };
   }
 
-  const ref = doc(db, "statementExtracts", fingerprint);
+  const ref = doc(db, "statementExtracts", `${trimmedProfileId}__${fingerprint}`);
+  const encoded = encodeStatementRowsForFirestore(rows);
   const payload: DocumentData = {
+    profileId: trimmedProfileId,
     fileName: trimmedName,
-    rowCount: rows.length,
-    rows: rows.map((r) => ({
-      page: r.page,
-      txnDate: r.txnDate,
-      transaction: r.transaction,
-      withdrawals: r.withdrawals,
-      deposits: r.deposits,
-    })),
+    rowCount: encoded.rowCount,
     contentFingerprint: fingerprint,
+    rowsEncoding: encoded.encoding,
     uploadedAt: serverTimestamp(),
   };
+  if (encoded.compressed) {
+    payload.rowsCompressed = encoded.compressed;
+  }
+  if (encoded.chunks) {
+    payload.rowChunkCount = encoded.chunks.length;
+  }
 
   try {
     const existing = await getDoc(ref);
@@ -327,14 +340,19 @@ export async function saveStatementExtractIfNew(params: {
       return { status: "duplicate" };
     }
     await setDoc(ref, payload);
+    if (encoded.chunks) {
+      await writeStatementExtractRowChunks(ref.id, encoded.chunks);
+    }
     return { status: "uploaded" };
   } catch (e) {
     const raw = e instanceof Error ? e.message : "Upload failed.";
     const hint =
-      /failed to fetch|networkerror|load failed|fetch.*aborted/i.test(raw) &&
-      !/CORS policy|Access-Control/i.test(raw)
-        ? " Add this origin in Firebase Console → Project settings → Your apps → Authorized domains; serve the app over http(s), not file://."
-        : "";
+      /exceeds the maximum allowed size/i.test(raw)
+        ? " The extract was too large for Firestore; try again after updating the app."
+        : /failed to fetch|networkerror|load failed|fetch.*aborted/i.test(raw) &&
+            !/CORS policy|Access-Control/i.test(raw)
+          ? " Add this origin in Firebase Console → Project settings → Your apps → Authorized domains; serve the app over http(s), not file://."
+          : "";
     return {
       status: "error",
       message: raw + hint,
@@ -342,9 +360,25 @@ export async function saveStatementExtractIfNew(params: {
   }
 }
 
+async function writeStatementExtractRowChunks(extractId: string, chunks: string[]): Promise<void> {
+  const chunkColl = collection(db, "statementExtracts", extractId, "rowChunks");
+  const BATCH = 400;
+  for (let i = 0; i < chunks.length; i += BATCH) {
+    const slice = chunks.slice(i, i + BATCH);
+    await withFirestoreRetry(async () => {
+      const batch = writeBatch(db);
+      for (let j = 0; j < slice.length; j++) {
+        batch.set(doc(chunkColl, String(i + j)), { data: slice[j]! });
+      }
+      await batch.commit();
+    });
+  }
+}
+
 /** One saved extract document for list/detail UI. */
 export type StatementExtractListItem = {
   id: string;
+  profileId: string;
   fileName: string;
   rowCount: number;
   contentFingerprint: string;
@@ -364,58 +398,95 @@ function firestoreTimestampToMs(value: unknown): number | null {
   return null;
 }
 
-function coerceStatementRowFromFirestore(raw: unknown): StatementWdDpRow | null {
-  if (!raw || typeof raw !== "object") return null;
-  const o = raw as Record<string, unknown>;
-  const page = typeof o.page === "number" ? o.page : Number(o.page);
-  return {
-    page: Number.isFinite(page) ? page : 0,
-    txnDate: typeof o.txnDate === "string" ? o.txnDate : "",
-    transaction: typeof o.transaction === "string" ? o.transaction : "",
-    withdrawals: typeof o.withdrawals === "string" ? o.withdrawals : "",
-    deposits: typeof o.deposits === "string" ? o.deposits : "",
-  };
-}
-
 /**
  * Recent rows saved via {@link saveStatementExtractIfNew} (newest first).
  * Requires an index on `uploadedAt` if Firestore prompts you when first running this query.
  */
 export async function loadRecentStatementExtracts(
+  profileId: string,
   maxDocs = 40,
 ): Promise<StatementExtractListItem[]> {
+  const trimmedProfileId = profileId.trim();
   const snap = await withFirestoreRetry(() =>
     getDocs(
       query(
         collection(db, "statementExtracts"),
         orderBy("uploadedAt", "desc"),
-        limit(maxDocs),
+        limit(Math.max(maxDocs, 50)),
       ),
     ),
   );
-  return snap.docs.map((d) => {
-    const data = d.data();
-    const rawRows = Array.isArray(data.rows) ? (data.rows as unknown[]) : [];
-    const rows = rawRows
-      .map(coerceStatementRowFromFirestore)
-      .filter((r): r is StatementWdDpRow => r != null);
-    return {
-      id: d.id,
-      fileName: typeof data.fileName === "string" ? data.fileName : "Unknown file",
-      rowCount: typeof data.rowCount === "number" ? data.rowCount : rows.length,
-      contentFingerprint:
-        typeof data.contentFingerprint === "string" ? data.contentFingerprint : d.id,
-      uploadedAtMs: firestoreTimestampToMs(data.uploadedAt),
-      rows,
-    };
-  });
+  const mapped = await Promise.all(
+    snap.docs.map(async (d) => {
+      const data = d.data();
+      let chunkPayloads: string[] | undefined;
+      if (data.rowsEncoding === STATEMENT_ROWS_ENCODING_GZIP_CHUNKED) {
+        const chunkSnap = await getDocs(collection(d.ref, "rowChunks"));
+        chunkPayloads = [...chunkSnap.docs]
+          .sort((a, b) => Number(a.id) - Number(b.id))
+          .map((cd) => (typeof cd.data().data === "string" ? cd.data().data : ""));
+      }
+      const rows = decodeStatementRowsFromFirestore(
+        typeof data.rowsEncoding === "string" ? data.rowsEncoding : undefined,
+        typeof data.rowsCompressed === "string" ? data.rowsCompressed : undefined,
+        chunkPayloads,
+        Array.isArray(data.rows) ? (data.rows as unknown[]) : undefined,
+      );
+      const storedProfileId =
+        typeof data.profileId === "string" && data.profileId.trim().length > 0
+          ? data.profileId.trim()
+          : DEFAULT_STATEMENT_PROFILE_ID;
+      return {
+        id: d.id,
+        profileId: storedProfileId,
+        fileName: typeof data.fileName === "string" ? data.fileName : "Unknown file",
+        rowCount: typeof data.rowCount === "number" ? data.rowCount : rows.length,
+        contentFingerprint:
+          typeof data.contentFingerprint === "string" ? data.contentFingerprint : d.id,
+        uploadedAtMs: firestoreTimestampToMs(data.uploadedAt),
+        rows,
+      };
+    }),
+  );
+  return mapped
+    .filter((item) => item.profileId === trimmedProfileId)
+    .slice(0, maxDocs);
 }
 
 /** Permanently deletes one `statementExtracts` document (parsed rows only; never touches PDFs). */
 export async function deleteStatementExtract(extractId: string): Promise<void> {
   const trimmed = extractId.trim();
   if (trimmed.length === 0) throw new Error("Missing extract id.");
-  await withFirestoreRetry(() => deleteDoc(doc(db, "statementExtracts", trimmed)));
+  const extractRef = doc(db, "statementExtracts", trimmed);
+  const chunkSnap = await withFirestoreRetry(() =>
+    getDocs(collection(db, "statementExtracts", trimmed, "rowChunks")),
+  );
+  if (chunkSnap.empty) {
+    await withFirestoreRetry(() => deleteDoc(extractRef));
+    return;
+  }
+  const BATCH = 400;
+  for (let i = 0; i < chunkSnap.docs.length; i += BATCH) {
+    const batch = writeBatch(db);
+    const slice = chunkSnap.docs.slice(i, i + BATCH);
+    for (const d of slice) batch.delete(d.ref);
+    if (i + BATCH >= chunkSnap.docs.length) {
+      batch.delete(extractRef);
+    }
+    await batch.commit();
+  }
+}
+
+/** Deletes all cloud saves tagged with `profileId` (up to `maxDocs` recent items). */
+export async function deleteStatementExtractsForProfile(
+  profileId: string,
+  maxDocs = 200,
+): Promise<number> {
+  const items = await loadRecentStatementExtracts(profileId, maxDocs);
+  for (const item of items) {
+    await deleteStatementExtract(item.id);
+  }
+  return items.length;
 }
 
 export async function loadPaymentsByDate(

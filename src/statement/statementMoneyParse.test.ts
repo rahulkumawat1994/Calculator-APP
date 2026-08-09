@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { StatementWdDpRow } from "./extractStatementColumnsFromPdf";
 import {
+  buildStatementTableItems,
   describeStatementRowMoney,
   parseStatementMoneyAmount,
   sumStatementWdDpRows,
+  sumStatementWdDpRowsByPage,
 } from "./statementMoneyParse";
 
 describe("parseStatementMoneyAmount", () => {
@@ -34,6 +36,44 @@ describe("sumStatementWdDpRows", () => {
       { page: 1, txnDate: "", transaction: "b", withdrawals: "", deposits: "50.5" },
     ];
     expect(sumStatementWdDpRows(rows)).toEqual({ withdrawals: 100, deposits: 50.5 });
+  });
+});
+
+describe("sumStatementWdDpRowsByPage", () => {
+  it("groups totals by PDF page number", () => {
+    const rows: StatementWdDpRow[] = [
+      { page: 1, txnDate: "", transaction: "a", withdrawals: "100", deposits: "" },
+      { page: 2, txnDate: "", transaction: "b", withdrawals: "", deposits: "50" },
+      { page: 1, txnDate: "", transaction: "c", withdrawals: "", deposits: "25" },
+    ];
+    expect(sumStatementWdDpRowsByPage(rows)).toEqual([
+      { page: 1, withdrawals: 100, deposits: 25 },
+      { page: 2, withdrawals: 0, deposits: 50 },
+    ]);
+  });
+});
+
+describe("buildStatementTableItems", () => {
+  it("inserts a page total after each page group", () => {
+    const rows: StatementWdDpRow[] = [
+      { page: 1, txnDate: "", transaction: "UPI/a", withdrawals: "10", deposits: "" },
+      { page: 2, txnDate: "", transaction: "UPI/b", withdrawals: "", deposits: "20" },
+      { page: 1, txnDate: "", transaction: "UPI/c", withdrawals: "", deposits: "5" },
+    ];
+    const items = buildStatementTableItems(rows);
+    expect(items.map((i) => i.kind)).toEqual(["row", "row", "pageTotal", "row", "pageTotal"]);
+    const page1Total = items.find((i) => i.kind === "pageTotal" && i.page === 1);
+    expect(page1Total).toMatchObject({ withdrawals: 10, deposits: 5 });
+  });
+  it("returns only page totals when requested", () => {
+    const rows: StatementWdDpRow[] = [
+      { page: 1, txnDate: "", transaction: "UPI/a", withdrawals: "10", deposits: "" },
+      { page: 2, txnDate: "", transaction: "UPI/b", withdrawals: "", deposits: "20" },
+      { page: 1, txnDate: "", transaction: "UPI/c", withdrawals: "", deposits: "5" },
+    ];
+    const items = buildStatementTableItems(rows, { onlyPageTotals: true });
+    expect(items.every((i) => i.kind === "pageTotal")).toBe(true);
+    expect(items.length).toBe(2);
   });
 });
 

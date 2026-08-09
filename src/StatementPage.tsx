@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { toast } from "react-toastify";
 import {
   deleteStatementExtract,
+  deleteStatementExtractsForProfile,
   loadRecentStatementExtracts,
   saveStatementExtractIfNew,
   type StatementExtractListItem,
@@ -10,20 +11,39 @@ import { StatementPdfColumnGuideModal } from "./StatementPdfColumnGuideModal";
 import {
   DEFAULT_COLUMN_BAND_DELTAS,
   extractStatementWdDpRowsFromPdfData,
+  resolveStatementColumnBandDeltas,
   type StatementColumnBandDeltas,
+  type StatementPdfPageTotal,
   type StatementWdDpRow,
 } from "./statement/extractStatementColumnsFromPdf";
 import {
   sortStatementPdfsByPeriod,
   type StatementPdfSortMode,
 } from "./statement/sortStatementPdfsByPeriod";
-import { sumStatementWdDpRows } from "./statement/statementMoneyParse";
+import { sumStatementWdDpRows, formatStatementInrMoney } from "./statement/statementMoneyParse";
+import { StatementWdDpRowsTable } from "./statement/StatementWdDpRowsTable";
+import { StatementGrandTotals } from "./statement/StatementGrandTotals";
+import { StatementFiltersPanel } from "./statement/StatementFiltersPanel";
 import {
   addSavedTransactionSearch,
   loadSavedTransactionSearches,
   persistSavedTransactionSearches,
   type SavedTransactionSearch,
 } from "./statement/savedTransactionSearches";
+import {
+  addStatementProfile,
+  loadActiveStatementProfileId,
+  loadStatementProfileColumnBandDeltas,
+  loadStatementProfileFilters,
+  loadStatementProfiles,
+  persistActiveStatementProfileId,
+  persistStatementProfileColumnBandDeltas,
+  persistStatementProfileFilters,
+  profileHasSavedColumnBandDeltas,
+  removeStatementProfile,
+  renameStatementProfile,
+  type StatementProfile,
+} from "./statement/statementProfiles";
 import { isStatementDateRangeInverted } from "./statement/statementDateRangeFilter";
 import {
   filterStatementVisibleRows,
@@ -31,32 +51,12 @@ import {
 } from "./statement/statementRowFilters";
 import { parseTransactionSearchTerms } from "./statement/transactionSearchFilter";
 import { downloadStatementExtractPdf, type StatementPdfExportSection } from "./statement/exportStatementPdf";
+import { StatementFileMoneySummary } from "./statement/statementFormat";
+import { StatementListControls } from "./statement/StatementListControls";
+import { StatementResultsToolbar } from "./statement/StatementResultsToolbar";
+import "./statement/statement-page.css";
 import { DangerActionDialog } from "./ui";
 
-function formatInrMoney(n: number): string {
-  return new Intl.NumberFormat("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
-}
-
-function profitLossBoxClass(net: number): string {
-  if (net > 0) return "border-emerald-200/80 bg-emerald-50/60";
-  if (net < 0) return "border-red-200/90 bg-red-50/70";
-  return "border-gray-200/90 bg-gray-50/80";
-}
-
-function profitLossTextClass(net: number): string {
-  if (net > 0) return "text-emerald-800";
-  if (net < 0) return "text-red-800";
-  return "text-gray-700";
-}
-
-function profitLossLabel(net: number): string {
-  if (net > 0) return "Profit";
-  if (net < 0) return "Loss";
-  return "Even";
-}
 
 type LoadedStatementPdf = {
   id: string;
@@ -64,6 +64,7 @@ type LoadedStatementPdf = {
   data: ArrayBuffer;
   bandDeltas: StatementColumnBandDeltas;
   rows: StatementWdDpRow[];
+  pdfPageTotals: StatementPdfPageTotal[];
   loading: boolean;
   error: string | null;
 };
@@ -77,7 +78,8 @@ type StatementDeleteConfirm =
   | { type: "cloud-single"; item: StatementExtractListItem }
   | { type: "cloud-batch"; items: StatementExtractListItem[] }
   | { type: "pdf-single"; docId: string; name: string }
-  | { type: "pdf-batch"; docIds: string[] };
+  | { type: "pdf-batch"; docIds: string[] }
+  | { type: "profile"; profileId: string; profileName: string };
 
 function statementDeleteConfirmCopy(p: StatementDeleteConfirm): {
   title: string;
@@ -132,10 +134,36 @@ function statementDeleteConfirmCopy(p: StatementDeleteConfirm): {
         confirmLabel: "Yes, remove",
       };
     }
+    case "profile":
+      return {
+        title: `Delete profile “${p.profileName}”?`,
+        message: (
+          <p className="text-[13px] leading-snug text-gray-600">
+            This removes the profile, its saved filters, quick searches, and any cloud extracts tagged for this
+            person. PDFs loaded only in this browser tab are discarded. You cannot undo this.
+          </p>
+        ),
+        confirmLabel: "Yes, delete profile",
+      };
   }
 }
 
 export default function StatementPage() {
+  const initialProfileId =
+    typeof window !== "undefined" ? loadActiveStatementProfileId() : "me";
+  const initialFilters =
+    typeof window !== "undefined"
+      ? loadStatementProfileFilters(initialProfileId)
+      : { transactionSearchRaw: "", txnDateFrom: "", txnDateTo: "", showOnlyPageTotals: false, showPdfPrintedTotals: false };
+
+  const [profiles, setProfiles] = useState<StatementProfile[]>(() =>
+    typeof window !== "undefined" ? loadStatementProfiles() : [{ id: "me", name: "Me" }],
+  );
+  const [activeProfileId, setActiveProfileId] = useState(initialProfileId);
+  const [newProfileName, setNewProfileName] = useState("");
+  const [profileEditing, setProfileEditing] = useState(false);
+  const [profileEditNameValue, setProfileEditNameValue] = useState("");
+  const documentsByProfileRef = useRef<Record<string, LoadedStatementPdf[]>>({});
   const [documents, setDocuments] = useState<LoadedStatementPdf[]>([]);
   const [filePickerError, setFilePickerError] = useState<string | null>(null);
   const [showColumnGuide, setShowColumnGuide] = useState(false);
@@ -149,12 +177,16 @@ export default function StatementPage() {
     () => new Set(),
   );
   const [pdfSortMode, setPdfSortMode] = useState<StatementPdfSortMode>("period-desc");
-  const [transactionSearchRaw, setTransactionSearchRaw] = useState("");
+  const [transactionSearchRaw, setTransactionSearchRaw] = useState(
+    initialFilters.transactionSearchRaw,
+  );
   /** `<input type="date">` values (`YYYY-MM-DD`) for Txn date column filtering. */
-  const [txnDateFrom, setTxnDateFrom] = useState("");
-  const [txnDateTo, setTxnDateTo] = useState("");
+  const [txnDateFrom, setTxnDateFrom] = useState(initialFilters.txnDateFrom);
+  const [txnDateTo, setTxnDateTo] = useState(initialFilters.txnDateTo);
+  const [showOnlyPageTotals, setShowOnlyPageTotals] = useState(initialFilters.showOnlyPageTotals);
+  const [showPdfPrintedTotals, setShowPdfPrintedTotals] = useState(initialFilters.showPdfPrintedTotals);
   const [savedTxnSearches, setSavedTxnSearches] = useState<SavedTransactionSearch[]>(() =>
-    typeof window !== "undefined" ? loadSavedTransactionSearches() : [],
+    typeof window !== "undefined" ? loadSavedTransactionSearches(initialProfileId) : [],
   );
   /** Per-PDF UI state for “Upload” of extracted rows to Firestore (not the PDF file). */
   const [extractUploadByDocId, setExtractUploadByDocId] = useState<
@@ -171,6 +203,131 @@ export default function StatementPage() {
   const deleteConfirmInFlight = useRef(false);
   const parseVersionByPdfRef = useRef<Record<string, number>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const activeProfile = useMemo(
+    () => profiles.find((p) => p.id === activeProfileId) ?? profiles[0]!,
+    [profiles, activeProfileId],
+  );
+
+  const profileHasSavedColumns = useMemo(
+    () => profileHasSavedColumnBandDeltas(activeProfileId),
+    [activeProfileId],
+  );
+
+  const persistCurrentProfileFilters = useCallback(() => {
+    persistStatementProfileFilters(activeProfileId, {
+      transactionSearchRaw,
+      txnDateFrom,
+      txnDateTo,
+      showOnlyPageTotals,
+      showPdfPrintedTotals,
+    });
+  }, [activeProfileId, transactionSearchRaw, txnDateFrom, txnDateTo, showOnlyPageTotals, showPdfPrintedTotals]);
+
+  useEffect(() => {
+    persistCurrentProfileFilters();
+  }, [persistCurrentProfileFilters]);
+
+  const switchStatementProfile = useCallback(
+    (nextProfileId: string) => {
+      if (nextProfileId === activeProfileId) return;
+      documentsByProfileRef.current[activeProfileId] = documents;
+      persistStatementProfileFilters(activeProfileId, {
+        transactionSearchRaw,
+        txnDateFrom,
+        txnDateTo,
+        showOnlyPageTotals,
+        showPdfPrintedTotals,
+      });
+      const nextDocs = documentsByProfileRef.current[nextProfileId] ?? [];
+      const filters = loadStatementProfileFilters(nextProfileId);
+      setActiveProfileId(nextProfileId);
+      persistActiveStatementProfileId(nextProfileId);
+      setDocuments(nextDocs);
+      setSelectedDocIds(new Set());
+      setCollapsedDocIds(new Set());
+      setExtractUploadByDocId({});
+      setActiveGuidePdfId(nextDocs[0]?.id ?? null);
+      setShowColumnGuide(false);
+      setTransactionSearchRaw(filters.transactionSearchRaw);
+      setTxnDateFrom(filters.txnDateFrom);
+      setTxnDateTo(filters.txnDateTo);
+      setShowOnlyPageTotals(filters.showOnlyPageTotals);
+      setShowPdfPrintedTotals(filters.showPdfPrintedTotals);
+      setSavedTxnSearches(loadSavedTransactionSearches(nextProfileId));
+      setSelectedCloudExtractIds(new Set());
+      setCollapsedCloudExtractIds(new Set());
+      setProfileEditing(false);
+    },
+    [activeProfileId, documents, transactionSearchRaw, txnDateFrom, txnDateTo, showOnlyPageTotals, showPdfPrintedTotals],
+  );
+
+  const activateProfileWithoutSavingFrom = useCallback((nextProfileId: string) => {
+    const nextDocs = documentsByProfileRef.current[nextProfileId] ?? [];
+    const filters = loadStatementProfileFilters(nextProfileId);
+    setActiveProfileId(nextProfileId);
+    persistActiveStatementProfileId(nextProfileId);
+    setDocuments(nextDocs);
+    setSelectedDocIds(new Set());
+    setCollapsedDocIds(new Set());
+    setExtractUploadByDocId({});
+    setActiveGuidePdfId(nextDocs[0]?.id ?? null);
+    setShowColumnGuide(false);
+    setTransactionSearchRaw(filters.transactionSearchRaw);
+    setTxnDateFrom(filters.txnDateFrom);
+    setTxnDateTo(filters.txnDateTo);
+    setShowOnlyPageTotals(filters.showOnlyPageTotals);
+    setShowPdfPrintedTotals(filters.showPdfPrintedTotals);
+    setSavedTxnSearches(loadSavedTransactionSearches(nextProfileId));
+    setSelectedCloudExtractIds(new Set());
+    setCollapsedCloudExtractIds(new Set());
+    setProfileEditing(false);
+  }, []);
+
+  const handleAddProfile = useCallback(() => {
+    const result = addStatementProfile(profiles, newProfileName);
+    if ("error" in result) {
+      toast.error(result.error, { toastId: "stmt-profile-err" });
+      return;
+    }
+    setProfiles(result.profiles);
+    setNewProfileName("");
+    switchStatementProfile(result.newId);
+    toast.success(`Profile “${result.profiles.find((p) => p.id === result.newId)?.name}” added.`, {
+      toastId: "stmt-profile-add",
+    });
+  }, [profiles, newProfileName, switchStatementProfile]);
+
+  const startProfileRename = useCallback(() => {
+    setProfileEditNameValue(activeProfile.name);
+    setProfileEditing(true);
+  }, [activeProfile.name]);
+
+  const cancelProfileRename = useCallback(() => {
+    setProfileEditing(false);
+    setProfileEditNameValue("");
+  }, []);
+
+  const handleSaveProfileRename = useCallback(() => {
+    const result = renameStatementProfile(profiles, activeProfileId, profileEditNameValue);
+    if ("error" in result) {
+      toast.error(result.error, { toastId: "stmt-profile-rename-err" });
+      return;
+    }
+    setProfiles(result.profiles);
+    setProfileEditing(false);
+    setProfileEditNameValue("");
+    toast.success("Profile name updated.", { toastId: "stmt-profile-rename-ok" });
+  }, [activeProfileId, profileEditNameValue, profiles]);
+
+  const requestDeleteActiveProfile = useCallback(() => {
+    if (profiles.length <= 1) return;
+    setDeleteConfirm({
+      type: "profile",
+      profileId: activeProfileId,
+      profileName: activeProfile.name,
+    });
+  }, [activeProfileId, activeProfile.name, profiles.length]);
 
   const parseDocument = useCallback(async (docId: string, data: ArrayBuffer, deltas: StatementColumnBandDeltas) => {
     const nextVersion = (parseVersionByPdfRef.current[docId] ?? 0) + 1;
@@ -193,7 +350,13 @@ export default function StatementPage() {
         if (!prev.some((d) => d.id === docId)) return prev;
         return prev.map((doc) =>
           doc.id === docId
-            ? { ...doc, rows: out, loading: false, error: out.length === 0 ? NO_ROWS_MESSAGE : null }
+            ? {
+                ...doc,
+                rows: out.rows,
+                pdfPageTotals: out.pdfPageTotals,
+                loading: false,
+                error: out.rows.length === 0 ? NO_ROWS_MESSAGE : null,
+              }
             : doc,
         );
       });
@@ -206,6 +369,7 @@ export default function StatementPage() {
             ? {
                 ...doc,
                 rows: [],
+                pdfPageTotals: [],
                 loading: false,
                 error: e instanceof Error ? e.message : "Could not read this PDF.",
               }
@@ -239,6 +403,11 @@ export default function StatementPage() {
     parseVersionByPdfRef.current = {};
     setExtractUploadByDocId({});
 
+    const uploadBandDeltas = resolveStatementColumnBandDeltas({
+      columnBandDeltas:
+        loadStatementProfileColumnBandDeltas(activeProfileId) ?? DEFAULT_COLUMN_BAND_DELTAS,
+    });
+
     const docs: LoadedStatementPdf[] = [];
     for (let i = 0; i < pdfFiles.length; i += 1) {
       const file = pdfFiles[i];
@@ -248,8 +417,9 @@ export default function StatementPage() {
           id: `${Date.now()}-${i}-${file.name}`,
           name: file.name,
           data,
-          bandDeltas: { ...DEFAULT_COLUMN_BAND_DELTAS },
+          bandDeltas: { ...uploadBandDeltas },
           rows: [],
+          pdfPageTotals: [],
           loading: true,
           error: null,
         });
@@ -258,8 +428,9 @@ export default function StatementPage() {
           id: `${Date.now()}-${i}-${file.name}`,
           name: file.name,
           data: new ArrayBuffer(0),
-          bandDeltas: { ...DEFAULT_COLUMN_BAND_DELTAS },
+          bandDeltas: { ...uploadBandDeltas },
           rows: [],
+          pdfPageTotals: [],
           loading: false,
           error: "Could not read this PDF.",
         });
@@ -271,7 +442,7 @@ export default function StatementPage() {
     docs.forEach((doc) => {
       if (doc.data.byteLength > 0) void parseDocument(doc.id, doc.data, doc.bandDeltas);
     });
-  }, [parseDocument]);
+  }, [activeProfileId, parseDocument]);
 
   const removeDocumentsByIds = useCallback((ids: string[]) => {
     if (ids.length === 0) return;
@@ -375,11 +546,12 @@ export default function StatementPage() {
     });
   }, [cloudExtracts]);
 
-  const refreshCloudExtracts = useCallback(async () => {
+  const refreshCloudExtracts = useCallback(async (profileId?: string) => {
+    const pid = profileId ?? activeProfileId;
     setCloudExtractsLoading(true);
     setCloudExtractsError(null);
     try {
-      const list = await loadRecentStatementExtracts(50);
+      const list = await loadRecentStatementExtracts(pid, 50);
       setCloudExtracts(list);
     } catch (e) {
       setCloudExtracts([]);
@@ -389,7 +561,27 @@ export default function StatementPage() {
     } finally {
       setCloudExtractsLoading(false);
     }
-  }, []);
+  }, [activeProfileId]);
+
+  const performDeleteProfile = useCallback(
+    async (profileId: string, profileName: string) => {
+      const removedCount = await deleteStatementExtractsForProfile(profileId);
+      delete documentsByProfileRef.current[profileId];
+      const result = removeStatementProfile(profiles, profileId);
+      if ("error" in result) throw new Error(result.error);
+      setProfiles(result.profiles);
+      if (profileId === activeProfileId) {
+        activateProfileWithoutSavingFrom(result.fallbackId);
+        setCloudExtracts([]);
+        void refreshCloudExtracts(result.fallbackId);
+      }
+      toast.success(
+        `Profile “${profileName}” deleted${removedCount > 0 ? ` (${removedCount} cloud save${removedCount === 1 ? "" : "s"} removed)` : ""}.`,
+        { toastId: "stmt-profile-del-ok" },
+      );
+    },
+    [activeProfileId, activateProfileWithoutSavingFrom, profiles, refreshCloudExtracts],
+  );
 
   const performDeleteCloudExtract = useCallback(
     async (item: StatementExtractListItem) => {
@@ -498,6 +690,8 @@ export default function StatementPage() {
         await performDeleteCloudExtract(p.item);
       } else if (p.type === "cloud-batch") {
         await performCloudBatchDelete(p.items);
+      } else if (p.type === "profile") {
+        await performDeleteProfile(p.profileId, p.profileName);
       } else if (p.type === "pdf-single") {
         removeDocumentsByIds([p.docId]);
       } else {
@@ -512,12 +706,13 @@ export default function StatementPage() {
     deleteConfirm,
     performDeleteCloudExtract,
     performCloudBatchDelete,
+    performDeleteProfile,
     removeDocumentsByIds,
   ]);
 
   useEffect(() => {
-    void refreshCloudExtracts();
-  }, [refreshCloudExtracts]);
+    void refreshCloudExtracts(activeProfileId);
+  }, [activeProfileId, refreshCloudExtracts]);
 
   useEffect(() => {
     const valid = new Set(cloudExtracts.map((c) => c.id));
@@ -538,7 +733,11 @@ export default function StatementPage() {
       if (doc.loading || doc.error || doc.rows.length === 0) return;
       setExtractUploadByDocId((prev) => ({ ...prev, [doc.id]: "uploading" }));
       // Firestore: extracted table rows only — never pass doc.data (PDF bytes).
-      const result = await saveStatementExtractIfNew({ fileName: doc.name, rows: doc.rows });
+      const result = await saveStatementExtractIfNew({
+        profileId: activeProfileId,
+        fileName: doc.name,
+        rows: doc.rows,
+      });
       if (result.status === "uploaded") {
         toast.success(`Saved extract: ${doc.name} (${doc.rows.length} rows).`, { toastId: `stmt-up-${doc.id}` });
         setExtractUploadByDocId((prev) => ({ ...prev, [doc.id]: "uploaded" }));
@@ -556,23 +755,25 @@ export default function StatementPage() {
       toast.error(result.message, { toastId: `stmt-err-${doc.id}` });
       setExtractUploadByDocId((prev) => ({ ...prev, [doc.id]: "error" }));
     },
-    [refreshCloudExtracts],
+    [activeProfileId, refreshCloudExtracts],
   );
 
   const setDocBandDeltas = useCallback(
     (docId: string, next: StatementColumnBandDeltas) => {
+      const resolved = resolveStatementColumnBandDeltas({ columnBandDeltas: next });
+      persistStatementProfileColumnBandDeltas(activeProfileId, resolved);
       let parseTarget: ArrayBuffer | null = null;
       setDocuments((prev) => {
         if (!prev.some((d) => d.id === docId)) return prev;
         return prev.map((doc) => {
           if (doc.id !== docId) return doc;
           parseTarget = doc.data;
-          return { ...doc, bandDeltas: next };
+          return { ...doc, bandDeltas: resolved };
         });
       });
-      if (parseTarget) void parseDocument(docId, parseTarget, next);
+      if (parseTarget) void parseDocument(docId, parseTarget, resolved);
     },
-    [parseDocument],
+    [activeProfileId, parseDocument],
   );
 
   const anyLoading = documents.some((d) => d.loading);
@@ -580,6 +781,11 @@ export default function StatementPage() {
   const sortedDocuments = useMemo(
     () => sortStatementPdfsByPeriod(documents, pdfSortMode),
     [documents, pdfSortMode],
+  );
+
+  const pdfPrintedTotalsAvailable = useMemo(
+    () => documents.some((d) => d.pdfPageTotals.length > 0),
+    [documents],
   );
 
   const sortedCloudExtracts = useMemo(
@@ -633,18 +839,18 @@ export default function StatementPage() {
       return;
     }
     setSavedTxnSearches(result.items);
-    persistSavedTransactionSearches(result.items);
+    persistSavedTransactionSearches(activeProfileId, result.items);
     const first = result.items[0];
     toast.success(`Saved quick search “${first?.label ?? "search"}”.`, { toastId: "stmt-qsave-ok" });
-  }, [savedTxnSearches, transactionSearchRaw]);
+  }, [activeProfileId, savedTxnSearches, transactionSearchRaw]);
 
   const removeSavedTxnSearch = useCallback((id: string) => {
     setSavedTxnSearches((prev) => {
       const next = prev.filter((s) => s.id !== id);
-      persistSavedTransactionSearches(next);
+      persistSavedTransactionSearches(activeProfileId, next);
       return next;
     });
-  }, []);
+  }, [activeProfileId]);
 
   const applySavedTxnSearch = useCallback((s: SavedTransactionSearch) => {
     setTransactionSearchRaw(s.raw);
@@ -722,28 +928,20 @@ export default function StatementPage() {
     for (const item of sortedCloudExtracts) {
       const rows = filterStatementVisibleRows(item.rows, visibleRowParams);
       if (rows.length === 0) continue;
-      const sums = wdDpTotals.byDocId.get(item.id);
-      if (!sums) continue;
       sections.push({
         source: "firebase",
         fileName: item.fileName,
         rows,
-        deposits: sums.deposits,
-        withdrawals: sums.withdrawals,
       });
     }
     for (const doc of sortedDocuments) {
       if (doc.loading || doc.error) continue;
       const rows = filterStatementVisibleRows(doc.rows, visibleRowParams);
       if (rows.length === 0) continue;
-      const sums = wdDpTotals.byDocId.get(doc.id);
-      if (!sums) continue;
       sections.push({
         source: "local",
         fileName: doc.name,
         rows,
-        deposits: sums.deposits,
-        withdrawals: sums.withdrawals,
       });
     }
     if (sections.length === 0) {
@@ -758,14 +956,6 @@ export default function StatementPage() {
         generatedAt: new Date(),
         transactionFilterRaw: transactionSearchRaw.trim() ? transactionSearchRaw : null,
         dateRangeSummary: dateRangeSummaryForExport,
-        grandTotals: wdDpTotals.anyReadyWithRows
-          ? {
-              deposits: wdDpTotals.grandDeposits,
-              withdrawals: wdDpTotals.grandWithdrawals,
-              net: wdDpTotals.grandNet,
-              scopeLabel: grandTotalsScopeLabel,
-            }
-          : null,
         sections,
       });
       toast.success(`Exported ${sections.length} section${sections.length === 1 ? "" : "s"} to PDF.`, {
@@ -777,12 +967,10 @@ export default function StatementPage() {
     }
   }, [
     dateRangeSummaryForExport,
-    grandTotalsScopeLabel,
     sortedCloudExtracts,
     sortedDocuments,
     transactionSearchRaw,
     visibleRowParams,
-    wdDpTotals,
   ]);
 
   const activeGuideIndex = useMemo(
@@ -810,41 +998,137 @@ export default function StatementPage() {
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-100 via-[#eef2f7] to-slate-100 text-slate-900">
-      <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/85 shadow-sm shadow-slate-200/40 backdrop-blur-md">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-3.5 sm:px-5">
+    <div className="min-h-screen bg-[#f4f6f9] text-slate-900">
+      <header className="sticky top-0 z-20 border-b border-slate-200/90 bg-white/95 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-start justify-between gap-4 px-4 py-4 sm:px-6">
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-[#1d6fb8]">
-              Bank statements
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">Statements</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Upload bank PDFs, filter rows, and review deposits &amp; withdrawals per profile.
             </p>
-            <h1 className="text-lg font-bold tracking-tight text-[#1a3a5c] sm:text-xl">
-              Parse &amp; review transactions
-            </h1>
-            <p className="mt-0.5 max-w-2xl text-xs leading-relaxed text-slate-500">
-              Upload PDFs, tune column guides per file, search the Transaction column, and see totals and
-              per-row flow at a glance.
-            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <div
+                className="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1"
+                role="tablist"
+                aria-label="Statement profile"
+              >
+                {profiles.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeProfileId === p.id}
+                    onClick={() => switchStatementProfile(p.id)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                      activeProfileId === p.id
+                        ? "bg-white text-[#1a3a5c] shadow-sm ring-1 ring-slate-200/80"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleAddProfile();
+                }}
+              >
+                <input
+                  type="text"
+                  value={newProfileName}
+                  onChange={(e) => setNewProfileName(e.target.value)}
+                  placeholder="Add another person…"
+                  className="min-w-[10rem] rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 shadow-sm placeholder:text-slate-400 focus:border-[#1d6fb8] focus:outline-none focus:ring-2 focus:ring-[#1d6fb8]/20"
+                  aria-label="New profile name"
+                />
+                <button
+                  type="submit"
+                  disabled={!newProfileName.trim()}
+                  className="rounded-xl border border-[#1d6fb8]/30 bg-white px-3 py-1.5 text-xs font-semibold text-[#1d6fb8] shadow-sm transition hover:bg-sky-50 disabled:opacity-40"
+                >
+                  Add profile
+                </button>
+              </form>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {profileEditing ? (
+                <form
+                  className="flex flex-wrap items-center gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleSaveProfileRename();
+                  }}
+                >
+                  <label className="text-[11px] font-medium text-slate-600" htmlFor="stmt-profile-rename">
+                    Profile name
+                  </label>
+                  <input
+                    id="stmt-profile-rename"
+                    type="text"
+                    value={profileEditNameValue}
+                    onChange={(e) => setProfileEditNameValue(e.target.value)}
+                    className="min-w-[10rem] rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 shadow-sm focus:border-[#1d6fb8] focus:outline-none focus:ring-2 focus:ring-[#1d6fb8]/20"
+                    aria-label="Profile name"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!profileEditNameValue.trim()}
+                    className="rounded-xl border border-[#1d6fb8]/30 bg-white px-3 py-1.5 text-xs font-semibold text-[#1d6fb8] shadow-sm transition hover:bg-sky-50 disabled:opacity-40"
+                  >
+                    Save name
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelProfileRename}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                </form>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={startProfileRename}
+                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 shadow-sm transition hover:border-[#1d6fb8]/40 hover:text-[#1d6fb8]"
+                  >
+                    Edit profile name
+                  </button>
+                  {profiles.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={requestDeleteActiveProfile}
+                      className="rounded-lg border border-red-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-red-700 shadow-sm transition hover:bg-red-50"
+                    >
+                      Delete profile
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
           </div>
           <a
             href="/admin"
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-[#1d6fb8]/40 hover:bg-slate-50 hover:text-[#1d6fb8] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1d6fb8] focus-visible:ring-offset-2"
+            className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-[#1d6fb8]"
           >
-            ← Back to admin
+            ← Admin
           </a>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl space-y-5 px-4 py-6 sm:px-5 sm:py-8">
-        <section className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-md shadow-slate-200/50 ring-1 ring-slate-100">
-          <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-5 py-4 sm:px-6">
-            <h2 className="text-sm font-bold text-slate-800">Upload PDFs</h2>
+        <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-5 py-4 sm:px-6">
+            <h2 className="text-sm font-semibold text-slate-900">Upload statement PDF</h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              One or more files · text-based statements · columns: Txn date, Transaction, Withdrawals,
-              Deposits
+              Profile: {activeProfile.name}
             </p>
           </div>
           <div className="p-5 sm:p-6">
-            <label className="group relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/40 px-4 py-10 transition hover:border-[#1d6fb8]/50 hover:bg-blue-50/50 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60">
+            <label className="group relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/60 px-4 py-10 transition hover:border-[#1d6fb8]/40 hover:bg-sky-50/40 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -879,17 +1163,28 @@ export default function StatementPage() {
               </p>
             )}
             {documents.length > 0 && (
-              <div className="mt-5 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveGuidePdfId((prev) => prev ?? sortedDocuments[0]?.id ?? null);
-                    setShowColumnGuide(true);
-                  }}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#1d6fb8]/30 bg-[#1d6fb8] px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-[#1d6fb8]/20 transition hover:bg-[#17659d] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1d6fb8] focus-visible:ring-offset-2"
-                >
-                  Show PDF with column guides
-                </button>
+              <div className="mt-5 flex flex-col gap-2">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveGuidePdfId((prev) => prev ?? sortedDocuments[0]?.id ?? null);
+                      setShowColumnGuide(true);
+                    }}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#1d6fb8]/30 bg-[#1d6fb8] px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-[#1d6fb8]/20 transition hover:bg-[#17659d] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1d6fb8] focus-visible:ring-offset-2"
+                  >
+                    Show PDF with column guides
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Column guide adjustments are saved for{" "}
+                  <span className="font-semibold text-slate-700">{activeProfile.name}</span>
+                  {profileHasSavedColumns ? (
+                    <span className="text-emerald-700"> · saved settings will apply to new uploads</span>
+                  ) : (
+                    <span> · tune once and future PDFs for this profile reuse the same columns</span>
+                  )}
+                </p>
               </div>
             )}
           </div>
@@ -899,292 +1194,100 @@ export default function StatementPage() {
           cloudExtracts.length > 0 ||
           cloudExtractsLoading ||
           !!cloudExtractsError) && (
-          <section className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-md shadow-slate-200/50 ring-1 ring-slate-100">
+          <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
             <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-5 py-4 sm:px-6">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-bold text-slate-800">Extracted rows</h2>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {documents.length > 0 ? (
-                      <>
-                        {listStats.pdfCount} local PDF{listStats.pdfCount === 1 ? "" : "s"} ·{" "}
-                        {listStats.visibleRowsAllPdfs} visible row
-                        {listStats.visibleRowsAllPdfs === 1 ? "" : "s"}
-                        {statementFiltersActive &&
-                        listStats.totalRowsAllPdfs !== listStats.visibleRowsAllPdfs
-                          ? ` (${listStats.totalRowsAllPdfs} total before filter)`
-                          : null}
-                      </>
-                    ) : null}
-                    {cloudExtractsLoading && cloudExtracts.length === 0 ? (
-                      <span className="text-slate-500">
-                        {documents.length > 0 ? <span className="mx-1">·</span> : null}
-                        Loading saved extracts…
-                      </span>
-                    ) : null}
-                    {cloudExtracts.length > 0 ? (
-                      <span>
-                        {documents.length > 0 || (cloudExtractsLoading && cloudExtracts.length === 0) ? (
-                          <span className="mx-1">·</span>
-                        ) : null}
-                        {cloudListStats.extractCount} from Firebase · {cloudListStats.visibleRows} visible row
-                        {cloudListStats.visibleRows === 1 ? "" : "s"}
-                        {statementFiltersActive &&
-                        cloudListStats.totalRows !== cloudListStats.visibleRows
-                          ? ` (${cloudListStats.totalRows} in cloud before filter)`
-                          : null}
-                      </span>
-                    ) : null}
+                  <h2 className="text-base font-semibold text-slate-900">Your statements</h2>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {activeProfile.name}
+                    {documents.length > 0 && ` · ${listStats.pdfCount} on device`}
+                    {cloudExtracts.length > 0 && ` · ${cloudListStats.extractCount} saved`}
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={!canExportStatementPdf}
-                    onClick={handleExportStatementPdf}
-                    title={
-                      canExportStatementPdf
-                        ? "Download visible rows (current search and date filters) as a PDF file"
-                        : "Add PDFs with rows or adjust your filters to enable export"
-                    }
-                    className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-emerald-200/90 bg-emerald-50/80 px-3 py-2 text-xs font-semibold text-emerald-900 shadow-sm transition hover:bg-emerald-100 disabled:pointer-events-none disabled:opacity-40"
-                  >
-                    <span aria-hidden>⤓</span>
-                    Export PDF
-                  </button>
-                  <button
-                    type="button"
-                    disabled={cloudExtractsLoading}
-                    onClick={() => void refreshCloudExtracts()}
-                    className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    {cloudExtractsLoading ? "Refreshing…" : "Refresh cloud"}
-                  </button>
-                  {documents.length > 0 || cloudExtracts.length > 0 ? (
-                    <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
-                      <span className="hidden sm:inline">Sort</span>
-                      <select
-                        value={pdfSortMode}
-                        onChange={(e) => setPdfSortMode(e.target.value as StatementPdfSortMode)}
-                        className="cursor-pointer rounded-xl border border-slate-200 bg-white py-2 pl-3 pr-9 text-xs font-semibold text-slate-800 shadow-sm transition focus:border-[#1d6fb8] focus:outline-none focus:ring-2 focus:ring-[#1d6fb8]/25"
-                        aria-label="Sort PDFs and Firebase extracts by period in file name"
-                      >
-                        <option value="upload">
-                          {documents.length > 0 && cloudExtracts.length > 0
-                            ? "List order (upload / cloud)"
-                            : documents.length > 0
-                              ? "Upload order"
-                              : "Cloud list order"}
-                        </option>
-                        <option value="period-asc">Old → new (name)</option>
-                        <option value="period-desc">New → old (name)</option>
-                      </select>
-                    </label>
+                <StatementResultsToolbar
+                  canExport={canExportStatementPdf}
+                  onExport={handleExportStatementPdf}
+                  cloudLoading={cloudExtractsLoading}
+                  onRefreshCloud={() => void refreshCloudExtracts()}
+                  sortMode={pdfSortMode}
+                  onSortModeChange={setPdfSortMode}
+                  hasLocalPdfs={documents.length > 0}
+                  hasCloudSaves={cloudExtracts.length > 0}
+                />
+              </div>
+              {(documents.length > 0 || cloudExtracts.length > 0) && (
+                <div className="mt-4 flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:flex-wrap sm:items-center">
+                  {documents.length > 0 ? (
+                    <StatementListControls
+                      label="On device"
+                      allSelected={allDocsSelected}
+                      someSelected={someDocsSelected}
+                      allCollapsed={allAccordionsCollapsed}
+                      deleteIdleLabel="Remove selected"
+                      onToggleSelectAll={toggleSelectAllDocs}
+                      onDeleteSelected={requestDeleteSelectedDocuments}
+                      onToggleCollapseAll={() => {
+                        if (allAccordionsCollapsed) setCollapsedDocIds(new Set());
+                        else setCollapsedDocIds(new Set(documents.map((d) => d.id)));
+                      }}
+                    />
+                  ) : null}
+                  {cloudExtracts.length > 0 ? (
+                    <StatementListControls
+                      label="Saved"
+                      allSelected={allCloudExtractsSelected}
+                      someSelected={someCloudExtractsSelected}
+                      allCollapsed={allCloudAccordionsCollapsed}
+                      deleteDisabled={cloudDeleteLocked}
+                      deleteBusyLabel="Removing…"
+                      deleteIdleLabel="Remove selected"
+                      onToggleSelectAll={toggleSelectAllCloudExtracts}
+                      onDeleteSelected={requestDeleteSelectedCloudExtracts}
+                      onToggleCollapseAll={() => {
+                        if (allCloudAccordionsCollapsed) setCollapsedCloudExtractIds(new Set());
+                        else setCollapsedCloudExtractIds(new Set(cloudExtracts.map((c) => c.id)));
+                      }}
+                    />
                   ) : null}
                 </div>
-              </div>
-              {documents.length > 0 ? (
-                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
-                  <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 rounded border-slate-300 text-[#1d6fb8] focus:ring-[#1d6fb8]"
-                      checked={allDocsSelected}
-                      ref={(el) => {
-                        if (el) el.indeterminate = someDocsSelected && !allDocsSelected;
-                      }}
-                      onChange={toggleSelectAllDocs}
-                      aria-label="Select all PDFs"
-                    />
-                    Select all
-                  </label>
-                  <button
-                    type="button"
-                    disabled={!someDocsSelected}
-                    onClick={requestDeleteSelectedDocuments}
-                    className="inline-flex items-center justify-center rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 shadow-sm transition hover:bg-red-50 disabled:pointer-events-none disabled:opacity-40"
-                  >
-                    Delete selected
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (allAccordionsCollapsed) setCollapsedDocIds(new Set());
-                      else setCollapsedDocIds(new Set(documents.map((d) => d.id)));
-                    }}
-                    aria-expanded={!allAccordionsCollapsed}
-                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-                  >
-                    {allAccordionsCollapsed ? "Expand all" : "Collapse all"}
-                  </button>
-                </div>
-              ) : null}
-              {cloudExtracts.length > 0 ? (
-                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
-                  <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 rounded border-slate-300 text-[#1d6fb8] focus:ring-[#1d6fb8]"
-                      checked={allCloudExtractsSelected}
-                      ref={(el) => {
-                        if (el) el.indeterminate = someCloudExtractsSelected && !allCloudExtractsSelected;
-                      }}
-                      onChange={toggleSelectAllCloudExtracts}
-                      disabled={cloudDeleteLocked}
-                      aria-label="Select all Firebase extracts"
-                    />
-                    Select all (cloud)
-                  </label>
-                  <button
-                    type="button"
-                    disabled={!someCloudExtractsSelected || cloudDeleteLocked}
-                    onClick={requestDeleteSelectedCloudExtracts}
-                    className="inline-flex items-center justify-center rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 shadow-sm transition hover:bg-red-50 disabled:pointer-events-none disabled:opacity-40"
-                  >
-                    {cloudBatchDeleting ? "Deleting…" : "Delete selected from cloud"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={cloudDeleteLocked}
-                    onClick={() => {
-                      if (allCloudAccordionsCollapsed) setCollapsedCloudExtractIds(new Set());
-                      else setCollapsedCloudExtractIds(new Set(cloudExtracts.map((c) => c.id)));
-                    }}
-                    aria-expanded={!allCloudAccordionsCollapsed}
-                    className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-40"
-                  >
-                    {allCloudAccordionsCollapsed ? "Expand all (cloud)" : "Collapse all (cloud)"}
-                  </button>
-                </div>
-              ) : null}
+              )}
             </div>
 
-            <div className="border-b border-slate-100 bg-slate-50/50 px-5 py-4 sm:px-6">
-              <label htmlFor="stmt-txn-search" className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                Search transactions
-              </label>
-              <div className="relative mt-2">
-                <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden>
-                  ⌕
-                </span>
-                <input
-                  id="stmt-txn-search"
-                  type="text"
-                  value={transactionSearchRaw}
-                  onChange={(e) => setTransactionSearchRaw(e.target.value)}
-                  placeholder="e.g. Groww"
-                  autoComplete="off"
-                  className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-[4.75rem] text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-[#1d6fb8] focus:outline-none focus:ring-2 focus:ring-[#1d6fb8]/20"
-                  aria-describedby="stmt-txn-search-hint"
+            <div className="border-b border-slate-100 bg-slate-50/40 px-5 py-5 sm:px-6">
+              {wdDpTotals.anyReadyWithRows && (
+                <StatementGrandTotals
+                  deposits={wdDpTotals.grandDeposits}
+                  withdrawals={wdDpTotals.grandWithdrawals}
+                  net={wdDpTotals.grandNet}
+                  scopeLabel={grandTotalsScopeLabel}
+                  filtersActive={statementFiltersActive}
+                  pageTotalsOnly={showOnlyPageTotals}
                 />
-                <button
-                  type="button"
-                  disabled={!transactionSearchRaw.trim()}
-                  onClick={handleSaveQuickSearch}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-[#1d6fb8] shadow-sm transition hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-40"
-                  aria-label="Save current search text as a quick save"
-                >
-                  Save
-                </button>
-              </div>
-              <p id="stmt-txn-search-hint" className="mt-2 text-xs leading-relaxed text-slate-500">
-                Separate names with comma, semicolon, or newline. A row is kept when its{" "}
-                <strong className="font-semibold text-slate-700">Transaction</strong> text contains{" "}
-                <strong className="font-semibold text-slate-700">any</strong> term (case-insensitive). Use{" "}
-                <strong className="font-semibold text-slate-700">Save</strong> to store this browser&apos;s search for
-                later (localStorage).
-              </p>
-
-              <div className="mt-4 rounded-xl border border-slate-200/90 bg-white p-3 shadow-sm ring-1 ring-slate-100 sm:p-4">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Txn date range</p>
-                <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                  Optional. Parsed from the <strong className="font-semibold text-slate-700">Txn date</strong> column
-                  (DD/MM/YYYY and YYYY-MM-DD). Rows with a missing or unparseable date stay visible.
-                </p>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label
-                      htmlFor="stmt-date-from"
-                      className="block text-xs font-semibold text-slate-600"
-                    >
-                      From
-                    </label>
-                    <input
-                      id="stmt-date-from"
-                      type="date"
-                      value={txnDateFrom}
-                      onChange={(e) => setTxnDateFrom(e.target.value)}
-                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-[#1d6fb8] focus:outline-none focus:ring-2 focus:ring-[#1d6fb8]/20"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="stmt-date-to" className="block text-xs font-semibold text-slate-600">
-                      Through
-                    </label>
-                    <input
-                      id="stmt-date-to"
-                      type="date"
-                      value={txnDateTo}
-                      onChange={(e) => setTxnDateTo(e.target.value)}
-                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-[#1d6fb8] focus:outline-none focus:ring-2 focus:ring-[#1d6fb8]/20"
-                    />
-                  </div>
-                </div>
-                {(txnDateFrom.trim() || txnDateTo.trim()) && (
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTxnDateFrom("");
-                        setTxnDateTo("");
-                      }}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-                    >
-                      Clear dates
-                    </button>
-                  </div>
-                )}
-                {dateRangeInverted ? (
-                  <p className="mt-2 text-xs font-medium text-amber-800">
-                    From is after Through — the range is read as between those two calendar days (earlier to later).
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="mt-4 rounded-xl border border-slate-200/90 bg-white p-3 shadow-sm ring-1 ring-slate-100 sm:p-4">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Quick saves</p>
-                <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                  Chip labels are shortened from the saved search text. Tap a chip to apply the full filter.
-                </p>
-                {savedTxnSearches.length > 0 ? (
-                  <ul className="mt-3 flex flex-wrap gap-2" aria-label="Saved quick searches">
-                    {savedTxnSearches.map((s) => (
-                      <li key={s.id}>
-                        <span className="inline-flex max-w-full items-center gap-0.5 rounded-full border border-slate-200 bg-slate-50 py-1 pl-3 pr-0.5 text-xs shadow-sm">
-                          <button
-                            type="button"
-                            title={s.raw}
-                            onClick={() => applySavedTxnSearch(s)}
-                            className="min-w-0 max-w-[200px] truncate text-left font-semibold text-slate-800 underline-offset-2 hover:underline"
-                          >
-                            {s.label}
-                          </button>
-                          <button
-                            type="button"
-                            title="Remove from quick saves"
-                            onClick={() => removeSavedTxnSearch(s.id)}
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-red-50 hover:text-red-700"
-                            aria-label={`Remove quick save ${s.label}`}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="mt-2 text-xs text-slate-400">No quick saves yet — type a search above, then save.</p>
-                )}
+              )}
+              <div className={wdDpTotals.anyReadyWithRows ? "mt-4" : ""}>
+                <StatementFiltersPanel
+                  transactionSearchRaw={transactionSearchRaw}
+                  onTransactionSearchChange={setTransactionSearchRaw}
+                  onSaveSearch={handleSaveQuickSearch}
+                  txnDateFrom={txnDateFrom}
+                  txnDateTo={txnDateTo}
+                  onTxnDateFromChange={setTxnDateFrom}
+                  onTxnDateToChange={setTxnDateTo}
+                  onClearDates={() => {
+                    setTxnDateFrom("");
+                    setTxnDateTo("");
+                  }}
+                  dateRangeInverted={dateRangeInverted}
+                  showOnlyPageTotals={showOnlyPageTotals}
+                  onShowOnlyPageTotalsChange={setShowOnlyPageTotals}
+                  showPdfPrintedTotals={showPdfPrintedTotals}
+                  onShowPdfPrintedTotalsChange={setShowPdfPrintedTotals}
+                  pdfPrintedTotalsAvailable={pdfPrintedTotalsAvailable}
+                  savedTxnSearches={savedTxnSearches}
+                  onApplySavedSearch={applySavedTxnSearch}
+                  onRemoveSavedSearch={removeSavedTxnSearch}
+                />
               </div>
             </div>
 
@@ -1194,53 +1297,16 @@ export default function StatementPage() {
                   {cloudExtractsError}
                 </p>
               )}
-              {wdDpTotals.anyReadyWithRows && (
-                <div
-                  className={`mb-6 overflow-hidden rounded-2xl shadow-sm ${profitLossBoxClass(wdDpTotals.grandNet)}`}
-                >
-                  <p
-                    className={`border-b border-slate-900/[0.06] px-4 py-2.5 text-xs font-bold uppercase tracking-wide ${
-                      wdDpTotals.grandNet > 0
-                        ? "text-emerald-900/90"
-                        : wdDpTotals.grandNet < 0
-                          ? "text-red-900/90"
-                          : "text-slate-600"
-                    }`}
-                  >
-                    {grandTotalsScopeLabel} · visible rows
-                    {statementFiltersActive ? " (filters on)" : ""}
-                  </p>
-                  <div className="grid gap-3 p-4 sm:grid-cols-3 sm:gap-4">
-                    <div className="rounded-xl bg-white/60 px-3 py-2.5 ring-1 ring-slate-900/[0.05]">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Deposits</p>
-                      <p className="mt-0.5 font-mono text-lg font-bold tabular-nums text-slate-900">
-                        {formatInrMoney(wdDpTotals.grandDeposits)}
-                      </p>
-                    </div>
-                    <div className="rounded-xl bg-white/60 px-3 py-2.5 ring-1 ring-slate-900/[0.05]">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                        Withdrawals
-                      </p>
-                      <p className="mt-0.5 font-mono text-lg font-bold tabular-nums text-slate-900">
-                        {formatInrMoney(wdDpTotals.grandWithdrawals)}
-                      </p>
-                    </div>
-                    <div className="rounded-xl bg-white/60 px-3 py-2.5 ring-1 ring-slate-900/[0.05]">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Net</p>
-                      <p
-                        className={`mt-0.5 font-mono text-lg font-bold tabular-nums ${profitLossTextClass(wdDpTotals.grandNet)}`}
-                      >
-                        {formatInrMoney(wdDpTotals.grandNet)}
-                      </p>
-                      <p className={`text-[11px] font-semibold ${profitLossTextClass(wdDpTotals.grandNet)}`}>
-                        {profitLossLabel(wdDpTotals.grandNet)} · Deposits − Withdrawals
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               <div className="space-y-4">
+                {sortedCloudExtracts.length > 0 && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <h3 className="text-sm font-semibold text-slate-900">Saved to cloud</h3>
+                    <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-900">
+                      {sortedCloudExtracts.length}
+                    </span>
+                  </div>
+                )}
                 {sortedCloudExtracts.map((item) => {
                   const accordionOpen = !collapsedCloudExtractIds.has(item.id);
                   const rowsToShow = filterStatementVisibleRows(item.rows, visibleRowParams);
@@ -1258,7 +1324,7 @@ export default function StatementPage() {
                   return (
                     <div
                       key={`cloud-${item.id}`}
-                      className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm ring-1 ring-slate-100"
+                      className="stmt-file-card overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm ring-1 ring-slate-100/80"
                     >
                       <div className="flex flex-wrap items-stretch gap-2 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-3 py-3 sm:px-4">
                         <input
@@ -1286,7 +1352,7 @@ export default function StatementPage() {
                             <span className="flex flex-wrap items-center gap-2">
                               <span className="break-all text-sm font-bold text-slate-900">{item.fileName}</span>
                               <span className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-900">
-                                Firebase
+                                Cloud
                               </span>
                               <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600">
                                 {item.rows.length} row{item.rows.length === 1 ? "" : "s"}
@@ -1315,34 +1381,17 @@ export default function StatementPage() {
                             }}
                             className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 shadow-sm transition hover:bg-red-50 disabled:pointer-events-none disabled:opacity-50"
                           >
-                            {cloudExtractDeletingId === item.id ? "Deleting…" : "Delete from cloud"}
+                            {cloudExtractDeletingId === item.id ? "Removing…" : "Remove"}
                           </button>
                         </div>
                         {item.rows.length > 0 && extractSums != null && (
-                          <div className="w-full border-t border-slate-200/90 pt-3 text-xs leading-relaxed text-slate-600">
-                            <span className="font-bold text-slate-800">This extract</span>
-                            {" · "}
-                            Deposits{" "}
-                            <strong className="font-mono tabular-nums text-slate-900">
-                              {formatInrMoney(extractSums.deposits)}
-                            </strong>
-                            {" − "}
-                            Withdrawals{" "}
-                            <strong className="font-mono tabular-nums text-slate-900">
-                              {formatInrMoney(extractSums.withdrawals)}
-                            </strong>
-                            {" = "}
-                            <strong className={`font-mono tabular-nums ${profitLossTextClass(extractNet)}`}>
-                              {formatInrMoney(extractNet)}
-                            </strong>
-                            <span className={`font-bold ${profitLossTextClass(extractNet)}`}>
-                              {" "}
-                              ({profitLossLabel(extractNet)})
-                            </span>
-                            {statementFiltersActive ? (
-                              <span className="font-normal text-slate-500"> · visible rows only</span>
-                            ) : null}
-                          </div>
+                          <StatementFileMoneySummary
+                            label="This save"
+                            deposits={extractSums.deposits}
+                            withdrawals={extractSums.withdrawals}
+                            net={extractNet}
+                            filtersActive={statementFiltersActive}
+                          />
                         )}
                         {item.rows.length === 0 && (
                           <div className="w-full border-t border-slate-200/90 pt-3 text-xs text-slate-500">
@@ -1351,7 +1400,7 @@ export default function StatementPage() {
                         )}
                       </div>
                       {accordionOpen && (
-                        <div className="bg-slate-50/40 px-3 py-4 sm:px-4">
+                        <div className="stmt-accordion-panel bg-slate-50/40 px-3 py-4 sm:px-4">
                           {item.rows.length > 0 && rowsToShow.length === 0 && (
                             <p className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5 text-sm text-amber-950">
                               No rows match this filter ({item.rows.length} row
@@ -1359,59 +1408,25 @@ export default function StatementPage() {
                             </p>
                           )}
                           {rowsToShow.length > 0 && (
-                            <div className="overflow-x-auto rounded-xl border border-slate-200/90 bg-white shadow-inner ring-1 ring-slate-100">
-                              <table className="w-full min-w-0 table-fixed border-collapse text-left text-[13px]">
-                                <colgroup>
-                                  <col className="w-10" />
-                                  <col className="w-11" />
-                                  <col className="w-[7rem]" />
-                                  <col className="w-[min(18rem,42vw)]" />
-                                  <col className="w-[5.75rem] sm:w-24" />
-                                  <col className="w-[5.75rem] sm:w-24" />
-                                </colgroup>
-                                <thead>
-                                  <tr className="border-b border-slate-200 bg-slate-100 text-[11px] font-bold uppercase tracking-wide text-slate-600">
-                                    <th className="whitespace-nowrap px-2 py-3 pl-3 text-right">#</th>
-                                    <th className="whitespace-nowrap px-2 py-3">Pg</th>
-                                    <th className="whitespace-nowrap px-2 py-3">Txn date</th>
-                                    <th className="px-2 py-3 text-left">Transaction</th>
-                                    <th className="whitespace-nowrap px-2 py-3 text-right">Withdrawals</th>
-                                    <th className="whitespace-nowrap px-2 py-3 pr-3 text-right">Deposits</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="font-mono text-slate-800">
-                                  {rowsToShow.map((r, i) => (
-                                    <tr
-                                      key={`${item.id}-r${i}-${r.page}`}
-                                      className="border-b border-slate-100 align-top transition even:bg-slate-50/50 hover:bg-blue-50/40"
-                                    >
-                                      <td className="px-2 py-2.5 pl-3 text-right text-xs tabular-nums text-slate-400">
-                                        {i + 1}
-                                      </td>
-                                      <td className="px-2 py-2.5 text-xs tabular-nums text-slate-500">{r.page}</td>
-                                      <td className="px-2 py-2.5 font-sans text-xs text-slate-700 whitespace-pre-wrap wrap-break-word">
-                                        {r.txnDate ? r.txnDate : <span className="text-slate-300">—</span>}
-                                      </td>
-                                      <td className="min-w-0 px-2 py-2.5 font-sans text-xs leading-snug text-slate-800 whitespace-pre-wrap wrap-break-word">
-                                        {r.transaction ? r.transaction : <span className="text-slate-300">—</span>}
-                                      </td>
-                                      <td className="px-2 py-2.5 text-right text-xs tabular-nums wrap-break-word">
-                                        {r.withdrawals ? r.withdrawals : <span className="text-slate-300">—</span>}
-                                      </td>
-                                      <td className="px-2 py-2.5 pr-3 text-right text-xs tabular-nums wrap-break-word">
-                                        {r.deposits ? r.deposits : <span className="text-slate-300">—</span>}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
+                            <StatementWdDpRowsTable
+                              rows={rowsToShow}
+                              rowKeyPrefix={item.id}
+                              onlyPageTotals={showOnlyPageTotals}
+                            />
                           )}
                         </div>
                       )}
                     </div>
                   );
                 })}
+                {sortedDocuments.length > 0 && (
+                  <div className="flex items-center gap-2 pt-2">
+                    <h3 className="text-sm font-semibold text-slate-900">On this device</h3>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600">
+                      {sortedDocuments.length}
+                    </span>
+                  </div>
+                )}
                 {sortedDocuments.map((doc) => {
                   const accordionOpen = !collapsedDocIds.has(doc.id);
                   const rowsToShow = filterStatementVisibleRows(doc.rows, visibleRowParams);
@@ -1428,18 +1443,18 @@ export default function StatementPage() {
                     extractUpload === "duplicate";
                   const extractUploadLabel =
                     extractUpload === "uploading"
-                      ? "Uploading…"
+                      ? "Saving…"
                       : extractUpload === "uploaded"
-                        ? "Uploaded"
+                        ? "Saved"
                         : extractUpload === "duplicate"
-                          ? "In cloud"
+                          ? "Already saved"
                           : extractUpload === "error"
-                            ? "Retry upload"
-                            : "Upload";
+                            ? "Retry save"
+                            : "Save to cloud";
                   return (
                     <div
                       key={doc.id}
-                      className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm ring-1 ring-slate-100"
+                      className="stmt-file-card overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm ring-1 ring-slate-100/80"
                     >
                       <div className="flex flex-wrap items-stretch gap-2 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-3 py-3 sm:px-4">
                         <input
@@ -1501,7 +1516,7 @@ export default function StatementPage() {
                           <button
                             type="button"
                             disabled={extractUploadDisabled}
-                            title="Upload extracted rows to Firestore (PDF file is not stored). Same file name + same rows cannot be uploaded twice."
+                            title="Save extracted rows to the cloud (PDF file is not stored)."
                             onClick={(e) => {
                               e.stopPropagation();
                               void handleUploadStatementExtract(doc);
@@ -1531,34 +1546,17 @@ export default function StatementPage() {
                           </button>
                         </div>
                         {!doc.loading && !doc.error && doc.rows.length > 0 && docSums != null && (
-                          <div className="w-full border-t border-slate-200/90 pt-3 text-xs leading-relaxed text-slate-600">
-                            <span className="font-bold text-slate-800">This PDF</span>
-                            {" · "}
-                            Deposits{" "}
-                            <strong className="font-mono tabular-nums text-slate-900">
-                              {formatInrMoney(docSums.deposits)}
-                            </strong>
-                            {" − "}
-                            Withdrawals{" "}
-                            <strong className="font-mono tabular-nums text-slate-900">
-                              {formatInrMoney(docSums.withdrawals)}
-                            </strong>
-                            {" = "}
-                            <strong className={`font-mono tabular-nums ${profitLossTextClass(pdfNet)}`}>
-                              {formatInrMoney(pdfNet)}
-                            </strong>
-                            <span className={`font-bold ${profitLossTextClass(pdfNet)}`}>
-                              {" "}
-                              ({profitLossLabel(pdfNet)})
-                            </span>
-                            {statementFiltersActive ? (
-                              <span className="text-slate-500 font-normal"> · visible rows only</span>
-                            ) : null}
-                          </div>
+                          <StatementFileMoneySummary
+                            label="This PDF"
+                            deposits={docSums.deposits}
+                            withdrawals={docSums.withdrawals}
+                            net={pdfNet}
+                            filtersActive={statementFiltersActive}
+                          />
                         )}
                       </div>
                       {accordionOpen && (
-                        <div className="bg-slate-50/40 px-3 py-4 sm:px-4">
+                        <div className="stmt-accordion-panel bg-slate-50/40 px-3 py-4 sm:px-4">
                           {doc.loading && (
                             <p className="flex items-center gap-2 text-sm text-slate-600">
                               <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-[#1d6fb8]" />
@@ -1577,53 +1575,13 @@ export default function StatementPage() {
                             </p>
                           )}
                           {!doc.loading && !doc.error && rowsToShow.length > 0 && (
-                            <div className="overflow-x-auto rounded-xl border border-slate-200/90 bg-white shadow-inner ring-1 ring-slate-100">
-                              <table className="w-full min-w-0 table-fixed border-collapse text-left text-[13px]">
-                                <colgroup>
-                                  <col className="w-10" />
-                                  <col className="w-11" />
-                                  <col className="w-[7rem]" />
-                                  <col className="w-[min(18rem,42vw)]" />
-                                  <col className="w-[5.75rem] sm:w-24" />
-                                  <col className="w-[5.75rem] sm:w-24" />
-                                </colgroup>
-                                <thead>
-                                  <tr className="border-b border-slate-200 bg-slate-100 text-[11px] font-bold uppercase tracking-wide text-slate-600">
-                                    <th className="whitespace-nowrap px-2 py-3 pl-3 text-right">#</th>
-                                    <th className="whitespace-nowrap px-2 py-3">Pg</th>
-                                    <th className="whitespace-nowrap px-2 py-3">Txn date</th>
-                                    <th className="px-2 py-3 text-left">Transaction</th>
-                                    <th className="whitespace-nowrap px-2 py-3 text-right">Withdrawals</th>
-                                    <th className="whitespace-nowrap px-2 py-3 pr-3 text-right">Deposits</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="font-mono text-slate-800">
-                                  {rowsToShow.map((r, i) => (
-                                    <tr
-                                      key={`${doc.id}-r${i}-${r.page}`}
-                                      className="border-b border-slate-100 align-top transition even:bg-slate-50/50 hover:bg-blue-50/40"
-                                    >
-                                      <td className="px-2 py-2.5 pl-3 text-right text-xs tabular-nums text-slate-400">
-                                        {i + 1}
-                                      </td>
-                                      <td className="px-2 py-2.5 text-xs tabular-nums text-slate-500">{r.page}</td>
-                                      <td className="px-2 py-2.5 font-sans text-xs text-slate-700 whitespace-pre-wrap wrap-break-word">
-                                        {r.txnDate ? r.txnDate : <span className="text-slate-300">—</span>}
-                                      </td>
-                                      <td className="min-w-0 px-2 py-2.5 font-sans text-xs leading-snug text-slate-800 whitespace-pre-wrap wrap-break-word">
-                                        {r.transaction ? r.transaction : <span className="text-slate-300">—</span>}
-                                      </td>
-                                      <td className="px-2 py-2.5 text-right text-xs tabular-nums wrap-break-word">
-                                        {r.withdrawals ? r.withdrawals : <span className="text-slate-300">—</span>}
-                                      </td>
-                                      <td className="px-2 py-2.5 pr-3 text-right text-xs tabular-nums wrap-break-word">
-                                        {r.deposits ? r.deposits : <span className="text-slate-300">—</span>}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
+                            <StatementWdDpRowsTable
+                              rows={rowsToShow}
+                              rowKeyPrefix={doc.id}
+                              onlyPageTotals={showOnlyPageTotals}
+                              pdfPageTotals={doc.pdfPageTotals}
+                              showPdfPrintedTotals={showPdfPrintedTotals}
+                            />
                           )}
                         </div>
                       )}
@@ -1657,6 +1615,7 @@ export default function StatementPage() {
           fileName={activeGuideDoc.name}
           fileIndex={activeGuideIndex}
           totalFiles={documents.length}
+          profileName={activeProfile.name}
           onNavigatePrev={
             activeGuideIndex > 0
               ? () => setActiveGuidePdfId(sortedDocuments[activeGuideIndex - 1]!.id)

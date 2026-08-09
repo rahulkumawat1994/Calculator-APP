@@ -29,6 +29,55 @@ export function sumStatementWdDpRows(rows: StatementWdDpRow[]): {
   return { withdrawals, deposits };
 }
 
+export type StatementPageTotals = {
+  page: number;
+  withdrawals: number;
+  deposits: number;
+};
+
+export function sumStatementWdDpRowsByPage(rows: StatementWdDpRow[]): StatementPageTotals[] {
+  const map = new Map<number, { withdrawals: number; deposits: number }>();
+  for (const r of rows) {
+    const bucket = map.get(r.page) ?? { withdrawals: 0, deposits: 0 };
+    bucket.withdrawals += parseStatementMoneyAmount(r.withdrawals);
+    bucket.deposits += parseStatementMoneyAmount(r.deposits);
+    map.set(r.page, bucket);
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([page, sums]) => ({ page, ...sums }));
+}
+
+export type StatementTableItem =
+  | { kind: "row"; row: StatementWdDpRow; rowNumber: number }
+  | { kind: "pageTotal"; page: number; withdrawals: number; deposits: number };
+
+/** Visible rows grouped by PDF page with a computed total after each page. */
+export function buildStatementTableItems(
+  rows: StatementWdDpRow[],
+  options?: { onlyPageTotals?: boolean },
+): StatementTableItem[] {
+  const pages = [...new Set(rows.map((r) => r.page))].sort((a, b) => a - b);
+  if (options?.onlyPageTotals) {
+    return pages.map((page) => {
+      const sums = sumStatementWdDpRows(rows.filter((r) => r.page === page));
+      return { kind: "pageTotal", page, withdrawals: sums.withdrawals, deposits: sums.deposits };
+    });
+  }
+  const items: StatementTableItem[] = [];
+  let rowNumber = 0;
+  for (const page of pages) {
+    const pageRows = rows.filter((r) => r.page === page);
+    for (const row of pageRows) {
+      rowNumber += 1;
+      items.push({ kind: "row", row, rowNumber });
+    }
+    const sums = sumStatementWdDpRows(pageRows);
+    items.push({ kind: "pageTotal", page, withdrawals: sums.withdrawals, deposits: sums.deposits });
+  }
+  return items;
+}
+
 export type StatementRowMoneyKind = "withdrawal" | "deposit" | "both" | "none";
 
 /** Parsed amounts and flow for one table row (deposits − withdrawals). */
@@ -47,4 +96,11 @@ export function describeStatementRowMoney(r: StatementWdDpRow): {
   else if (depositNum > 0) kind = "deposit";
   else kind = "none";
   return { withdrawalNum, depositNum, rowNet, kind };
+}
+
+export function formatStatementInrMoney(n: number): string {
+  return new Intl.NumberFormat("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
 }
