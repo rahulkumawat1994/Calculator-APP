@@ -4,7 +4,9 @@ import {
   deleteStatementExtract,
   deleteStatementExtractsForProfile,
   loadRecentStatementExtracts,
+  loadStatementProfilesDB,
   saveStatementExtractIfNew,
+  saveStatementProfilesDB,
   type StatementExtractListItem,
 } from "./data/firestoreDb";
 import { StatementPdfColumnGuideModal } from "./StatementPdfColumnGuideModal";
@@ -39,9 +41,11 @@ import {
   persistActiveStatementProfileId,
   persistStatementProfileColumnBandDeltas,
   persistStatementProfileFilters,
+  persistStatementProfiles,
   profileHasSavedColumnBandDeltas,
   removeStatementProfile,
   renameStatementProfile,
+  resolveActiveStatementProfileId,
   type StatementProfile,
 } from "./statement/statementProfiles";
 import { isStatementDateRangeInverted } from "./statement/statementDateRangeFilter";
@@ -203,6 +207,18 @@ export default function StatementPage() {
   const deleteConfirmInFlight = useRef(false);
   const parseVersionByPdfRef = useRef<Record<string, number>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const profilesCloudHydratedRef = useRef(false);
+
+  const pushProfilesToCloud = useCallback((nextProfiles: StatementProfile[], activeId: string) => {
+    void saveStatementProfilesDB({
+      profiles: nextProfiles,
+      activeProfileId: activeId,
+    }).catch(() => {
+      toast.warn("Profile list could not sync to cloud. Other browsers may not see your profiles.", {
+        toastId: "stmt-profile-cloud-sync",
+      });
+    });
+  }, []);
 
   const activeProfile = useMemo(
     () => profiles.find((p) => p.id === activeProfileId) ?? profiles[0]!,
@@ -227,6 +243,55 @@ export default function StatementPage() {
   useEffect(() => {
     persistCurrentProfileFilters();
   }, [persistCurrentProfileFilters]);
+
+  const activateProfileWithoutSavingFrom = useCallback((nextProfileId: string) => {
+    const nextDocs = documentsByProfileRef.current[nextProfileId] ?? [];
+    const filters = loadStatementProfileFilters(nextProfileId);
+    setActiveProfileId(nextProfileId);
+    persistActiveStatementProfileId(nextProfileId);
+    setDocuments(nextDocs);
+    setSelectedDocIds(new Set());
+    setCollapsedDocIds(new Set());
+    setExtractUploadByDocId({});
+    setActiveGuidePdfId(nextDocs[0]?.id ?? null);
+    setShowColumnGuide(false);
+    setTransactionSearchRaw(filters.transactionSearchRaw);
+    setTxnDateFrom(filters.txnDateFrom);
+    setTxnDateTo(filters.txnDateTo);
+    setShowOnlyPageTotals(filters.showOnlyPageTotals);
+    setShowPdfPrintedTotals(filters.showPdfPrintedTotals);
+    setSavedTxnSearches(loadSavedTransactionSearches(nextProfileId));
+    setSelectedCloudExtractIds(new Set());
+    setCollapsedCloudExtractIds(new Set());
+    setProfileEditing(false);
+  }, []);
+
+  useEffect(() => {
+    if (profilesCloudHydratedRef.current) return;
+    profilesCloudHydratedRef.current = true;
+    void (async () => {
+      try {
+        const cloud = await loadStatementProfilesDB();
+        const local = loadStatementProfiles();
+        if (cloud) {
+          persistStatementProfiles(cloud.profiles);
+          setProfiles(cloud.profiles);
+          const active = resolveActiveStatementProfileId(cloud.profiles, cloud.activeProfileId);
+          persistActiveStatementProfileId(active);
+          activateProfileWithoutSavingFrom(active);
+          return;
+        }
+        const hasCustomLocal =
+          local.length > 1 || local.some((p) => p.id !== "me" && p.name !== "Me");
+        if (hasCustomLocal) {
+          const active = resolveActiveStatementProfileId(local, loadActiveStatementProfileId());
+          await saveStatementProfilesDB({ profiles: local, activeProfileId: active });
+        }
+      } catch {
+        /* offline / firebase */
+      }
+    })();
+  }, [activateProfileWithoutSavingFrom]);
 
   const switchStatementProfile = useCallback(
     (nextProfileId: string) => {
@@ -258,31 +323,10 @@ export default function StatementPage() {
       setSelectedCloudExtractIds(new Set());
       setCollapsedCloudExtractIds(new Set());
       setProfileEditing(false);
+      pushProfilesToCloud(profiles, nextProfileId);
     },
-    [activeProfileId, documents, transactionSearchRaw, txnDateFrom, txnDateTo, showOnlyPageTotals, showPdfPrintedTotals],
+    [activeProfileId, documents, transactionSearchRaw, txnDateFrom, txnDateTo, showOnlyPageTotals, showPdfPrintedTotals, profiles, pushProfilesToCloud],
   );
-
-  const activateProfileWithoutSavingFrom = useCallback((nextProfileId: string) => {
-    const nextDocs = documentsByProfileRef.current[nextProfileId] ?? [];
-    const filters = loadStatementProfileFilters(nextProfileId);
-    setActiveProfileId(nextProfileId);
-    persistActiveStatementProfileId(nextProfileId);
-    setDocuments(nextDocs);
-    setSelectedDocIds(new Set());
-    setCollapsedDocIds(new Set());
-    setExtractUploadByDocId({});
-    setActiveGuidePdfId(nextDocs[0]?.id ?? null);
-    setShowColumnGuide(false);
-    setTransactionSearchRaw(filters.transactionSearchRaw);
-    setTxnDateFrom(filters.txnDateFrom);
-    setTxnDateTo(filters.txnDateTo);
-    setShowOnlyPageTotals(filters.showOnlyPageTotals);
-    setShowPdfPrintedTotals(filters.showPdfPrintedTotals);
-    setSavedTxnSearches(loadSavedTransactionSearches(nextProfileId));
-    setSelectedCloudExtractIds(new Set());
-    setCollapsedCloudExtractIds(new Set());
-    setProfileEditing(false);
-  }, []);
 
   const handleAddProfile = useCallback(() => {
     const result = addStatementProfile(profiles, newProfileName);
@@ -292,11 +336,12 @@ export default function StatementPage() {
     }
     setProfiles(result.profiles);
     setNewProfileName("");
+    pushProfilesToCloud(result.profiles, result.newId);
     switchStatementProfile(result.newId);
     toast.success(`Profile “${result.profiles.find((p) => p.id === result.newId)?.name}” added.`, {
       toastId: "stmt-profile-add",
     });
-  }, [profiles, newProfileName, switchStatementProfile]);
+  }, [profiles, newProfileName, switchStatementProfile, pushProfilesToCloud]);
 
   const startProfileRename = useCallback(() => {
     setProfileEditNameValue(activeProfile.name);
@@ -317,8 +362,9 @@ export default function StatementPage() {
     setProfiles(result.profiles);
     setProfileEditing(false);
     setProfileEditNameValue("");
+    pushProfilesToCloud(result.profiles, activeProfileId);
     toast.success("Profile name updated.", { toastId: "stmt-profile-rename-ok" });
-  }, [activeProfileId, profileEditNameValue, profiles]);
+  }, [activeProfileId, profileEditNameValue, profiles, pushProfilesToCloud]);
 
   const requestDeleteActiveProfile = useCallback(() => {
     if (profiles.length <= 1) return;
@@ -570,6 +616,9 @@ export default function StatementPage() {
       const result = removeStatementProfile(profiles, profileId);
       if ("error" in result) throw new Error(result.error);
       setProfiles(result.profiles);
+      const nextActive =
+        profileId === activeProfileId ? result.fallbackId : activeProfileId;
+      pushProfilesToCloud(result.profiles, nextActive);
       if (profileId === activeProfileId) {
         activateProfileWithoutSavingFrom(result.fallbackId);
         setCloudExtracts([]);
@@ -580,7 +629,7 @@ export default function StatementPage() {
         { toastId: "stmt-profile-del-ok" },
       );
     },
-    [activeProfileId, activateProfileWithoutSavingFrom, profiles, refreshCloudExtracts],
+    [activeProfileId, activateProfileWithoutSavingFrom, profiles, refreshCloudExtracts, pushProfilesToCloud],
   );
 
   const performDeleteCloudExtract = useCallback(
@@ -1053,6 +1102,10 @@ export default function StatementPage() {
                 </button>
               </form>
             </div>
+            <p className="mt-2 text-[11px] leading-snug text-slate-500">
+              Profile tabs sync to cloud — sign in on another browser or incognito to load the same people.
+              Statement rows must be saved with <span className="font-medium">Save to cloud</span> to appear there.
+            </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {profileEditing ? (
                 <form

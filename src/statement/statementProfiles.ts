@@ -81,6 +81,19 @@ export function persistActiveStatementProfileId(profileId: string): void {
   }
 }
 
+/** Pick `preferredId` when it exists; otherwise default to `me` or first profile. */
+export function resolveActiveStatementProfileId(
+  profiles: StatementProfile[],
+  preferredId?: string,
+): string {
+  if (profiles.length === 0) return DEFAULT_STATEMENT_PROFILE_ID;
+  const ids = new Set(profiles.map((p) => p.id));
+  const pref = preferredId?.trim();
+  if (pref && ids.has(pref)) return pref;
+  if (ids.has(DEFAULT_STATEMENT_PROFILE_ID)) return DEFAULT_STATEMENT_PROFILE_ID;
+  return profiles[0]!.id;
+}
+
 export type StatementProfileFilters = {
   transactionSearchRaw: string;
   txnDateFrom: string;

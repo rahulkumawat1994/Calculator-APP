@@ -4,6 +4,7 @@
  * Structure:
  *   config/slots          → { slots: GameSlot[] }
  *   config/settings       → { commissionPct: number }
+ *   config/statementProfiles → { profiles, activeProfileId }
  *   sessions/{sessionId}  → SavedSession  (one doc per session)
  *   payments/{paymentId}  → PaymentRecord (one doc per payment)
  *   statementExtracts/{profileId}__{fingerprint}  → extracted statement rows (no PDF)
@@ -40,6 +41,7 @@ import {
   STATEMENT_ROWS_ENCODING_GZIP_CHUNKED,
 } from "../statement/statementExtractStorage";
 import { DEFAULT_STATEMENT_PROFILE_ID } from "../statement/statementProfiles";
+import type { StatementProfile } from "../statement/statementProfiles";
 import { toastApiError } from "../lib/toast/apiToast";
 import { withFirestoreRetry } from "../lib/firestoreRetry";
 import type {
@@ -180,6 +182,63 @@ export async function saveSettingsDB(settings: AppSettings): Promise<void> {
     await setDoc(configRef("settings"), settings);
   } catch (e) {
     console.error("saveSettingsDB failed:", e);
+    throw e;
+  }
+}
+
+// ─── Statement profiles (cloud sync) ─────────────────────────────────────────
+
+export type StatementProfilesCloudState = {
+  profiles: StatementProfile[];
+  activeProfileId: string;
+};
+
+function parseStatementProfilesFromFirestore(data: DocumentData): StatementProfile[] {
+  const raw = data.profiles;
+  if (!Array.isArray(raw)) return [];
+  const out: StatementProfile[] = [];
+  for (const x of raw) {
+    if (!x || typeof x !== "object") continue;
+    const o = x as Record<string, unknown>;
+    if (typeof o.id === "string" && typeof o.name === "string" && o.id.length > 0) {
+      out.push({ id: o.id, name: o.name.trim() || o.id });
+    }
+  }
+  if (!out.some((p) => p.id === DEFAULT_STATEMENT_PROFILE_ID)) {
+    out.unshift({ id: DEFAULT_STATEMENT_PROFILE_ID, name: "Me" });
+  }
+  return out;
+}
+
+/** Loads profile tabs from Firestore (`config/statementProfiles`). */
+export async function loadStatementProfilesDB(): Promise<StatementProfilesCloudState | null> {
+  try {
+    const snap = await withFirestoreRetry(() => getDoc(configRef("statementProfiles")));
+    if (!snap.exists()) return null;
+    const profiles = parseStatementProfilesFromFirestore(snap.data());
+    if (profiles.length === 0) return null;
+    const data = snap.data();
+    const activeRaw = data.activeProfileId;
+    const activeProfileId =
+      typeof activeRaw === "string" && activeRaw.trim().length > 0
+        ? activeRaw.trim()
+        : DEFAULT_STATEMENT_PROFILE_ID;
+    return { profiles, activeProfileId };
+  } catch (e) {
+    console.error("loadStatementProfilesDB failed:", e);
+    return null;
+  }
+}
+
+export async function saveStatementProfilesDB(state: StatementProfilesCloudState): Promise<void> {
+  try {
+    await setDoc(configRef("statementProfiles"), {
+      profiles: state.profiles,
+      activeProfileId: state.activeProfileId,
+      updatedAtMs: Date.now(),
+    });
+  } catch (e) {
+    console.error("saveStatementProfilesDB failed:", e);
     throw e;
   }
 }
