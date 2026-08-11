@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "react-toastify";
 import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart,
@@ -25,6 +25,8 @@ import {
 import {
   calcSlabCost,
   buildRows,
+  calcBillingPeriodUsage,
+  billUnitsFromMeterReading,
   computeMeterAnalytics,
   estimateBill,
   formatElapsed,
@@ -32,7 +34,52 @@ import {
   type MetricDetail,
   type ReadingRow,
   type TrendPoint,
+  type BillEstimate,
 } from "./lib/electricityCalc";
+import { BreakdownEditIcon, BreakdownDeleteIcon, BreakdownChevronIcon } from "./calculator/breakdownIcons";
+import {
+  BasementMeterIcon,
+  BillingIcon,
+  CalendarMonthIcon,
+  ChartIcon,
+  CloseIcon,
+  DuplicateIcon,
+  DownloadIcon,
+  ElecBoltIcon,
+  InsightIcon,
+  MainMeterIcon,
+  ModalTitle,
+  OverviewIcon,
+  PlusIcon,
+  SimulatorIcon,
+  TrendDownIcon,
+  TrendUpIcon,
+  CompareIcon,
+} from "./electricity/electricityIcons";
+import {
+  MeterBillHero,
+  MeterChip,
+  MeterChipScroller,
+  MeterDialPair,
+  MeterExpandSection,
+  MeterBottomBar,
+  MeterModal,
+  MeterConfirmDialog,
+  MeterPrimaryButton,
+  MeterSecondaryButton,
+  MeterSectionHeading,
+  MeterStatCard,
+  MeterStatGrid,
+  MeterSurface,
+  meterCaption,
+  meterLabel,
+  type MeterHeroDetail,
+  ReadingMobileCard,
+  usePressableCard,
+  useStickyCompact,
+  MeterScrollHeader,
+  MeterRateChip,
+} from "./electricity/meterUi";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -162,26 +209,34 @@ function ChartSection({
   const maxHourUnits = Math.max(0.001, ...hourlyHeat.map((h) => h.units));
 
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-4 mb-4">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+    <MeterSurface className="p-4 mb-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-sm font-semibold text-gray-700">Usage Charts</h2>
+          <h2 className="flex items-center gap-2 text-base font-semibold text-gray-800">
+            <ChartIcon className="h-5 w-5 text-gray-500" />
+            Usage charts
+          </h2>
           {trendPct != null && view !== "heatmap" && view !== "rolling7" && view !== "rolling30" && view !== "running" && (
-            <p className={`text-[11px] mt-0.5 ${trendPct >= 0 ? "text-red-500" : "text-emerald-600"}`}>
-              {trendPct >= 0 ? "▲" : "▼"} {Math.abs(trendPct)}% vs previous period
+            <p className={`inline-flex items-center gap-1 text-sm mt-1 ${trendPct >= 0 ? "text-red-500" : "text-emerald-600"}`}>
+              {trendPct >= 0 ? <TrendUpIcon /> : <TrendDownIcon />}
+              {Math.abs(trendPct)}% vs previous period
             </p>
           )}
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          <div className="flex rounded-xl border border-gray-200 overflow-hidden text-xs font-medium">
-            <button type="button" onClick={() => setMetric("units")} className={`px-2.5 py-1 ${metric === "units" ? "bg-blue-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>KWH</button>
-            {hasCost && <button type="button" onClick={() => setMetric("cost")} className={`px-2.5 py-1 border-l border-gray-200 ${metric === "cost" ? "bg-emerald-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>₹ Cost</button>}
-          </div>
-          <div className="flex flex-wrap rounded-xl border border-gray-200 overflow-hidden text-xs font-medium">
+        <div className="flex flex-col gap-2 sm:items-end">
+          {hasCost && (
+            <div className="flex rounded-xl border border-gray-200 overflow-hidden text-sm font-medium">
+              <button type="button" onClick={() => setMetric("units")} className={`px-4 py-2 min-h-[40px] ${metric === "units" ? "bg-blue-600 text-white" : "bg-white text-gray-600"}`}>KWH</button>
+              <button type="button" onClick={() => setMetric("cost")} className={`px-4 py-2 min-h-[40px] border-l border-gray-200 ${metric === "cost" ? "bg-emerald-600 text-white" : "bg-white text-gray-600"}`}>₹ Cost</button>
+            </div>
+          )}
+          <MeterChipScroller>
             {CHART_VIEWS.map((v) => (
-              <button key={v.id} type="button" onClick={() => setView(v.id)} className={`px-2 py-1 border-l border-gray-200 first:border-l-0 ${view === v.id ? "bg-gray-800 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>{v.label}</button>
+              <MeterChip key={v.id} active={view === v.id} onClick={() => setView(v.id)}>
+                {v.label}
+              </MeterChip>
             ))}
-          </div>
+          </MeterChipScroller>
         </div>
       </div>
 
@@ -200,9 +255,9 @@ function ChartSection({
           })}
         </div>
       ) : data.length === 0 ? (
-        <div className="h-36 flex items-center justify-center text-sm text-gray-400">Add at least 2 readings to see a chart.</div>
+        <div className="h-36 flex items-center justify-center text-sm text-gray-500">Add at least 2 readings to see a chart.</div>
       ) : isLine ? (
-        <ResponsiveContainer width="100%" height={200}>
+        <ResponsiveContainer width="100%" height={168}>
           <LineChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
@@ -221,7 +276,7 @@ function ChartSection({
           </LineChart>
         </ResponsiveContainer>
       ) : (
-        <ResponsiveContainer width="100%" height={200}>
+        <ResponsiveContainer width="100%" height={168}>
           <BarChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
@@ -246,7 +301,7 @@ function ChartSection({
           </BarChart>
         </ResponsiveContainer>
       )}
-    </div>
+    </MeterSurface>
   );
 }
 
@@ -309,7 +364,10 @@ function SimulatorSection({
     <div className="flex flex-col gap-4">
       {/* Units input */}
       <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-4">
-        <h2 className="text-sm font-semibold text-gray-700 mb-3">🔮 Bill Simulator</h2>
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-3">
+          <SimulatorIcon className="h-4 w-4 text-gray-500" />
+          Bill Simulator
+        </h2>
         <p className="text-xs text-gray-400 mb-3">Enter total units — the matching slab rate applies to every unit (not progressive bands).</p>
         <div className="flex items-center gap-3">
           <div className="flex flex-col gap-1 flex-1">
@@ -410,7 +468,10 @@ function SimulatorSection({
       <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h3 className="text-sm font-semibold text-gray-700">🆚 Compare with a different slab scenario</h3>
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+              <CompareIcon className="h-4 w-4 text-gray-500" />
+              Compare with a different slab scenario
+            </h3>
             <p className="text-xs text-gray-400 mt-0.5">See what your bill would be if the electricity board revises the rates next year</p>
           </div>
           <button onClick={() => setShowScenario((v) => !v)}
@@ -491,54 +552,480 @@ function SimulatorSection({
   );
 }
 
-// ─── Stat card ────────────────────────────────────────────────────────────────
+// ─── Analysis components ──────────────────────────────────────────────────────
 
-function StatCard({
-  label, value, sub, highlight, onClick,
+function BillHeroTile({
+  label,
+  bill,
+  units,
+  unitsLabel,
+  soFar,
+  avgHourly,
+  avgHourlyNote,
+  daysSinceBill,
+  daysUntilNext,
+  onShowFormula,
+  tone = "blue",
 }: {
-  label: string; value: string; sub?: string; highlight?: boolean; onClick?: () => void;
+  label: string;
+  bill: BillEstimate;
+  units: number;
+  unitsLabel?: string;
+  soFar?: { units: number; bill: BillEstimate };
+  avgHourly?: number | null;
+  avgHourlyNote?: string;
+  daysSinceBill?: number | null;
+  daysUntilNext?: number | null;
+  onShowFormula?: () => void;
+  tone?: "blue" | "violet";
 }) {
+  const slab = bill.slab;
+  const slabRate = slab?.currentSlabRate;
+  const details: MeterHeroDetail[] = [];
+
+  if (soFar) {
+    details.push({
+      label: "This cycle so far",
+      value: `${soFar.units.toFixed(1)} KWH`,
+      sub: `₹${formatInr(soFar.bill.total)}`,
+    });
+  }
+  if (daysSinceBill != null) {
+    details.push({
+      label: "Billing cycle",
+      value: `${daysSinceBill}d since bill`,
+      sub: daysUntilNext != null ? `~${daysUntilNext}d until next bill` : undefined,
+    });
+  }
+  if (avgHourly != null) {
+    details.push({
+      label: "Avg pace",
+      value: `${avgHourly.toFixed(3)} KWH/h`,
+      sub: avgHourlyNote,
+    });
+  }
+  if (slabRate != null) {
+    details.push({
+      label: "Slab rate",
+      value: `₹${slabRate.toFixed(2)}/unit`,
+      sub:
+        slab?.unitsToNextSlab != null && slab.unitsToNextSlab > 0
+          ? `${slab.unitsToNextSlab.toFixed(0)} KWH to next slab`
+          : undefined,
+    });
+  }
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex-1 min-w-[130px] text-left rounded-2xl border px-4 py-3 shadow-sm transition-colors ${highlight ? "border-blue-200 bg-blue-50" : "border-gray-200 bg-white"} ${onClick ? "hover:border-blue-300 cursor-pointer" : "cursor-default"}`}
-    >
-      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
-      <p className={`mt-1 text-xl sm:text-2xl font-bold leading-tight ${highlight ? "text-blue-700" : "text-gray-800"}`}>{value}</p>
-      {sub && <p className="mt-0.5 text-[11px] text-gray-400">{sub}</p>}
-    </button>
+    <MeterBillHero
+      label={label}
+      amount={`₹${formatInr(bill.total)}`}
+      units={units.toFixed(1)}
+      unitsLabel={unitsLabel ?? "Cycle total"}
+      details={details.length ? details.slice(0, 4) : undefined}
+      onTapFormula={onShowFormula}
+      tone={tone}
+    />
+  );
+}
+
+function AnalyticsSection({
+  title,
+  hint,
+  children,
+  columns = 2,
+  collapsible = false,
+  defaultOpen = true,
+}: {
+  title: string;
+  hint?: string;
+  children: ReactNode;
+  columns?: 2 | 3 | 4;
+  collapsible?: boolean;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const heading = (
+    <MeterSectionHeading title={title} hint={collapsible && !open ? hint : collapsible ? undefined : hint} />
+  );
+  return (
+    <div className="min-w-0">
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="mb-2 flex w-full min-h-[44px] items-center justify-between gap-2 text-left rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-2 active:bg-gray-100"
+        >
+          <div className="min-w-0">{heading}</div>
+          <BreakdownChevronIcon className="h-5 w-5 shrink-0 text-gray-400" open={open} />
+        </button>
+      ) : (
+        <div className="mb-2">{heading}</div>
+      )}
+      {open && <MeterStatGrid columns={columns}>{children}</MeterStatGrid>}
+    </div>
+  );
+}
+
+function ProjectionLegend() {
+  return (
+    <p className={`${meterCaption} space-y-1 sm:space-y-0`}>
+      <span className="inline-flex items-center gap-1.5 sm:mr-3">
+        <span className="w-2 h-2 rounded-full bg-violet-500 shrink-0" />
+        <span><strong className="text-violet-600 font-medium">Next bill</strong> — billing cycle (what you pay)</span>
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="w-2 h-2 rounded-full bg-gray-400 shrink-0" />
+        <span><strong className="text-gray-600 font-medium">Month forecast</strong> — calendar month only</span>
+      </span>
+    </p>
   );
 }
 
 function InsightList({ items }: { items: string[] }) {
+  const [open, setOpen] = useState(false);
   if (!items.length) return null;
   return (
-    <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 mb-4">
-      <h2 className="text-sm font-semibold text-amber-900 mb-2">Insights</h2>
-      <ul className="space-y-1.5">
-        {items.map((t, i) => (
-          <li key={i} className="text-xs text-amber-900/90 flex gap-2">
-            <span className="text-amber-500 shrink-0">•</span>
-            <span>{t}</span>
-          </li>
-        ))}
-      </ul>
+    <div className="rounded-xl border border-amber-100 bg-amber-50/40 px-3 py-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full min-h-[44px] items-center justify-between gap-2 text-left"
+      >
+        <p className="flex items-center gap-1.5 text-sm font-semibold text-amber-800">
+          <InsightIcon className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+          Insights ({items.length})
+        </p>
+        <BreakdownChevronIcon className="h-5 w-5 shrink-0 text-amber-500/60" open={open} />
+      </button>
+      {open && (
+        <ul className="mt-2 space-y-2">
+          {items.map((t, i) => (
+            <li key={i} className="text-sm text-gray-700 leading-snug flex items-start gap-2">
+              <InsightIcon className="h-3.5 w-3.5 shrink-0 text-amber-400 mt-0.5" />
+              <span>{t}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
+  );
+}
+
+function CompareTile({
+  label,
+  value,
+  unit,
+  meta,
+  variant = "neutral",
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  meta?: string[];
+  variant?: "neutral" | "bill" | "calc";
+}) {
+  const shell =
+    variant === "bill"
+      ? "border-emerald-100/90 bg-gradient-to-br from-emerald-50/80 to-white"
+      : variant === "calc"
+        ? "border-blue-100/90 bg-gradient-to-br from-blue-50/60 to-white"
+        : "border-gray-100 bg-white";
+  const labelClass =
+    variant === "bill" ? "text-emerald-600" : variant === "calc" ? "text-blue-600" : "text-gray-400";
+  const valueClass =
+    variant === "bill" ? "text-emerald-800" : variant === "calc" ? "text-blue-700" : "text-gray-900";
+  return (
+    <div className={`rounded-xl border px-3 py-3 min-w-0 ${shell}`}>
+      <p className={`${meterLabel} ${labelClass}`}>{label}</p>
+      <p className={`mt-1 text-xl font-bold tabular-nums leading-tight sm:text-2xl ${valueClass}`}>
+        {value}
+        {unit && <span className="text-sm font-semibold opacity-60 ml-0.5">{unit}</span>}
+      </p>
+      {meta?.map((line) => (
+        <p key={line} className={`${meterCaption} tabular-nums mt-1`}>{line}</p>
+      ))}
+    </div>
+  );
+}
+
+function MatchPill({
+  title,
+  matchPct,
+  detail,
+  compact,
+}: {
+  title: string;
+  matchPct: number;
+  detail: string;
+  compact?: boolean;
+}) {
+  const gap = +(100 - matchPct).toFixed(1);
+  const tone = gap <= 2 ? "emerald" : gap <= 5 ? "amber" : "red";
+  const palette = {
+    emerald: {
+      wrap: "border-emerald-100 bg-emerald-50/70",
+      title: "text-emerald-700",
+      bar: "bg-emerald-500",
+      track: "bg-emerald-100",
+    },
+    amber: {
+      wrap: "border-amber-100 bg-amber-50/70",
+      title: "text-amber-800",
+      bar: "bg-amber-500",
+      track: "bg-amber-100",
+    },
+    red: {
+      wrap: "border-red-100 bg-red-50/70",
+      title: "text-red-800",
+      bar: "bg-red-500",
+      track: "bg-red-100",
+    },
+  }[tone];
+
+  if (compact) {
+    return (
+      <p className={`mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0 text-[10px] leading-snug ${palette.title}`}>
+        <span className="font-bold tabular-nums">{matchPct}%</span>
+        <span className="text-gray-400 font-medium">{title}</span>
+        <span className="text-gray-500">· {detail}</span>
+      </p>
+    );
+  }
+
+  return (
+    <div className={`rounded-lg border px-3 py-2 ${palette.wrap}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className={`text-[10px] font-semibold uppercase tracking-wide ${palette.title}`}>{title}</span>
+        <span className={`text-xs font-bold tabular-nums ${palette.title}`}>{matchPct}%</span>
+      </div>
+      <div className={`mt-1.5 h-1 rounded-full ${palette.track}`}>
+        <div
+          className={`h-full rounded-full transition-all ${palette.bar}`}
+          style={{ width: `${Math.min(100, Math.max(0, matchPct))}%` }}
+        />
+      </div>
+      <p className="mt-1 text-[10px] text-gray-500 leading-snug">{detail}</p>
+    </div>
+  );
+}
+
+function BillingPeriodCard({
+  bp,
+  days,
+  readingCount,
+  periodUsage,
+  pUnits,
+  billUnits,
+  hasBillUsage,
+  slabLine,
+  slabEnergy,
+  total,
+  energy,
+  fixedCharges,
+  fuel,
+  tax,
+  onEdit,
+  onDelete,
+  isEditing,
+}: {
+  bp: ElectricityBillingPeriod;
+  days: number;
+  readingCount: number;
+  periodUsage: ReturnType<typeof calcBillingPeriodUsage>;
+  pUnits: number;
+  billUnits: number | null;
+  hasBillUsage: boolean;
+  slabLine: string | null;
+  slabEnergy: number;
+  total: number;
+  energy: number;
+  fixedCharges: number;
+  fuel: number;
+  tax: number;
+  isEditing?: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const pressable = usePressableCard(onEdit, onDelete);
+  const hasBillAmount = bp.actualBillTotal != null && bp.actualBillTotal > 0;
+  const usageMeta: string[] = [];
+  if (periodUsage.startReading != null && periodUsage.endReading != null) {
+    usageMeta.push(
+      `${periodUsage.startReading.toLocaleString("en-IN")} → ${periodUsage.endReading.toLocaleString("en-IN")}`,
+    );
+  }
+  if (periodUsage.lastReadingTimeMs != null) {
+    usageMeta.push(
+      `Logged ${formatDate(periodUsage.lastReadingDateISO!)} ${formatTime(periodUsage.lastReadingTimeMs)}`,
+    );
+  }
+  const billMeta: string[] = [];
+  if (bp.billMeterReading != null && periodUsage.startReading != null) {
+    billMeta.push(
+      `${periodUsage.startReading.toLocaleString("en-IN")} → ${bp.billMeterReading.toLocaleString("en-IN")}`,
+    );
+  }
+
+  let usageMatch: { pct: number; detail: string } | null = null;
+  if (hasBillUsage && billUnits != null) {
+    const diff = billUnits - pUnits;
+    const errorPct = +(Math.abs(diff) / billUnits * 100).toFixed(1);
+    usageMatch = {
+      pct: +(100 - errorPct).toFixed(1),
+      detail:
+        diff === 0
+          ? "Readings match bill meter"
+          : diff > 0
+            ? `Bill charged ${diff.toFixed(1)} KWH more`
+            : `Readings ${(-diff).toFixed(1)} KWH above bill`,
+    };
+  }
+
+  let amountMatch: { pct: number; detail: string } | null = null;
+  if (hasBillAmount) {
+    const diff = bp.actualBillTotal! - total;
+    const errorPct = +(Math.abs(diff) / bp.actualBillTotal! * 100).toFixed(1);
+    amountMatch = {
+      pct: +(100 - errorPct).toFixed(1),
+      detail:
+        diff === 0
+          ? "Amount matches calculation"
+          : diff > 0
+            ? `You paid ₹${formatInr(diff)} less than calculated`
+            : `Calculated ₹${formatInr(-diff)} above bill`,
+    };
+  }
+
+  const amountBreakdown: string[] = [];
+  if (fixedCharges > 0 || fuel > 0 || tax > 0) {
+    amountBreakdown.push(
+      `Energy ₹${formatInr(energy)}` +
+        (fixedCharges > 0 ? ` · Fixed ₹${formatInr(fixedCharges)}` : "") +
+        (fuel > 0 ? ` · Fuel ₹${formatInr(fuel)}` : "") +
+        (tax > 0 ? ` · Tax ₹${formatInr(tax)}` : ""),
+    );
+  }
+
+  return (
+    <article
+      {...pressable}
+      className={`rounded-2xl border bg-white shadow-sm overflow-hidden select-none cursor-pointer transition-transform active:scale-[0.98] ${
+        isEditing ? "border-amber-300 ring-2 ring-amber-200/80" : "border-gray-200/90"
+      }`}
+    >
+      <header className="px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-gray-50/80 to-white">
+        <div className="min-w-0">
+          <p className="font-semibold text-gray-900 text-sm tracking-tight">
+            {formatDate(bp.fromDate)} → {formatDate(bp.toDate)}
+          </p>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            <span className="rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">{days} days</span>
+            <span className="rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">{readingCount} readings</span>
+            {slabLine && (
+              <span className="rounded-md bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-600 tabular-nums">
+                {slabLine} · ₹{formatInr(slabEnergy)}
+              </span>
+            )}
+          </div>
+          {isEditing && (
+            <span className="mt-1.5 inline-block rounded-md bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-800">
+              Editing
+            </span>
+          )}
+          {bp.note && <p className="mt-1.5 text-sm text-gray-500 italic leading-snug">{bp.note}</p>}
+        </div>
+      </header>
+
+      <div className="p-3 space-y-3">
+        <section>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Usage (KWH)</p>
+          <div className={`grid gap-2 ${hasBillUsage ? "grid-cols-2" : "grid-cols-1"}`}>
+            <CompareTile
+              label="Readings"
+              value={pUnits.toFixed(1)}
+              unit="KWH"
+              meta={usageMeta.length ? usageMeta : undefined}
+              variant="neutral"
+            />
+            {hasBillUsage && billUnits != null && (
+              <CompareTile
+                label="Bill meter"
+                value={billUnits.toFixed(1)}
+                unit="KWH"
+                meta={billMeta.length ? billMeta : undefined}
+                variant="bill"
+              />
+            )}
+          </div>
+          {usageMatch && (
+            <MatchPill title="usage" matchPct={usageMatch.pct} detail={usageMatch.detail} compact />
+          )}
+        </section>
+
+        <section>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Amount (₹)</p>
+          <div className={`grid gap-2 ${hasBillAmount ? "grid-cols-2" : "grid-cols-1"}`}>
+            <CompareTile
+              label="Calculated"
+              value={`₹${formatInr(total)}`}
+              meta={amountBreakdown.length ? amountBreakdown : undefined}
+              variant="calc"
+            />
+            {hasBillAmount && (
+              <CompareTile label="You paid" value={`₹${formatInr(bp.actualBillTotal!)}`} variant="bill" />
+            )}
+          </div>
+          {amountMatch && (
+            <MatchPill title="bill" matchPct={amountMatch.pct} detail={amountMatch.detail} compact />
+          )}
+        </section>
+
+        {!hasBillUsage && !hasBillAmount && (
+          <p className="text-[11px] text-gray-400 leading-snug rounded-lg bg-gray-50 px-3 py-2">
+            Tap{" "}
+            <BreakdownEditIcon className="inline h-3.5 w-3.5 align-[-2px] text-gray-500" />
+            {" "}to add <strong>meter at bill</strong> and <strong>amount paid</strong> — we’ll compare against your readings.
+          </p>
+        )}
+        {!hasBillUsage && hasBillAmount && (
+          <p className="text-[11px] text-gray-400 leading-snug">Add meter reading at bill to check KWH accuracy.</p>
+        )}
+        {hasBillUsage && !hasBillAmount && (
+          <p className="text-[11px] text-gray-400 leading-snug">Add amount paid to check bill accuracy.</p>
+        )}
+      </div>
+    </article>
   );
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const METERS: { id: ElectricityMeterId; label: string; icon: string }[] = [
-  { id: "main",     label: "Main Meter",     icon: "🏠" },
-  { id: "basement", label: "Basement Meter", icon: "🏗️" },
+type FormMode = "add" | "edit";
+type ActiveSection = "overview" | "billing" | "monthly" | "simulator";
+
+const METERS: {
+  id: ElectricityMeterId;
+  label: string;
+  shortLabel: string;
+  Icon: typeof MainMeterIcon;
+}[] = [
+  { id: "main", label: "Main Meter", shortLabel: "Main", Icon: MainMeterIcon },
+  { id: "basement", label: "Basement Meter", shortLabel: "Basement", Icon: BasementMeterIcon },
+];
+
+const SECTIONS: {
+  id: ActiveSection;
+  label: string;
+  shortLabel: string;
+  Icon: typeof OverviewIcon;
+}[] = [
+  { id: "overview", label: "Overview", shortLabel: "Overview", Icon: OverviewIcon },
+  { id: "billing", label: "Billing", shortLabel: "Billing", Icon: BillingIcon },
+  { id: "monthly", label: "Monthly", shortLabel: "Monthly", Icon: CalendarMonthIcon },
+  { id: "simulator", label: "Simulator", shortLabel: "Sim", Icon: SimulatorIcon },
 ];
 
 // ─── Main page ────────────────────────────────────────────────────────────────
-
-type FormMode = "add" | "edit";
-  type ActiveSection = "overview" | "billing" | "monthly" | "simulator";
 
 export default function ElectricityPage() {
   const [allReadings,     setAllReadings]     = useState<ElectricityReading[]>([]);
@@ -550,6 +1037,7 @@ export default function ElectricityPage() {
   const [loading,         setLoading]         = useState(true);
   const [activeMeter,     setActiveMeter]     = useState<ElectricityMeterId>("main");
   const [activeSection,   setActiveSection]   = useState<ActiveSection>("overview");
+  const { sentinelRef: navSentinelRef, compact: navCompact } = useStickyCompact(!loading);
 
   // Reading modal
   const [modalOpen,  setModalOpen]  = useState(false);
@@ -568,7 +1056,8 @@ export default function ElectricityPage() {
   const [bpEditId,      setBpEditId]      = useState<string | null>(null);
   const [bpFrom,        setBpFrom]        = useState("");
   const [bpTo,          setBpTo]          = useState(todayISO());
-  const [bpFixed,       setBpFixed]       = useState("");
+  const [bpActual,      setBpActual]      = useState("");
+  const [bpBillReading, setBpBillReading] = useState("");
   const [bpNote,        setBpNote]        = useState("");
   const [bpSaving,      setBpSaving]      = useState(false);
 
@@ -651,7 +1140,9 @@ export default function ElectricityPage() {
   );
 
   const totalUnits = analytics.totalUnits;
-  const avgUnitsPerDay = analytics.avgPerDay;
+  const periodUnits = analytics.periodUnits;
+  const inBillingPeriod = analytics.lastBillDate != null;
+  const avgUnitsPerDay = inBillingPeriod ? analytics.periodAvgPerDay : analytics.avgPerDay;
   const peakDayEntry: DayUsage | null = analytics.peakDay;
   const bestDayEntry: DayUsage | null = analytics.lowestDay;
   const todayUnits = analytics.todayUnits;
@@ -670,7 +1161,20 @@ export default function ElectricityPage() {
   }));
   const firstReading = meterReadings[0]?.reading;
   const lastReading = analytics.currentReading;
+  const currentCycleBill =
+    inBillingPeriod && periodUnits > 0
+      ? estimateBill(periodUnits, config, analytics.periodFixedCharges)
+      : null;
+  const projectedBill = analytics.periodProjectedBill;
+  const projectedPeriodUnits = analytics.projectedPeriodUnits;
+  const calendarMonthName = MONTH_SHORT[Number(todayISO().split("-")[1]) - 1];
+  const daysLeftInMonth = (() => {
+    const now = new Date();
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    return Math.max(0, lastDay - now.getDate());
+  })();
   const activeMeta = METERS.find((m) => m.id === activeMeter)!;
+  const ActiveMeterIcon = activeMeta.Icon;
 
   const showMetric = (title: string, key: keyof typeof analytics.metrics) => {
     const detail = analytics.metrics[key];
@@ -721,7 +1225,7 @@ export default function ElectricityPage() {
   }
 
   // ── Billing period helpers ──
-  function resetBpForm() { setBpModalOpen(false); setBpEditId(null); setBpFrom(""); setBpTo(todayISO()); setBpFixed(""); setBpNote(""); }
+  function resetBpForm() { setBpModalOpen(false); setBpEditId(null); setBpFrom(""); setBpTo(todayISO()); setBpActual(""); setBpBillReading(""); setBpNote(""); }
   function openAddBp() {
     // Auto-fill fromDate from end of last period or first reading date
     const lastPeriod = billingPeriods[0]; // newest first
@@ -730,7 +1234,12 @@ export default function ElectricityPage() {
   }
   function startEditBp(bp: ElectricityBillingPeriod) {
     setBpEditId(bp.id); setBpFrom(bp.fromDate); setBpTo(bp.toDate);
-    setBpFixed(bp.fixedCharges > 0 ? String(bp.fixedCharges) : "");
+    setBpActual(bp.actualBillTotal != null && bp.actualBillTotal > 0 ? String(bp.actualBillTotal) : "");
+    setBpBillReading(
+      bp.billMeterReading != null && bp.billMeterReading > 0
+        ? String(bp.billMeterReading)
+        : "",
+    );
     setBpNote(bp.note ?? ""); setBpModalOpen(true);
   }
 
@@ -739,13 +1248,17 @@ export default function ElectricityPage() {
     if (!bpFrom || !bpTo || bpFrom > bpTo) { toast.error("Enter a valid date range (from ≤ to)."); return; }
     setBpSaving(true);
     try {
-      const fixed = parseFloat(bpFixed);
+      const actual = parseFloat(bpActual);
+      const billReading = parseFloat(bpBillReading);
+      const existing = bpEditId ? billingPeriods.find((p) => p.id === bpEditId) : null;
       const bp: ElectricityBillingPeriod = {
         id:           bpEditId ?? newBillingPeriodId(activeMeter),
         meterId:      activeMeter, fromDate: bpFrom, toDate: bpTo,
-        fixedCharges: !isNaN(fixed) && fixed > 0 ? fixed : 0,
-        createdAt:    Date.now(),
+        fixedCharges: 0,
+        createdAt:    existing?.createdAt ?? Date.now(),
         ...(bpNote.trim() ? { note: bpNote.trim() } : {}),
+        ...( !isNaN(actual) && actual > 0 ? { actualBillTotal: actual } : {}),
+        ...( !isNaN(billReading) && billReading > 0 ? { billMeterReading: billReading } : {}),
       };
       await saveElectricityBillingPeriod(bp);
       setBillingPeriods((prev) => [...prev.filter((p) => p.id !== bp.id), bp].sort((a, b) => b.fromDate.localeCompare(a.fromDate)));
@@ -818,145 +1331,262 @@ export default function ElectricityPage() {
 
   return (
     <div className="min-h-screen bg-[#eef2f7]">
-      <div className="max-w-[720px] mx-auto px-3 pt-6 pb-20">
+      <div className="max-w-3xl mx-auto px-4 sm:px-4 pt-5 md:pt-5 pb-24 md:pb-10">
 
-        {/* ── Header ── */}
-        <div className="flex items-start justify-between mb-5">
-          <div>
-            <h1 className="text-xl font-bold text-gray-800">⚡ Electricity Tracker</h1>
-            <p className="text-xs text-gray-400 mt-0.5">Daily KWH meter readings</p>
-          </div>
-          {/* Rate settings button */}
-          <button onClick={openRateModal} className="group flex flex-col items-end" title="Tap to edit rate settings">
-            <span className="text-[11px] text-gray-400 group-hover:text-blue-500">
-              {config.useSlabRates ? "Slab rates" : "₹ per unit"}
-            </span>
-            <span className="text-lg font-bold text-gray-700 group-hover:text-blue-600">
-              {config.useSlabRates
-                ? <span className="text-sm font-semibold text-purple-600">Slab ⚡</span>
-                : config.pricePerUnit > 0 ? `₹${config.pricePerUnit}` : <span className="text-gray-300 text-sm">Set rate →</span>}
-            </span>
-            {fixedCharges > 0 && <span className="text-[10px] text-gray-400">+₹{fixedCharges} fixed</span>}
-          </button>
-        </div>
-
-        {/* ── Meter tabs ── */}
-        <div className="flex gap-2 mb-5">
-          {METERS.map((m) => {
-            const active = activeMeter === m.id;
-            const count  = allReadings.filter((r) => r.meterId === m.id).length;
-            return (
-              <button key={m.id} onClick={() => { setActiveMeter(m.id); resetForm(); setFilterFrom(""); setFilterFromTime(""); setFilterTo(""); setFilterToTime(""); }}
-                className={`flex-1 flex items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition-all ${active ? "border-blue-300 bg-blue-600 text-white shadow-md" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}>
-                <span>{m.icon}</span><span>{m.label}</span>
-                {count > 0 && <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${active ? "bg-white/20 text-white" : "bg-gray-100 text-gray-500"}`}>{count}</span>}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* ── Dashboard cards (tap a card for formula) ── */}
-        {meterReadings.length >= 2 && (
-          <>
-            <div className="flex flex-wrap gap-2 mb-3">
-              <StatCard label="Current reading" value={lastReading != null ? lastReading.toLocaleString("en-IN") : "—"} sub="KWH on meter" />
-              <StatCard label="Previous reading" value={analytics.previousReading != null ? analytics.previousReading.toLocaleString("en-IN") : "—"} sub="prior entry" />
-              <StatCard label="Total units" value={`${totalUnits.toFixed(2)} KWH`}
-                sub={firstReading != null && lastReading != null ? `${firstReading.toLocaleString("en-IN")} → ${lastReading.toLocaleString("en-IN")}` : undefined}
-                onClick={() => showMetric("Total units", "totalUnits")} />
-              <StatCard label="Elapsed time" value={analytics.elapsedLabel}
-                sub={`${analytics.elapsedHours.toFixed(1)} hours`}
-                onClick={() => showMetric("Elapsed time", "elapsedTime")} />
-              {analytics.avgPerHour != null && (
-                <StatCard label="Avg hourly" value={`${analytics.avgPerHour.toFixed(3)} KWH`}
-                  sub="timestamp-based" onClick={() => showMetric("Average hourly usage", "avgPerHour")} />
-              )}
-              {avgUnitsPerDay != null && (
-                <StatCard label="Avg / day" value={`${avgUnitsPerDay.toFixed(2)} KWH`}
-                  sub={`over ${analytics.elapsedLabel}`}
-                  onClick={() => showMetric("Average daily usage", "avgPerDay")} />
-              )}
-              <StatCard label="Today" value={todayUnits != null ? `${todayUnits.toFixed(2)} KWH` : "—"}
-                sub="prorated by hours" onClick={() => showMetric("Today's usage", "today")} />
-              <StatCard label="This month" value={`${analytics.currentMonthUnits.toFixed(2)} KWH`}
-                sub={analytics.monthlyComparisonPct != null
-                  ? `${analytics.monthlyComparisonPct >= 0 ? "+" : ""}${analytics.monthlyComparisonPct}% vs last month pace`
-                  : "month-to-date"} />
-              {analytics.projectedMonthEndUnits != null && (
-                <StatCard label="Projected month" value={`${analytics.projectedMonthEndUnits.toFixed(0)} KWH`}
-                  sub="end-of-month estimate" />
-              )}
-              {(analytics.periodProjectedBill || analytics.estimatedBill) && (
-                <StatCard
-                  label="Estimated bill"
-                  value={`₹${formatInr((analytics.periodProjectedBill ?? analytics.estimatedBill)!.total)}`}
-                  sub={
-                    analytics.lastBillDate
-                      ? `Last bill ${formatDate(analytics.lastBillDate)} · ${analytics.daysSinceLastBill}d ago · ~${analytics.daysLeftInCycle}d until next`
-                      : `Add bill date (e.g. 10 Jul) under Billing · assuming ~${analytics.avgCycleDays}d cycle`
-                  }
-                  highlight
-                  onClick={() => showMetric("Estimated / projected bill", analytics.periodProjectedBill ? "periodProjection" : "estimatedBill")}
-                />
-              )}
-              {peakDayEntry && (
-                <StatCard label="Peak day" value={`${peakDayEntry.units.toFixed(2)} KWH`}
-                  sub={formatDate(peakDayEntry.dateISO)} onClick={() => showMetric("Peak day", "peakDay")} />
-              )}
-              {bestDayEntry && analytics.days.length >= 2 && (
-                <StatCard label="Lowest day" value={`${bestDayEntry.units.toFixed(2)} KWH`} sub={formatDate(bestDayEntry.dateISO)} />
-              )}
-              {analytics.efficiencyScore != null && (
-                <StatCard label="Efficiency" value={`${analytics.efficiencyScore}`}
-                  sub="0–100 score" onClick={() => showMetric("Efficiency score", "efficiencyScore")} />
-              )}
-              {!config.useSlabRates && hasCostData && (
-                <StatCard label="Total cost" value={`₹${formatInr(totalCost)}`} sub="sum of reading costs" />
-              )}
-              {trendDiff != null && (
-                <StatCard
-                  label="Today vs yesterday"
-                  value={`${trendDiff > 0 ? "+" : ""}${trendDiff.toFixed(2)} KWH`}
-                  sub={trendDiff > 0 ? "using more than yesterday" : trendDiff < 0 ? "using less than yesterday" : "same as yesterday"}
-                />
-              )}
-              {analytics.nightPct != null && (
-                <StatCard label="Night share" value={`${analytics.nightPct}%`}
-                  sub={`${analytics.nightUnits.toFixed(1)} KWH · 10pm–6am`} />
-              )}
-              {analytics.last7AvgPerDay != null && (
-                <StatCard label="Last 7d avg" value={`${analytics.last7AvgPerDay.toFixed(2)} KWH`} sub="per day (elapsed hours)" />
-              )}
-              {analytics.medianDailyUsage != null && (
-                <StatCard label="Median day" value={`${analytics.medianDailyUsage.toFixed(2)} KWH`} sub="daily median" />
-              )}
-              {analytics.peakHour != null && (
-                <StatCard label="Peak hour" value={`${String(analytics.peakHour).padStart(2, "0")}:00`}
-                  sub={analytics.idleHour != null ? `idle ${String(analytics.idleHour).padStart(2, "0")}:00` : "highest hour-of-day"} />
-              )}
-              {analytics.estimatedBill?.slab && (
-                <StatCard
-                  label="Current slab"
-                  value={`₹${analytics.estimatedBill.slab.currentSlabRate?.toFixed(2) ?? "—"}`}
-                  sub={analytics.estimatedBill.slab.unitsToNextSlab != null
-                    ? `${analytics.estimatedBill.slab.unitsToNextSlab.toFixed(0)} units to next slab`
-                    : "top slab"}
-                />
+        <MeterScrollHeader
+          compact={navCompact}
+          sentinelRef={navSentinelRef}
+          title="Electricity"
+          subtitle="Track KWH meter readings"
+          titleIcon={<ElecBoltIcon className="h-5 w-5 text-amber-500 shrink-0" />}
+          renderRate={(compact) => (
+            <div className="shrink-0 text-right">
+              <MeterRateChip
+                compact={compact}
+                onClick={openRateModal}
+                label={config.useSlabRates ? "" : "Rate"}
+                tone={
+                  config.useSlabRates
+                    ? "slab"
+                    : config.pricePerUnit > 0
+                      ? "default"
+                      : "muted"
+                }
+              >
+                {config.useSlabRates
+                  ? (
+                    <>
+                      Slab
+                      <ElecBoltIcon className={compact ? "h-3 w-3 text-purple-500" : "h-4 w-4 text-purple-500"} />
+                    </>
+                  )
+                  : config.pricePerUnit > 0
+                    ? compact
+                      ? `₹${config.pricePerUnit}/u`
+                      : `₹${config.pricePerUnit}/unit`
+                    : "Set rate"}
+              </MeterRateChip>
+              {!compact && fixedCharges > 0 && (
+                <span className={`mt-1 block ${meterCaption}`}>+₹{fixedCharges} fixed</span>
               )}
             </div>
-            <InsightList items={analytics.insights} />
-          </>
-        )}
+          )}
+          meters={METERS.map((m) => ({
+            id: m.id,
+            label: m.label,
+            shortLabel: m.shortLabel,
+            Icon: m.Icon,
+            count: allReadings.filter((r) => r.meterId === m.id).length,
+          }))}
+          sections={SECTIONS.map((s) => ({
+            id: s.id,
+            label: s.label,
+            shortLabel: s.shortLabel,
+            Icon: s.Icon,
+          }))}
+          activeMeter={activeMeter}
+          onMeterChange={(id) => {
+            setActiveMeter(id as ElectricityMeterId);
+            resetForm();
+            setFilterFrom("");
+            setFilterFromTime("");
+            setFilterTo("");
+            setFilterToTime("");
+          }}
+          activeSection={activeSection}
+          onSectionChange={(id) => setActiveSection(id as ActiveSection)}
+        />
 
-        {/* ── Section tabs ── */}
-        <div className="flex gap-1 mb-4 bg-white border border-gray-200 rounded-2xl p-1 shadow-sm">
-          {([["overview","📋 Overview"],["billing","🧾 Billing"],["monthly","📅 Monthly"],["simulator","🔮 Simulator"]] as [ActiveSection, string][]).map(([id, label]) => (
-            <button key={id} onClick={() => setActiveSection(id)}
-              className={`flex-1 rounded-xl py-1.5 text-xs font-semibold transition-all ${activeSection === id ? "bg-blue-600 text-white shadow" : "text-gray-500 hover:bg-gray-50"}`}>
-              {label}
-            </button>
-          ))}
-        </div>
+        {/* ── Overview hero ── */}
+        {activeSection === "overview" && meterReadings.length >= 2 && (
+          <div className="mb-4 space-y-3">
+            {(projectedBill || analytics.estimatedBill) && (
+              projectedBill && projectedPeriodUnits != null ? (
+                <BillHeroTile
+                  label="Next bill estimate"
+                  tone="violet"
+                  bill={projectedBill}
+                  units={projectedPeriodUnits}
+                  unitsLabel="Cycle total"
+                  avgHourly={analytics.periodAvgPerHour}
+                  avgHourlyNote={
+                    analytics.lastBillDate ? `since ${formatDate(analytics.lastBillDate)}` : undefined
+                  }
+                  daysSinceBill={analytics.daysSinceLastBill}
+                  daysUntilNext={analytics.daysLeftInCycle}
+                  soFar={
+                    currentCycleBill && inBillingPeriod && periodUnits < projectedPeriodUnits - 0.05
+                      ? { units: periodUnits, bill: currentCycleBill }
+                      : undefined
+                  }
+                  onShowFormula={() => showMetric("Estimated / projected bill", "periodProjection")}
+                />
+              ) : (
+                <BillHeroTile
+                  label="Estimated bill"
+                  bill={analytics.estimatedBill!}
+                  units={totalUnits}
+                  unitsLabel="Total usage"
+                  avgHourly={analytics.avgPerHour}
+                  avgHourlyNote="all readings"
+                  onShowFormula={() => showMetric("Estimated / projected bill", "estimatedBill")}
+                />
+              )
+            )}
+            <MeterDialPair
+              meterNow={lastReading != null ? lastReading.toLocaleString("en-IN") : "—"}
+              previousLog={analytics.previousReading != null ? analytics.previousReading.toLocaleString("en-IN") : "—"}
+            />
+            <MeterStatGrid columns={2}>
+              <MeterStatCard
+                label="Today"
+                value={todayUnits != null ? `${todayUnits.toFixed(1)} KWH` : "—"}
+                sub={
+                  trendDiff != null
+                    ? trendDiff === 0
+                      ? "same as yesterday"
+                      : `${trendDiff > 0 ? "+" : ""}${trendDiff.toFixed(1)} vs yesterday`
+                    : "prorated"
+                }
+                highlight
+                onClick={() => showMetric("Today's usage", "today")}
+              />
+              <MeterStatCard
+                label="This month"
+                value={`${analytics.currentMonthUnits.toFixed(1)} KWH`}
+                sub={
+                  analytics.monthlyComparisonPct != null
+                    ? `${analytics.monthlyComparisonPct >= 0 ? "+" : ""}${analytics.monthlyComparisonPct}% vs last month`
+                    : `${calendarMonthName} so far`
+                }
+              />
+            </MeterStatGrid>
+
+            <MeterExpandSection
+              title="More usage details"
+              hint="Pace, range, patterns & insights"
+              defaultOpen={false}
+            >
+              <ProjectionLegend />
+
+              <AnalyticsSection title="Daily pace" hint="How you're using right now" columns={4}>
+                <MeterStatCard
+                  label="Today"
+                  value={todayUnits != null ? `${todayUnits.toFixed(1)} KWH` : "—"}
+                  sub={
+                    trendDiff != null
+                      ? trendDiff === 0
+                        ? "same as yesterday"
+                        : `${trendDiff > 0 ? "+" : ""}${trendDiff.toFixed(1)} vs yesterday`
+                      : "prorated"
+                  }
+                  onClick={() => showMetric("Today's usage", "today")}
+                />
+                <MeterStatCard
+                  label="This month"
+                  value={`${analytics.currentMonthUnits.toFixed(1)} KWH`}
+                  sub={
+                    analytics.monthlyComparisonPct != null
+                      ? `${analytics.monthlyComparisonPct >= 0 ? "+" : ""}${analytics.monthlyComparisonPct}% vs last month`
+                      : `${calendarMonthName} so far`
+                  }
+                />
+                {analytics.projectedMonthEndUnits != null && (
+                  <MeterStatCard
+                    label={`${calendarMonthName} forecast`}
+                    value={`${analytics.projectedMonthEndUnits.toFixed(0)} KWH`}
+                    sub={`calendar month · ${daysLeftInMonth}d left · not your bill`}
+                    onClick={() => showMetric("Calendar month forecast", "monthProjection")}
+                  />
+                )}
+                {analytics.last7AvgPerDay != null && (
+                  <MeterStatCard label="7-day avg" value={`${analytics.last7AvgPerDay.toFixed(1)} KWH`} sub="per day" />
+                )}
+                {avgUnitsPerDay != null && (
+                  <MeterStatCard
+                    label={inBillingPeriod ? "Cycle avg" : "Daily avg"}
+                    value={`${avgUnitsPerDay.toFixed(1)} KWH`}
+                    sub={inBillingPeriod ? `since ${formatDate(analytics.lastBillDate!)}` : analytics.elapsedLabel}
+                    onClick={() => showMetric("Average daily usage", "avgPerDay")}
+                  />
+                )}
+                {analytics.avgPerHour != null && (
+                  <MeterStatCard
+                    label="Avg hourly"
+                    value={`${analytics.avgPerHour.toFixed(3)} KWH`}
+                    sub="per hour · all readings"
+                    onClick={() => showMetric("Average hourly usage", "avgPerHour")}
+                  />
+                )}
+              </AnalyticsSection>
+
+              <AnalyticsSection title="Range & extremes" columns={4} collapsible defaultOpen={false}>
+                <MeterStatCard
+                  label="All-time"
+                  value={`${totalUnits.toFixed(1)} KWH`}
+                  sub={
+                    firstReading != null && lastReading != null
+                      ? `${firstReading.toLocaleString("en-IN")} → ${lastReading.toLocaleString("en-IN")}`
+                      : undefined
+                  }
+                  onClick={() => showMetric("All-time units", "allTimeUnits")}
+                />
+                <MeterStatCard
+                  label={inBillingPeriod ? "Since bill" : "Elapsed"}
+                  value={inBillingPeriod ? analytics.periodElapsedLabel : analytics.elapsedLabel}
+                  sub={`${(inBillingPeriod ? analytics.periodElapsedHours : analytics.elapsedHours).toFixed(0)} h`}
+                  onClick={() => showMetric("Elapsed time", "elapsedTime")}
+                />
+                {peakDayEntry && (
+                  <MeterStatCard
+                    label="Peak day"
+                    value={`${peakDayEntry.units.toFixed(1)} KWH`}
+                    sub={formatDate(peakDayEntry.dateISO)}
+                    onClick={() => showMetric("Peak day", "peakDay")}
+                  />
+                )}
+                {bestDayEntry && analytics.days.length >= 2 && (
+                  <MeterStatCard label="Lowest day" value={`${bestDayEntry.units.toFixed(1)} KWH`} sub={formatDate(bestDayEntry.dateISO)} />
+                )}
+              </AnalyticsSection>
+
+              {(analytics.nightPct != null ||
+                analytics.peakHour != null ||
+                analytics.efficiencyScore != null ||
+                analytics.medianDailyUsage != null ||
+                (!config.useSlabRates && hasCostData)) && (
+                <AnalyticsSection title="Patterns" columns={3} collapsible defaultOpen={false}>
+                  {analytics.nightPct != null && (
+                    <MeterStatCard label="Night" value={`${analytics.nightPct}%`} sub={`${analytics.nightUnits.toFixed(1)} KWH · 10pm–6am`} />
+                  )}
+                  {analytics.peakHour != null && (
+                    <MeterStatCard
+                      label="Peak hour"
+                      value={`${String(analytics.peakHour).padStart(2, "0")}:00`}
+                      sub={analytics.idleHour != null ? `quiet ${String(analytics.idleHour).padStart(2, "0")}:00` : undefined}
+                    />
+                  )}
+                  {analytics.efficiencyScore != null && (
+                    <MeterStatCard
+                      label="Efficiency"
+                      value={`${analytics.efficiencyScore}`}
+                      sub="0–100"
+                      onClick={() => showMetric("Efficiency score", "efficiencyScore")}
+                    />
+                  )}
+                  {analytics.medianDailyUsage != null && (
+                    <MeterStatCard label="Median day" value={`${analytics.medianDailyUsage.toFixed(1)} KWH`} sub="typical" />
+                  )}
+                  {!config.useSlabRates && hasCostData && (
+                    <MeterStatCard label="Logged cost" value={`₹${formatInr(totalCost)}`} sub="per-reading rates" />
+                  )}
+                </AnalyticsSection>
+              )}
+
+              <InsightList items={analytics.insights} />
+            </MeterExpandSection>
+          </div>
+        )}
 
         {/* ══ OVERVIEW SECTION ══ */}
         {activeSection === "overview" && (<>
@@ -969,30 +1599,28 @@ export default function ElectricityPage() {
             />
           )}
 
-          {/* Action row */}
-          <div className="flex items-center justify-between mb-3">
+          {/* Action row — desktop; mobile uses FAB */}
+          <div className="hidden md:flex items-center justify-between gap-3 mb-3">
             <div className="flex gap-2">
-              <button onClick={openAddModal} className="flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700 active:scale-95">
-                <span className="text-base leading-none">+</span> Add Reading
-              </button>
+              <MeterPrimaryButton onClick={openAddModal} icon={<PlusIcon className="h-5 w-5" />}>
+                Add Reading
+              </MeterPrimaryButton>
               {meterReadings.length > 0 && (
-                <button onClick={duplicateLast} title="Pre-fill with last reading's KWH"
-                  className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 shadow-sm">
-                  ⎘ Duplicate last
-                </button>
+                <MeterSecondaryButton onClick={duplicateLast} icon={<DuplicateIcon className="h-5 w-5 text-gray-400" />}>
+                  Duplicate last
+                </MeterSecondaryButton>
               )}
             </div>
             {allRows.length > 0 && (
-              <button onClick={() => exportCSV(allRows, activeMeta.label)}
-                className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500 hover:bg-gray-50 shadow-sm">
-                ⬇ Export CSV
-              </button>
+              <MeterSecondaryButton onClick={() => exportCSV(allRows, activeMeta.label)} icon={<DownloadIcon className="h-5 w-5" />}>
+                Export CSV
+              </MeterSecondaryButton>
             )}
           </div>
 
           {/* Filter bar */}
           {meterReadings.length > 0 && (
-            <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-3 mb-3">
+            <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-2.5 mb-2">
               <div className="flex flex-wrap gap-3 items-end">
                 <div className="flex flex-col gap-1">
                   <label className="text-[11px] text-gray-400 font-semibold uppercase tracking-wide">From</label>
@@ -1017,13 +1645,39 @@ export default function ElectricityPage() {
             </div>
           )}
 
-          {/* Readings table */}
+          {/* Readings — mobile cards */}
+          {filteredRows.length > 0 && (
+            <div className="md:hidden space-y-3 mb-4">
+              {reversedRows.map((row, i) => (
+                <ReadingMobileCard
+                  key={row.id}
+                  date={formatDate(row.dateISO)}
+                  time={formatTime(row.readingTime)}
+                  reading={row.reading.toLocaleString("en-IN")}
+                  units={row.units != null ? row.units.toFixed(2) : null}
+                  duration={row.elapsedHours != null ? formatElapsed(row.elapsedHours) : null}
+                  avgKw={row.avgKw != null ? row.avgKw.toFixed(2) : null}
+                  rate={!config.useSlabRates && row.pricePerUnit > 0 ? `₹${row.pricePerUnit}` : undefined}
+                  cost={!config.useSlabRates && hasCostData && row.cost != null ? `₹${formatInr(row.cost)}` : undefined}
+                  note={row.note}
+                  isLatest={i === 0}
+                  isEditing={editId === row.id}
+                  showRate={!config.useSlabRates}
+                  showCost={!config.useSlabRates && hasCostData}
+                  onEdit={() => startEdit(row)}
+                  onDelete={() => setDeleteReadingId(row.id)}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Readings table — desktop */}
           {filteredRows.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-gray-300 bg-white/50 p-8 text-center text-sm text-gray-400">
+            <div className="rounded-2xl border border-dashed border-gray-300 bg-white/80 p-10 text-center text-sm text-gray-500">
               {isFiltered ? "No readings match the selected range." : `No readings yet for ${activeMeta.label}.`}
             </div>
           ) : (
-            <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <div className="hidden md:block rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -1075,8 +1729,12 @@ export default function ElectricityPage() {
                           <td className="px-3 py-2.5 text-gray-400 text-xs max-w-[90px] truncate">{row.note ?? ""}</td>
                           <td className="px-2 py-2.5">
                             <div className="flex gap-1">
-                              <button onClick={() => startEdit(row)} className="rounded-lg p-1 text-gray-300 hover:text-amber-500 hover:bg-amber-50 transition-colors" title="Edit">✏️</button>
-                              <button onClick={() => setDeleteReadingId(row.id)} className="rounded-lg p-1 text-gray-300 hover:text-red-400 hover:bg-red-50 transition-colors" title="Delete">🗑</button>
+                              <button onClick={() => startEdit(row)} className="rounded-lg p-1 text-gray-300 hover:text-amber-500 hover:bg-amber-50 transition-colors" title="Edit" aria-label="Edit reading">
+                                <BreakdownEditIcon className="h-4 w-4" />
+                              </button>
+                              <button onClick={() => setDeleteReadingId(row.id)} className="rounded-lg p-1 text-gray-300 hover:text-red-400 hover:bg-red-50 transition-colors" title="Delete" aria-label="Delete reading">
+                                <BreakdownDeleteIcon className="h-4 w-4" />
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -1106,11 +1764,11 @@ export default function ElectricityPage() {
 
         {/* ══ BILLING PERIODS SECTION ══ */}
         {activeSection === "billing" && (<>
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-xs text-gray-500">Track each bill cycle — add a period when you receive a bill.</p>
-            <button onClick={openAddBp} className="flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700 active:scale-95">
-              <span>+</span> Add Period
-            </button>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <p className={`${meterCaption} sm:text-sm`}>Track each bill cycle — add a period when you receive a bill.</p>
+            <MeterPrimaryButton onClick={openAddBp} icon={<PlusIcon className="h-5 w-5" />} className="hidden sm:inline-flex w-full sm:w-auto">
+              Add Period
+            </MeterPrimaryButton>
           </div>
 
           {billingPeriods.length === 0 ? (
@@ -1118,88 +1776,54 @@ export default function ElectricityPage() {
               No billing periods yet. Add one with bill date <strong>10 Jul 2026</strong> so “days until next bill” is correct.
             </div>
           ) : (
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-4">
               {billingPeriods.map((bp) => {
+                const periodUsage = calcBillingPeriodUsage(meterReadings, bp.fromDate, bp.toDate);
+                const pUnits = periodUsage.units;
                 const periodRows = allRows.filter((r) => r.dateISO >= bp.fromDate && r.dateISO <= bp.toDate);
-                const pUnits = periodRows.reduce((s, r) => s + (r.units ?? 0), 0);
                 const days   = daysBetween(bp.fromDate, bp.toDate);
+                const billUnits =
+                  bp.billMeterReading != null
+                    ? billUnitsFromMeterReading(bp.billMeterReading, periodUsage.startReading)
+                    : bp.actualBillUnits ?? null;
+                const hasBillUsage = billUnits != null && billUnits > 0;
 
-                const bill = estimateBill(pUnits, config, bp.fixedCharges);
+                const bill = estimateBill(pUnits, config, fixedCharges);
                 const slabResult = config.useSlabRates ? bill.slab : null;
                 // Flat: prefer locked-in per-reading energy costs; slab/fuel/tax from bill helper.
                 const energy = config.useSlabRates
                   ? bill.energyCharge
                   : periodRows.reduce((s, r) => s + (r.cost ?? 0), 0);
                 const fuel = bill.fuelSurcharge;
-                const subtotal = energy + bp.fixedCharges + fuel;
+                const subtotal = energy + fixedCharges + fuel;
                 const tax = +((subtotal * ((config.taxPercent ?? 0) / 100))).toFixed(2);
                 const total = +(subtotal + tax).toFixed(2);
+                const slabLine =
+                  slabResult?.lines[0]
+                    ? `${slabResult.lines[0].units.toFixed(0)} × ₹${slabResult.lines[0].rate}`
+                    : null;
 
                 return (
-                  <div key={bp.id} className="rounded-2xl border border-gray-200 bg-white shadow-sm p-4">
-                    <div className="flex items-start justify-between mb-3">
-                      <div>
-                        <p className="font-semibold text-gray-800 text-sm">{formatDate(bp.fromDate)} → {formatDate(bp.toDate)}</p>
-                        <p className="text-xs text-gray-400">{days} days · {periodRows.length} readings · {pUnits.toFixed(2)} KWH</p>
-                        {bp.note && <p className="text-xs text-gray-500 mt-0.5 italic">{bp.note}</p>}
-                      </div>
-                      <div className="flex gap-1">
-                        <button onClick={() => startEditBp(bp)} className="rounded-lg p-1.5 text-gray-300 hover:text-amber-500 hover:bg-amber-50 transition-colors">✏️</button>
-                        <button onClick={() => setDeleteBpId(bp.id)} className="rounded-lg p-1.5 text-gray-300 hover:text-red-400 hover:bg-red-50 transition-colors">🗑</button>
-                      </div>
-                    </div>
-
-                    {/* Slab breakdown table */}
-                    {slabResult && slabResult.lines.length > 0 && (
-                      <div className="mb-3 rounded-xl border border-purple-100 bg-purple-50/50 overflow-hidden">
-                        <div className="px-3 py-1.5 bg-purple-100/60 border-b border-purple-100">
-                          <p className="text-[10px] font-semibold uppercase tracking-wide text-purple-600">⚡ Slab rate (all units)</p>
-                        </div>
-                        <table className="w-full text-xs">
-                          <tbody>
-                            {slabResult.lines.map((line, i) => (
-                              <tr key={i} className="border-b border-purple-100/50 last:border-0">
-                                <td className="px-3 py-1.5 text-gray-600">{line.label}</td>
-                                <td className="px-3 py-1.5 text-right tabular-nums text-gray-600">{line.units.toFixed(2)} units</td>
-                                <td className="px-3 py-1.5 text-right tabular-nums text-gray-500">× ₹{line.rate}</td>
-                                <td className="px-3 py-1.5 text-right tabular-nums font-medium text-gray-700">= ₹{formatInr(line.cost)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-
-                    <div className="flex flex-wrap gap-2">
-                      <div className="flex-1 min-w-[100px] rounded-xl bg-gray-50 px-3 py-2">
-                        <p className="text-[10px] text-gray-400 uppercase font-semibold">Energy cost</p>
-                        <p className="font-bold text-gray-800">₹{formatInr(energy)}</p>
-                        {config.useSlabRates && <p className="text-[10px] text-purple-500">All units @ slab rate</p>}
-                      </div>
-                      {bp.fixedCharges > 0 && (
-                        <div className="flex-1 min-w-[100px] rounded-xl bg-gray-50 px-3 py-2">
-                          <p className="text-[10px] text-gray-400 uppercase font-semibold">Fixed charges</p>
-                          <p className="font-bold text-gray-800">₹{formatInr(bp.fixedCharges)}</p>
-                        </div>
-                      )}
-                      {fuel > 0 && (
-                        <div className="flex-1 min-w-[100px] rounded-xl bg-gray-50 px-3 py-2">
-                          <p className="text-[10px] text-gray-400 uppercase font-semibold">Fuel surcharge</p>
-                          <p className="font-bold text-gray-800">₹{formatInr(fuel)}</p>
-                        </div>
-                      )}
-                      {tax > 0 && (
-                        <div className="flex-1 min-w-[100px] rounded-xl bg-gray-50 px-3 py-2">
-                          <p className="text-[10px] text-gray-400 uppercase font-semibold">Tax</p>
-                          <p className="font-bold text-gray-800">₹{formatInr(tax)}</p>
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-[100px] rounded-xl bg-blue-50 border border-blue-100 px-3 py-2">
-                        <p className="text-[10px] text-blue-500 uppercase font-semibold">Total bill</p>
-                        <p className="font-bold text-blue-700 text-lg">₹{formatInr(total)}</p>
-                      </div>
-                    </div>
-                  </div>
+                  <BillingPeriodCard
+                    key={bp.id}
+                    bp={bp}
+                    days={days}
+                    readingCount={periodRows.length}
+                    periodUsage={periodUsage}
+                    pUnits={pUnits}
+                    billUnits={billUnits}
+                    hasBillUsage={hasBillUsage}
+                    slabLine={slabLine}
+                    slabEnergy={energy}
+                    total={total}
+                    energy={energy}
+                    fixedCharges={fixedCharges}
+                    fuel={fuel}
+                    tax={tax}
+                    onEdit={() => startEditBp(bp)}
+                    onDelete={() => setDeleteBpId(bp.id)}
+                    isEditing={bpEditId === bp.id}
+                  />
                 );
               })}
             </div>
@@ -1251,15 +1875,47 @@ export default function ElectricityPage() {
         )}
       </div>
 
+      {activeSection === "overview" && (
+        <MeterBottomBar>
+          {meterReadings.length > 0 && (
+            <MeterSecondaryButton
+              onClick={duplicateLast}
+              icon={<DuplicateIcon className="h-5 w-5 text-gray-500" />}
+              className="shrink-0"
+            >
+              Duplicate
+            </MeterSecondaryButton>
+          )}
+          <MeterPrimaryButton onClick={openAddModal} icon={<PlusIcon className="h-5 w-5" />} className="flex-1">
+            Add Reading
+          </MeterPrimaryButton>
+        </MeterBottomBar>
+      )}
+
+      {activeSection === "billing" && (
+        <MeterBottomBar>
+          <MeterPrimaryButton onClick={openAddBp} icon={<PlusIcon className="h-5 w-5" />} className="flex-1">
+            Add Period
+          </MeterPrimaryButton>
+        </MeterBottomBar>
+      )}
+
       {/* ══ READING MODAL ══ */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3">
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden">
+        <MeterModal onClose={resetForm}>
             <div className={`flex items-center justify-between px-5 py-4 ${formMode === "edit" ? "bg-amber-50 border-b border-amber-200" : "bg-gray-50 border-b border-gray-200"}`}>
-              <h2 className="text-sm font-semibold text-gray-800">
-                {formMode === "edit" ? `✏️ Edit Reading — ${activeMeta.label}` : `${activeMeta.icon} Add Reading — ${activeMeta.label}`}
-              </h2>
-              <button onClick={resetForm} className="rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-200 transition-colors">✕</button>
+              <ModalTitle
+                icon={
+                  formMode === "edit"
+                    ? <BreakdownEditIcon className="h-4 w-4 text-amber-600" />
+                    : <ActiveMeterIcon className="h-4 w-4" />
+                }
+              >
+                {formMode === "edit" ? `Edit Reading — ${activeMeta.label}` : `Add Reading — ${activeMeta.label}`}
+              </ModalTitle>
+              <button onClick={resetForm} className="rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-200 transition-colors" aria-label="Close">
+                <CloseIcon className="h-4 w-4" />
+              </button>
             </div>
             <form ref={formRef} onSubmit={handleSave} className="p-5 flex flex-col gap-4">
               <div className="flex gap-3">
@@ -1287,7 +1943,7 @@ export default function ElectricityPage() {
               </div>
               {config.useSlabRates && (
                 <div className="flex items-center gap-2 rounded-xl bg-purple-50 border border-purple-100 px-3 py-2">
-                  <span className="text-purple-500 text-sm">⚡</span>
+                  <ElecBoltIcon className="h-4 w-4 shrink-0 text-purple-500" />
                   <p className="text-xs text-purple-700">Slab rates active — total period units pick one slab; all units are billed at that rate.</p>
                 </div>
               )}
@@ -1305,17 +1961,19 @@ export default function ElectricityPage() {
                 </div>
               </div>
             </form>
-          </div>
-        </div>
+        </MeterModal>
       )}
 
       {/* ══ BILLING PERIOD MODAL ══ */}
       {bpModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3">
-          <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl overflow-hidden">
+        <MeterModal onClose={resetBpForm} panelClassName="max-w-sm">
             <div className="flex items-center justify-between px-5 py-4 bg-gray-50 border-b border-gray-200">
-              <h2 className="text-sm font-semibold text-gray-800">🧾 {bpEditId ? "Edit" : "Add"} Billing Period</h2>
-              <button onClick={resetBpForm} className="rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-200">✕</button>
+              <ModalTitle icon={<BillingIcon className="h-4 w-4" />}>
+                {bpEditId ? "Edit" : "Add"} Billing Period
+              </ModalTitle>
+              <button onClick={resetBpForm} className="rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-200" aria-label="Close">
+                <CloseIcon className="h-4 w-4" />
+              </button>
             </div>
             <form onSubmit={handleSaveBp} className="p-5 flex flex-col gap-4">
               <div className="flex gap-3">
@@ -1328,12 +1986,22 @@ export default function ElectricityPage() {
                   <input type="date" value={bpTo} onChange={(e) => setBpTo(e.target.value)} required className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
                 </div>
               </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-gray-500">Fixed charges (₹) — meter rent, taxes, etc.</label>
-                <input type="number" value={bpFixed} onChange={(e) => setBpFixed(e.target.value)} placeholder="e.g. 150" min="0" step="0.01"
-                  className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
-                {fixedCharges > 0 && !bpFixed && <p className="text-[10px] text-gray-400">Your default is ₹{fixedCharges}</p>}
+              <div className="flex gap-3">
+                <div className="flex flex-col gap-1 flex-1">
+                  <label className="text-xs font-medium text-gray-500">Meter at bill (KWH)</label>
+                  <input type="number" value={bpBillReading} onChange={(e) => setBpBillReading(e.target.value)} placeholder="e.g. 38230" min="0" step="any"
+                    className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                  <p className="text-[10px] text-gray-400">Dial reading when bill arrived</p>
+                </div>
+                <div className="flex flex-col gap-1 flex-1">
+                  <label className="text-xs font-medium text-gray-500">Bill amount (₹)</label>
+                  <input type="number" value={bpActual} onChange={(e) => setBpActual(e.target.value)} placeholder="e.g. 6281.50" min="0" step="0.01"
+                    className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                </div>
               </div>
+              <p className="text-[10px] text-gray-400">
+                Usage on bill = meter at bill minus start of period. May differ from calculated if your logs are on different days.
+              </p>
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-medium text-gray-500">Note (optional)</label>
                 <input type="text" value={bpNote} onChange={(e) => setBpNote(e.target.value)} placeholder="e.g. Bill received 10 Jul"
@@ -1346,17 +2014,19 @@ export default function ElectricityPage() {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </MeterModal>
       )}
 
       {/* ══ RATE SETTINGS MODAL ══ */}
       {rateModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3">
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+        <MeterModal onClose={() => setRateModalOpen(false)} panelClassName="max-w-md max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between px-5 py-4 bg-gray-50 border-b border-gray-200 flex-shrink-0">
-              <h2 className="text-sm font-semibold text-gray-800">⚡ Rate Settings — {activeMeta.label}</h2>
-              <button onClick={() => setRateModalOpen(false)} className="rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-200">✕</button>
+              <ModalTitle icon={<ElecBoltIcon className="h-4 w-4 text-amber-500" />}>
+                Rate Settings — {activeMeta.label}
+              </ModalTitle>
+              <button onClick={() => setRateModalOpen(false)} className="rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-200" aria-label="Close">
+                <CloseIcon className="h-4 w-4" />
+              </button>
             </div>
 
             <div className="overflow-y-auto p-5 flex flex-col gap-5">
@@ -1454,36 +2124,31 @@ export default function ElectricityPage() {
               <button onClick={() => setRateModalOpen(false)} className="rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
               <button onClick={handleSavePrice} className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700">Save Settings</button>
             </div>
-          </div>
-        </div>
+        </MeterModal>
       )}
 
       {/* ══ DELETE READING CONFIRM ══ */}
       {deleteReadingId && deleteReadingRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="mx-4 w-full max-w-xs rounded-2xl bg-white p-5 shadow-xl">
-            <p className="text-sm font-semibold text-gray-800">Delete reading?</p>
-            <p className="mt-1 text-xs text-gray-500">{formatDate(deleteReadingRow.dateISO)} · {formatTime(deleteReadingRow.readingTime)} · {deleteReadingRow.reading.toLocaleString("en-IN")} KWH</p>
-            <div className="mt-4 flex gap-2 justify-end">
-              <button onClick={() => setDeleteReadingId(null)} className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
-              <button onClick={handleDeleteReading} className="rounded-xl bg-red-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-600">Delete</button>
-            </div>
-          </div>
-        </div>
+        <MeterConfirmDialog
+          onClose={() => setDeleteReadingId(null)}
+          title="Delete reading?"
+          detail={`${formatDate(deleteReadingRow.dateISO)} · ${formatTime(deleteReadingRow.readingTime)} · ${deleteReadingRow.reading.toLocaleString("en-IN")} KWH`}
+          confirmLabel="Delete"
+          onConfirm={handleDeleteReading}
+          danger
+        />
       )}
 
       {/* ══ DELETE BILLING PERIOD CONFIRM ══ */}
       {deleteBpId && deleteBpRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="mx-4 w-full max-w-xs rounded-2xl bg-white p-5 shadow-xl">
-            <p className="text-sm font-semibold text-gray-800">Delete billing period?</p>
-            <p className="mt-1 text-xs text-gray-500">{formatDate(deleteBpRow.fromDate)} → {formatDate(deleteBpRow.toDate)}</p>
-            <div className="mt-4 flex gap-2 justify-end">
-              <button onClick={() => setDeleteBpId(null)} className="rounded-xl border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
-              <button onClick={handleDeleteBp} className="rounded-xl bg-red-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-600">Delete</button>
-            </div>
-          </div>
-        </div>
+        <MeterConfirmDialog
+          onClose={() => setDeleteBpId(null)}
+          title="Delete billing period?"
+          detail={`${formatDate(deleteBpRow.fromDate)} → ${formatDate(deleteBpRow.toDate)}`}
+          confirmLabel="Delete"
+          onConfirm={handleDeleteBp}
+          danger
+        />
       )}
 
       {/* ══ METRIC FORMULA DETAIL ══ */}

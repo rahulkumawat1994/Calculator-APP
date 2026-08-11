@@ -4,6 +4,8 @@ import { DEFAULT_SLAB_RATES } from "../data/firestoreDb";
 import {
   allocateToDays,
   buildIntervals,
+  billUnitsFromMeterReading,
+  calcBillingPeriodUsage,
   calcSlabCost,
   computeMeterAnalytics,
   estimateBill,
@@ -135,5 +137,53 @@ describe("CSV-like multi reading analytics", () => {
     expect(a.peakDay!.units).toBeGreaterThan(17); // not just the single 17 kWh reading
     expect(a.insights.length).toBeGreaterThan(0);
     expect(a.metrics.avgPerDay.formula).toContain("Elapsed Hours");
+  });
+
+  it("uses period pace for bill projection after last bill date", () => {
+    const readings = [
+      reading({ reading: 37429, readingTime: new Date(2026, 6, 10, 11, 24).getTime() }),
+      reading({ reading: 38190, readingTime: new Date(2026, 7, 7, 10, 0).getTime() }),
+      reading({ reading: 38230, readingTime: new Date(2026, 7, 11, 10, 0).getTime() }),
+    ];
+    const nowMs = new Date(2026, 7, 11, 12, 0).getTime();
+    const a = computeMeterAnalytics(readings, { ...baseConfig, useSlabRates: true }, {
+      nowMs,
+      fixedCharges: 0,
+      billingPeriods: [
+        {
+          id: "bp1",
+          meterId: "main",
+          fromDate: "2026-07-10",
+          toDate: "2026-08-07",
+          fixedCharges: 0,
+          note: "",
+        },
+      ],
+    });
+    expect(a.lastBillDate).toBe("2026-08-07");
+    expect(a.periodUnits).toBeGreaterThan(0);
+    expect(a.periodUnits).toBeLessThan(a.totalUnits);
+    expect(a.periodAvgPerDay).not.toBeNull();
+    expect(a.projectedPeriodUnits).not.toBeNull();
+    if (a.projectedPeriodUnits != null) {
+      expect(a.projectedPeriodUnits).toBeGreaterThan(a.periodUnits);
+    }
+  });
+
+  it("billUnitsFromMeterReading subtracts period start", () => {
+    expect(billUnitsFromMeterReading(38230, 37429)).toBeCloseTo(801, 0);
+    expect(billUnitsFromMeterReading(38230, null)).toBeNull();
+  });
+
+  it("calcBillingPeriodUsage prorates to bill date window", () => {
+    const readings = [
+      reading({ reading: 37000, readingTime: new Date(2026, 6, 10, 8, 0).getTime() }),
+      reading({ reading: 37739, readingTime: new Date(2026, 7, 7, 10, 0).getTime() }),
+      reading({ reading: 37800, readingTime: new Date(2026, 7, 11, 10, 0).getTime() }),
+    ];
+    const u = calcBillingPeriodUsage(readings, "2026-07-10", "2026-08-07");
+    expect(u.units).toBeCloseTo(739, 0);
+    expect(u.lastLogAfterBill).toBe(true);
+    expect(u.endReading).toBe(37739);
   });
 });

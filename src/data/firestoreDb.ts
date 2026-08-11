@@ -1030,6 +1030,12 @@ export interface ElectricityBillingPeriod {
   toDate: string;
   /** Fixed charges on this specific bill (meter rent, service charge, taxes, etc.) */
   fixedCharges: number;
+  /** Total amount on the bill you received (₹) — compare vs calculated */
+  actualBillTotal?: number;
+  /** Meter dial (KWH) when the bill arrived — app derives usage vs period start */
+  billMeterReading?: number;
+  /** @deprecated legacy — bill KWH entered directly; use billMeterReading */
+  actualBillUnits?: number;
   note?: string;
   createdAt: number;
 }

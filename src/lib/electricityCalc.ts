@@ -149,15 +149,19 @@ export interface MeterAnalytics {
   estimatedBill: BillEstimate | null;
   projectedMonthEndBill: BillEstimate | null;
   periodProjectedBill: BillEstimate | null;
-  /** Last recorded bill end date (YYYY-MM-DD), if any billing period exists. */
   lastBillDate: string | null;
-  /** Whole days since lastBillDate (exclusive of bill day itself if bill was earlier). */
   daysSinceLastBill: number | null;
-  /** Assumed billing cycle length in days (from history, else fallback). */
   avgCycleDays: number;
-  /** Estimated days remaining until next bill in the assumed cycle. */
   daysLeftInCycle: number | null;
-
+  periodUnits: number;
+  periodStartReading: number | null;
+  periodEndReading: number | null;
+  periodElapsedHours: number;
+  periodElapsedLabel: string;
+  periodAvgPerDay: number | null;
+  periodAvgPerHour: number | null;
+  projectedPeriodUnits: number | null;
+  periodFixedCharges: number;
   efficiencyScore: number | null;
   insights: string[];
   trends: UsageTrends;
@@ -367,6 +371,84 @@ export function buildRows(readings: ElectricityReading[]): ReadingRow[] {
       units != null && r.pricePerUnit > 0 ? +(units * r.pricePerUnit).toFixed(2) : null;
     return { ...r, units, cost, elapsedHours, avgKw };
   });
+}
+
+export interface BillingPeriodUsage {
+  units: number;
+  startReading: number | null;
+  endReading: number | null;
+  /** Last reading on or before the bill date window */
+  lastReadingDateISO: string | null;
+  lastReadingTimeMs: number | null;
+  /** True if you logged a reading after the bill date (common timing skew) */
+  lastLogAfterBill: boolean;
+  /** True if last log before bill date (company may have read meter later) */
+  lastLogBeforeBill: boolean;
+}
+
+/** Prorated KWH between period dates — aligned to bill window, not sum of per-reading gaps only. */
+export function calcBillingPeriodUsage(
+  readings: ElectricityReading[],
+  fromDate: string,
+  toDate: string,
+): BillingPeriodUsage {
+  const sorted = [...readings].sort((a, b) => a.readingTime - b.readingTime);
+  const empty: BillingPeriodUsage = {
+    units: 0,
+    startReading: null,
+    endReading: null,
+    lastReadingDateISO: null,
+    lastReadingTimeMs: null,
+    lastLogAfterBill: false,
+    lastLogBeforeBill: false,
+  };
+  if (sorted.length < 2) return empty;
+
+  const periodStartMs = startOfLocalDay(new Date(fromDate + "T00:00:00").getTime());
+  const billDayEndMs = startOfLocalDay(new Date(toDate + "T00:00:00").getTime()) + DAY_MS;
+
+  const readingsOnOrBeforeBill = sorted.filter((r) => r.readingTime < billDayEndMs);
+  const lastInBillWindow = readingsOnOrBeforeBill[readingsOnOrBeforeBill.length - 1];
+  const lastOverall = sorted[sorted.length - 1]!;
+
+  // Stop at last logged reading on/before bill date — not end-of-day (avoids counting after your log)
+  const periodEndMs =
+    lastInBillWindow != null ? lastInBillWindow.readingTime : billDayEndMs;
+
+  const intervals = buildIntervals(readings);
+  const units = intervals.reduce((s, iv) => {
+    const start = Math.max(iv.fromTime, periodStartMs);
+    const end = Math.min(iv.toTime, periodEndMs);
+    if (end <= start) return s;
+    return s + iv.units * ((end - start) / HOUR_MS / iv.hours);
+  }, 0);
+
+  let startReading: number | null = null;
+  for (const r of sorted) {
+    if (r.readingTime <= periodStartMs) startReading = r.reading;
+    else break;
+  }
+  if (startReading == null) startReading = sorted[0]!.reading;
+
+  return {
+    units: +units.toFixed(3),
+    startReading,
+    endReading: lastInBillWindow?.reading ?? null,
+    lastReadingDateISO: lastInBillWindow ? msToDateISO(lastInBillWindow.readingTime) : null,
+    lastReadingTimeMs: lastInBillWindow?.readingTime ?? null,
+    lastLogAfterBill: lastOverall.readingTime > periodEndMs,
+    lastLogBeforeBill:
+      lastInBillWindow != null && msToDateISO(lastInBillWindow.readingTime) < toDate,
+  };
+}
+
+/** KWH charged on bill = meter at bill − meter at period start. */
+export function billUnitsFromMeterReading(
+  billMeterReading: number,
+  periodStartReading: number | null,
+): number | null {
+  if (periodStartReading == null || !(billMeterReading > periodStartReading)) return null;
+  return +(billMeterReading - periodStartReading).toFixed(3);
 }
 
 /** Prorate each interval across local calendar days by elapsed hours. */
@@ -619,7 +701,9 @@ function buildInsights(a: {
   }
   if (a.nightPct != null) out.push(`Night usage (10 PM–6 AM) is ${a.nightPct}% of total.`);
   if (a.projectedMonthEndUnits != null) {
-    out.push(`Current monthly projection is ${a.projectedMonthEndUnits.toFixed(0)} kWh.`);
+    out.push(
+      `Calendar month may end around ${a.projectedMonthEndUnits.toFixed(0)} kWh (not the same as your bill cycle).`,
+    );
   }
   if (a.monthlyComparisonPct != null) {
     if (a.monthlyComparisonPct > 0) {
@@ -736,12 +820,14 @@ export function computeMeterAnalytics(
   const previousMonth = months.find((m) => m.key === prevMonthKey);
   const previousMonthUnits = previousMonth?.units ?? null;
 
-  // Project month end using timestamp avg/day for remaining calendar hours in month
+  // Project month end using this month's pace for remaining calendar hours
   const nextMonthStart = new Date(new Date(nowMs).getFullYear(), new Date(nowMs).getMonth() + 1, 1).getTime();
   const monthRemainingH = Math.max(0, (nextMonthStart - nowMs) / HOUR_MS);
+  const monthPacePerDay =
+    currentMonth && currentMonth.avgPerDay > 0 ? currentMonth.avgPerDay : avgPerDay;
   const projectedMonthEndUnits =
-    avgPerDay != null
-      ? +(currentMonthUnits + avgPerDay * (monthRemainingH / 24)).toFixed(3)
+    monthPacePerDay != null
+      ? +(currentMonthUnits + monthPacePerDay * (monthRemainingH / 24)).toFixed(3)
       : null;
 
   const monthlyAverage =
@@ -806,14 +892,38 @@ export function computeMeterAnalytics(
       if (end <= start) return s;
       return s + iv.units * ((end - start) / HOUR_MS / iv.hours);
     }, 0);
+
+  const periodUnitsRounded = +periodUnits.toFixed(3);
+  const periodElapsedHours = Math.max(0, (nowMs - periodStartMs) / HOUR_MS);
+  const periodElapsedLabel = formatElapsed(periodElapsedHours);
+  const periodAvgPerDay =
+    periodElapsedHours > 0 ? +(periodUnitsRounded / (periodElapsedHours / 24)).toFixed(3) : null;
+  const periodAvgPerHour =
+    periodElapsedHours > 0 ? +(periodUnitsRounded / periodElapsedHours).toFixed(4) : null;
+
+  let periodStartReading: number | null = null;
+  if (sorted.length > 0) {
+    for (const r of sorted) {
+      if (r.readingTime <= periodStartMs) periodStartReading = r.reading;
+      else break;
+    }
+    if (periodStartReading == null) periodStartReading = sorted[0]!.reading;
+  }
+  const periodEndReading = last?.reading ?? null;
+
+  const periodFixedCharges =
+    lastPeriod && lastPeriod.fixedCharges > 0 ? lastPeriod.fixedCharges : fixedCharges;
+
   const projectedPeriodUnits =
-    avgPerDay != null && daysLeftInCycle != null
-      ? +(periodUnits + avgPerDay * daysLeftInCycle).toFixed(3)
-      : avgPerDay != null && !lastBillDate
-        ? +(totalUnits + avgPerDay * avgCycleDays).toFixed(3) // no bill date yet: rough full-cycle guess
+    periodAvgPerDay != null && daysLeftInCycle != null
+      ? +(periodUnitsRounded + periodAvgPerDay * daysLeftInCycle).toFixed(3)
+      : periodAvgPerDay != null && !lastBillDate
+        ? +(totalUnits + periodAvgPerDay * avgCycleDays).toFixed(3)
         : null;
   const periodProjectedBill =
-    projectedPeriodUnits != null ? estimateBill(projectedPeriodUnits, config, fixedCharges) : null;
+    projectedPeriodUnits != null
+      ? estimateBill(projectedPeriodUnits, config, periodFixedCharges)
+      : null;
 
   const trends = buildTrendSeries(days);
   const score = efficiencyScore(avgPerDay, peakDay, lowestDay);
@@ -848,6 +958,17 @@ export function computeMeterAnalytics(
       unit: "KWH/h",
       formula: "Total Consumption ÷ Elapsed Hours",
       details: elapsedHours > 0 ? `${totalUnits} ÷ ${elapsedHours.toFixed(2)}` : "n/a",
+    },
+    periodAvgPerHour: {
+      value: periodAvgPerHour,
+      unit: "KWH/h",
+      formula: lastBillDate
+        ? "Cycle consumption ÷ hours since day after last bill"
+        : "Same as all-time avg/hour (no bill period)",
+      details:
+        periodElapsedHours > 0
+          ? `${periodUnitsRounded.toFixed(1)} KWH ÷ ${periodElapsedHours.toFixed(2)} h · since ${lastBillDate ?? "first reading"}`
+          : "n/a",
     },
     avgPerDay: {
       value: avgPerDay,
@@ -884,14 +1005,40 @@ export function computeMeterAnalytics(
       value: periodProjectedBill?.total ?? null,
       unit: "₹",
       formula: lastBillDate
-        ? "Units since last bill + avg/day × days left in billing cycle"
+        ? "Cycle units so far + cycle avg/day × days left until next bill"
         : "Rough full-cycle estimate (add last bill date under Billing for accuracy)",
       details:
         projectedPeriodUnits != null && daysLeftInCycle != null
-          ? `Last bill ${lastBillDate}: ${periodUnits.toFixed(1)} KWH so far + ${avgPerDay?.toFixed(2)} × ${daysLeftInCycle}d left (cycle ~${avgCycleDays}d) → ${projectedPeriodUnits} KWH`
+          ? `Billing cycle: ${periodUnitsRounded.toFixed(1)} KWH so far + ${periodAvgPerDay?.toFixed(2)} × ${daysLeftInCycle}d left (cycle ~${avgCycleDays}d) → ${projectedPeriodUnits} KWH total · drives ₹ estimate · fixed ₹${periodFixedCharges}`
           : projectedPeriodUnits != null
             ? `No bill date yet → ~${projectedPeriodUnits} KWH over ${avgCycleDays}d cycle`
             : "n/a",
+    },
+    monthProjection: {
+      value: projectedMonthEndUnits,
+      unit: "KWH",
+      formula: "Calendar month MTD + this month's avg/day × days left in month",
+      details:
+        projectedMonthEndUnits != null && monthPacePerDay != null
+          ? `${monthLabel(curMonthKey)}: ${currentMonthUnits.toFixed(1)} KWH so far + ${monthPacePerDay.toFixed(2)} × ${(monthRemainingH / 24).toFixed(1)}d left → ${projectedMonthEndUnits} KWH · calendar only, not your bill`
+          : "n/a",
+    },
+    periodUnits: {
+      value: periodUnitsRounded,
+      unit: "KWH",
+      formula: lastBillDate
+        ? "Prorated interval units since day after last bill"
+        : "Same as total (no bill period recorded)",
+      details:
+        periodStartReading != null && periodEndReading != null
+          ? `${periodStartReading.toLocaleString("en-IN")} → ${periodEndReading.toLocaleString("en-IN")} · ${periodElapsedLabel}`
+          : "n/a",
+    },
+    allTimeUnits: {
+      value: totalUnits,
+      unit: "KWH",
+      formula: "Latest reading − first reading (all logged data)",
+      details: first && last ? `${first.reading} − ${last.reading} = ${totalUnits}` : "n/a",
     },
   };
 
@@ -936,6 +1083,15 @@ export function computeMeterAnalytics(
     daysSinceLastBill,
     avgCycleDays,
     daysLeftInCycle,
+    periodUnits: periodUnitsRounded,
+    periodStartReading,
+    periodEndReading,
+    periodElapsedHours: +periodElapsedHours.toFixed(4),
+    periodElapsedLabel,
+    periodAvgPerDay,
+    periodAvgPerHour,
+    projectedPeriodUnits,
+    periodFixedCharges,
     efficiencyScore: score,
     insights,
     trends,
