@@ -209,7 +209,7 @@ function ChartSection({
   const maxHourUnits = Math.max(0.001, ...hourlyHeat.map((h) => h.units));
 
   return (
-    <MeterSurface className="p-4 mb-4">
+    <MeterSurface borderless className="meter-charts mb-4 p-4 outline-none">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="flex items-center gap-2 text-base font-semibold text-gray-800">
@@ -257,8 +257,17 @@ function ChartSection({
       ) : data.length === 0 ? (
         <div className="h-36 flex items-center justify-center text-sm text-gray-500">Add at least 2 readings to see a chart.</div>
       ) : isLine ? (
-        <ResponsiveContainer width="100%" height={168}>
-          <LineChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 4 }}>
+        <div
+          className="outline-none select-none"
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <ResponsiveContainer width="100%" height={168} className="outline-none">
+          <LineChart
+            accessibilityLayer={false}
+            tabIndex={-1}
+            data={data}
+            margin={{ top: 4, right: 8, left: -16, bottom: 4 }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} width={52} />
@@ -274,14 +283,24 @@ function ChartSection({
             }} />
             <Line type="monotone" dataKey="units" stroke={barColor} strokeWidth={2} dot={false} />
           </LineChart>
-        </ResponsiveContainer>
+          </ResponsiveContainer>
+        </div>
       ) : (
-        <ResponsiveContainer width="100%" height={168}>
-          <BarChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 4 }}>
+        <div
+          className="outline-none select-none"
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <ResponsiveContainer width="100%" height={168} className="outline-none">
+          <BarChart
+            accessibilityLayer={false}
+            tabIndex={-1}
+            data={data}
+            margin={{ top: 4, right: 8, left: -16, bottom: 4 }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} width={52} tickFormatter={(v) => activeMetric === "cost" ? `₹${v}` : `${v}`} />
-            <Tooltip cursor={{ fill: "rgba(0,0,0,0.04)" }} content={({ active, payload, label }) => {
+            <Tooltip cursor={false} content={({ active, payload, label }) => {
               if (!active || !payload?.length) return null;
               const row = payload[0].payload as TrendPoint;
               const val = activeMetric === "cost" ? row.cost : row.units;
@@ -299,7 +318,8 @@ function ChartSection({
               })}
             </Bar>
           </BarChart>
-        </ResponsiveContainer>
+          </ResponsiveContainer>
+        </div>
       )}
     </MeterSurface>
   );

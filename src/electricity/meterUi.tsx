@@ -659,12 +659,16 @@ export type MeterHeroDetail = {
 export function MeterSurface({
   children,
   className = "",
+  borderless = false,
 }: {
   children: ReactNode;
   className?: string;
+  borderless?: boolean;
 }) {
   return (
-    <div className={`rounded-2xl border border-gray-200/90 bg-white shadow-sm ${className}`}>
+    <div
+      className={`rounded-2xl bg-white ${borderless ? "" : "border border-gray-200/90 shadow-sm"} ${className}`}
+    >
       {children}
     </div>
   );

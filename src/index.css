@@ -1,1 +1,27 @@
 @import "tailwindcss";
+
+/* Recharts: suppress focus ring and tooltip cursor stroke on tap/click */
+.meter-charts,
+.meter-charts * {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.meter-charts .recharts-wrapper,
+.meter-charts .recharts-surface,
+.meter-charts .recharts-responsive-container,
+.meter-charts .recharts-wrapper:focus,
+.meter-charts .recharts-wrapper:focus-visible,
+.meter-charts .recharts-surface:focus,
+.meter-charts .recharts-surface:focus-visible,
+.meter-charts svg:focus,
+.meter-charts svg:focus-visible,
+.meter-charts path:focus,
+.meter-charts rect:focus {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.meter-charts .recharts-tooltip-cursor {
+  stroke: none !important;
+  stroke-width: 0 !important;
+}
