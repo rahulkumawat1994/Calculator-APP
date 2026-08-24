@@ -668,6 +668,21 @@ Gb`;
     });
   });
 
+  it("wo typo is treated as wp (two-line dot list + (50)wo)", () => {
+    const r = calculateTotal(
+      "69..60..61....82..84..89\n19..10...32..35..39(50)wo",
+    );
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(1100);
+    expect(r.results).toHaveLength(1);
+    expect(r.results[0]).toMatchObject({
+      rate: 50,
+      isWP: true,
+      count: 22,
+      lineTotal: 1100,
+    });
+  });
+
   it("glued 4-digit jodi typo splits: 43, 2384, 23 (30)wp → 43,23,84,23 WP = 6×30", () => {
     const r = calculateTotal("43, 2384, 23 (30)wp");
     expect(r.failedLines ?? []).toEqual([]);

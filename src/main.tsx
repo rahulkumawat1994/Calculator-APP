@@ -10,6 +10,7 @@ import { useReportIssuePush } from "@/hooks/useReportIssuePush";
 
 const StatementPage = lazy(() => import("./StatementPage"));
 const ElectricityPage = lazy(() => import("./ElectricityPage"));
+const LoansPage = lazy(() => import("./LoansPage"));
 
 function normalizeAppPathname(p: string): string {
   if (p === "/") return "/";
@@ -20,6 +21,7 @@ const path = normalizeAppPathname(window.location.pathname);
 const isAdminPath = path === "/admin" || path === "/audit";
 const isStatementPath = path === "/statement";
 const isMeterPath = path === "/meter";
+const isLoansPath = path === "/loans";
 
 function ReportPushHost() {
   useReportIssuePush();
@@ -55,6 +57,18 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
           }
         >
           <ElectricityPage />
+        </Suspense>
+      ) : isLoansPath ? (
+        <Suspense
+          fallback={
+            <div className="min-h-screen flex items-center justify-center bg-[#eef2f7] text-gray-600">
+              Loading…
+            </div>
+          }
+        >
+          <ProtectedAppSession>
+            <LoansPage />
+          </ProtectedAppSession>
         </Suspense>
       ) : (
         <App />

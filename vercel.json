@@ -12,6 +12,8 @@
     { "source": "/statement", "destination": "/index.html" },
     { "source": "/statement/", "destination": "/index.html" },
     { "source": "/meter", "destination": "/index.html" },
-    { "source": "/meter/", "destination": "/index.html" }
+    { "source": "/meter/", "destination": "/index.html" },
+    { "source": "/loans", "destination": "/index.html" },
+    { "source": "/loans/", "destination": "/index.html" }
   ]
 }

@@ -140,7 +140,8 @@ function normalizeWhatsAppBoldJodiMarkup(t: string): string {
       const stake = parseInt(b, 10);
       if (
         STAR_RATE_STAKES.has(stake) &&
-        (/^\s*$/.test(tail) || /^\s*(?:wpp?|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(tail))
+        (/^\s*$/.test(tail) ||
+          /^\s*(?:wpp?|wo|w\.?\s*[po]|w\s+[po]|ab|palat(?:e|el)?)\b/i.test(tail))
       ) {
         return full;
       }
@@ -157,8 +158,17 @@ function normalizeWhatsAppBoldJodiMarkup(t: string): string {
  * Best-effort cleanup for common typos / alternate keyboards before parsing.
  * Does not guess missing numbers; only normalizes separators and invisible chars.
  */
+/** WO and other W-flag typos → WP before parsing. */
+export function normalizeWpFlagTypos(s: string): string {
+  return s
+    .replace(/\bwo\b/gi, "wp")
+    .replace(/\bw\.o\b/gi, "wp")
+    .replace(/\bw\s+o\b/gi, "wp");
+}
+
 export function normalizeTypoTolerantInput(s: string): string {
   let t = s.normalize("NFKC");
+  t = normalizeWpFlagTypos(t);
   // User annotation: trailing "total NNN" or "totalNNN" (running cumulative note, not a bet field).
   t = t.replace(/\s*total\s*\d+\s*$/i, "");
   // Normalize en-dash and em-dash to hyphen so jodi chains parse uniformly.

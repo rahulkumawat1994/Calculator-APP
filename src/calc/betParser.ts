@@ -125,29 +125,28 @@ export function formatSegmentLineForPairListDisplay(segment: {
 }
 
 // ─── Flag detector ─────────────────────────────────────────────────────────────
-// WP keywords: "wp", "w.p", "palat", Hindi "पलट" (reverse/pair).
+// WP keywords: "wp", "wo" (typo), "w.p", "palat", Hindi "पलट" (reverse/pair).
 // AB keywords: letter 'a'/'b', OR Hindi "अब" (literally "ab").
 // Strip WP keywords first so "palat" (contains 'a') never accidentally triggers AB.
+
+/** WP / palat markers and common typos (WO, WPP, w-o, etc.). */
+export const WP_FLAG_RE =
+  /\b(?:wpp?|wo|w[pPoO][a-z]?|w\.?\s*[po]|w\s+[po]|palat(?:e|el)?)\b/i;
+
+export const WP_FLAG_RE_GLOBAL =
+  /\b(?:wpp?|wo|w[pPoO][a-z]?|w\.?\s*[po]|w\s+[po]|palat(?:e|el)?)\b/gi;
+
 function stripWpPalatWords(text: string): string {
   return (
     text
-      // `wpp` (common WhatsApp typo) before `wp`
-      .replace(/\bwpp?\b/gi, "")
-      .replace(/\bw\.?\s*p\b/gi, "")
-      .replace(/\bw\s+p\b/gi, "")
-      .replace(/\bpalat(?:e|el)?\b/gi, "")
+      .replace(WP_FLAG_RE_GLOBAL, "")
       .replace(/पलट/g, "")
       .trim()
   );
 }
 
 function parseFlags(text: string): { isWP: boolean; isDouble: boolean } {
-  const isWP =
-    /\bwpp?\b/i.test(text) ||
-    /\bw\.?\s*p\b/i.test(text) ||
-    /\bw\s+p\b/i.test(text) ||
-    /\bpalat(?:e|el)?\b/i.test(text) ||
-    /पलट/.test(text);
+  const isWP = WP_FLAG_RE.test(text) || /पलट/.test(text);
   const cleaned = stripWpPalatWords(text);
   const isDouble = /[ab]/i.test(cleaned) || /अब/.test(cleaned);
   return { isWP, isDouble };
@@ -197,10 +196,10 @@ function has3DigitBet(numbersText: string): boolean {
  */
 export function splitCommaGroupsAtPalatMarkers(line: string): string[] | null {
   if (!/,/.test(line)) return null;
-  if (!/(?:पलट|wpp?|w\.?\s*p|palat(?:e|el)?)/iu.test(line)) return null;
+  if (!/(?:पलट|wpp?|wo|w\.?\s*[po]|palat(?:e|el)?)/iu.test(line)) return null;
 
   const delimRe =
-    /(?:पलट\s*के\s*साथ|पलटके\s*साथ|पलट|wpp?|w\.?\s*p|palat(?:e|el)?)\s*,+(?=\d)/giu;
+    /(?:पलट\s*के\s*साथ|पलटके\s*साथ|पलट|wpp?|wo|w\.?\s*[po]|palat(?:e|el)?)\s*,+(?=\d)/giu;
   const chunks: string[] = [];
   let start = 0;
   let m: RegExpExecArray | null;
@@ -258,7 +257,7 @@ function trySolidRunSegment(
   const nt = numbersText.trim();
   if (!nt || !Number.isFinite(rate) || rate <= 0) return null;
   if (
-    /\b(?:wpp?|palat(?:e|el)?)\b/i.test(modifierSource) ||
+    /\b(?:wpp?|wo|w\.?\s*[po]|w\s+[po]|palat(?:e|el)?)\b/i.test(modifierSource) ||
     /पलट/.test(modifierSource)
   )
     return null;
@@ -579,7 +578,7 @@ export function processLine(
   // Last number before a flag keyword = rate; everything before = numbers.
   {
     const flagMatch = trimmed.match(
-      /\b(?:wpp?|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i,
+      /\b(?:wpp?|wo|w\.?\s*[po]|w\s+[po]|ab|palat(?:e|el)?)\b/i,
     );
     if (flagMatch && flagMatch.index !== undefined) {
       const beforeFlag = trimmed.slice(0, flagMatch.index).trim();

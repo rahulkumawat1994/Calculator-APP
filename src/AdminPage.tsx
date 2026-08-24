@@ -1124,6 +1124,12 @@ export default function AdminPage() {
                 >
                   Statement
                 </a>
+                <a
+                  href="/loans"
+                  className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-lg px-4 py-2.5 text-center text-[13px] font-semibold text-slate-500 transition-all hover:bg-white/60 hover:text-slate-800 sm:min-h-0 sm:flex-none sm:py-2"
+                >
+                  Loans
+                </a>
               </div>
             </div>
             <div className="flex w-full min-w-0 flex-col gap-3 sm:w-[min(100%,20rem)] sm:shrink-0 sm:items-stretch">

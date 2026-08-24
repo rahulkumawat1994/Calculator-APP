@@ -8,6 +8,8 @@
  *   sessions/{sessionId}  → SavedSession  (one doc per session)
  *   payments/{paymentId}  → PaymentRecord (one doc per payment)
  *   statementExtracts/{profileId}__{fingerprint}  → extracted statement rows (no PDF)
+ *   config/loanBorrowers → family borrowers list
+ *   loans/{borrowerId__loanId} → loan metadata + parsed schedule rows (no PDF)
  *
  * Sessions and payments each carry:
  *   date:    "DD/MM/YYYY"  — used for display and exact-match queries
@@ -42,6 +44,16 @@ import {
 } from "../statement/statementExtractStorage";
 import { DEFAULT_STATEMENT_PROFILE_ID } from "../statement/statementProfiles";
 import type { StatementProfile } from "../statement/statementProfiles";
+import type { LoanBorrower } from "../loans/loanBorrowers";
+import { DEFAULT_LOAN_BORROWER_ID } from "../loans/loanBorrowers";
+import type { LoanColumnId } from "../loans/loanColumns";
+import type { LoanScheduleRow } from "../loans/extractLoanScheduleFromPdf";
+import {
+  encodeLoanScheduleRowsForFirestore,
+  LOAN_ROWS_ENCODING_GZIP_CHUNKED,
+  LOAN_ROWS_PER_CHUNK,
+  MAX_SCHEDULE_ROWS_DECODE,
+} from "../loans/loanScheduleStorage";
 import { toastApiError } from "../lib/toast/apiToast";
 import { withFirestoreRetry } from "../lib/firestoreRetry";
 import type {
@@ -1149,6 +1161,335 @@ export async function saveElectricityReading(reading: ElectricityReading): Promi
 
 export async function deleteElectricityReading(id: string): Promise<void> {
   await deleteDoc(doc(db, "electricity_readings", id));
+}
+
+// ─── Loan borrowers (family members) ─────────────────────────────────────────
+
+export type LoanBorrowersCloudState = {
+  borrowers: LoanBorrower[];
+  activeBorrowerId: string;
+};
+
+function parseLoanBorrowersFromFirestore(data: DocumentData): LoanBorrower[] {
+  const raw = data.borrowers;
+  if (!Array.isArray(raw)) return [];
+  const out: LoanBorrower[] = [];
+  for (const x of raw) {
+    if (!x || typeof x !== "object") continue;
+    const o = x as Record<string, unknown>;
+    if (typeof o.id === "string" && typeof o.name === "string" && o.id.length > 0) {
+      out.push({ id: o.id, name: o.name.trim() || o.id });
+    }
+  }
+  if (!out.some((b) => b.id === DEFAULT_LOAN_BORROWER_ID)) {
+    out.unshift({ id: DEFAULT_LOAN_BORROWER_ID, name: "Me" });
+  }
+  return out;
+}
+
+export async function loadLoanBorrowersDB(): Promise<LoanBorrowersCloudState | null> {
+  try {
+    const snap = await withFirestoreRetry(() => getDoc(configRef("loanBorrowers")));
+    if (!snap.exists()) return null;
+    const borrowers = parseLoanBorrowersFromFirestore(snap.data());
+    if (borrowers.length === 0) return null;
+    const data = snap.data();
+    const activeRaw = data.activeBorrowerId;
+    const activeBorrowerId =
+      typeof activeRaw === "string" && activeRaw.trim().length > 0
+        ? activeRaw.trim()
+        : DEFAULT_LOAN_BORROWER_ID;
+    return { borrowers, activeBorrowerId };
+  } catch (e) {
+    console.error("loadLoanBorrowersDB failed:", e);
+    return null;
+  }
+}
+
+export async function saveLoanBorrowersDB(state: LoanBorrowersCloudState): Promise<void> {
+  try {
+    await setDoc(configRef("loanBorrowers"), {
+      borrowers: state.borrowers,
+      activeBorrowerId: state.activeBorrowerId,
+      updatedAtMs: Date.now(),
+    });
+  } catch (e) {
+    console.error("saveLoanBorrowersDB failed:", e);
+    throw e;
+  }
+}
+
+// ─── Loans (repayment schedule metadata + parsed rows) ───────────────────────
+
+export type LoanPartPaymentRecord = {
+  date: string;
+  amount: number;
+};
+
+export type LoanRecord = {
+  id: string;
+  borrowerId: string;
+  name: string;
+  lender: string;
+  loanType: string;
+  principal: number | null;
+  interestRate: number | null;
+  tenureMonths: number | null;
+  emiAmount: number | null;
+  columnOrder: LoanColumnId[];
+  columnBoundaries: number[] | null;
+  scheduleFileName: string | null;
+  scheduleRowCount: number;
+  scheduleFingerprint: string | null;
+  partPayments?: LoanPartPaymentRecord[];
+  createdAtMs: number;
+  updatedAtMs: number;
+  rows: LoanScheduleRow[];
+};
+
+function loanDocId(borrowerId: string, loanId: string): string {
+  return `${borrowerId.trim()}__${toDocId(loanId.trim())}`;
+}
+
+function parseLoanColumnOrder(raw: unknown): LoanColumnId[] {
+  if (!Array.isArray(raw)) return [];
+  const allowed = new Set([
+    "installmentNo",
+    "dueDate",
+    "installmentAmount",
+    "interest",
+    "principal",
+    "balancePrincipal",
+  ]);
+  return raw.filter((x): x is LoanColumnId => typeof x === "string" && allowed.has(x));
+}
+
+function parseLoanPartPayments(raw: unknown): LoanPartPaymentRecord[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: LoanPartPaymentRecord[] = [];
+  for (const x of raw) {
+    if (!x || typeof x !== "object") continue;
+    const o = x as Record<string, unknown>;
+    const date = typeof o.date === "string" ? o.date.trim() : "";
+    const amount = typeof o.amount === "number" && Number.isFinite(o.amount) ? o.amount : null;
+    if (date && amount != null && amount > 0) out.push({ date, amount });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+function parseLoanColumnBoundaries(raw: unknown): number[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out = raw.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+  return out.length >= 3 ? out : null;
+}
+
+async function loadLoanScheduleChunks(
+  loanDocIdStr: string,
+  maxChunks?: number,
+): Promise<string[]> {
+  const chunkColl = collection(db, "loans", loanDocIdStr, "scheduleChunks");
+  const snap = await withFirestoreTimeout(
+    withFirestoreRetry(() => getDocs(chunkColl)),
+  );
+  const sorted = snap.docs.sort((a, b) => Number(a.id) - Number(b.id));
+  const docs = maxChunks != null ? sorted.slice(0, maxChunks) : sorted;
+  return docs.map((d) => {
+    const data = d.data();
+    return typeof data.data === "string" ? data.data : "";
+  });
+}
+
+function hydrateLoanDoc(
+  docSnap: import("firebase/firestore").QueryDocumentSnapshot,
+): LoanRecord {
+  const data = docSnap.data();
+  const scheduleRowCount =
+    typeof data.scheduleRowCount === "number" ? data.scheduleRowCount : 0;
+  const numOrNull = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  return {
+    id: typeof data.loanId === "string" ? fromDocId(data.loanId) : fromDocId(docSnap.id.split("__").slice(1).join("__") || docSnap.id),
+    borrowerId: typeof data.borrowerId === "string" ? data.borrowerId : "",
+    name: typeof data.name === "string" ? data.name : "",
+    lender: typeof data.lender === "string" ? data.lender : "",
+    loanType: typeof data.loanType === "string" ? data.loanType : "",
+    principal: numOrNull(data.principal),
+    interestRate: numOrNull(data.interestRate),
+    tenureMonths: numOrNull(data.tenureMonths),
+    emiAmount: numOrNull(data.emiAmount),
+    columnOrder: parseLoanColumnOrder(data.columnOrder),
+    columnBoundaries: parseLoanColumnBoundaries(data.columnBoundaries),
+    scheduleFileName:
+      typeof data.scheduleFileName === "string" ? data.scheduleFileName : null,
+    scheduleRowCount,
+    scheduleFingerprint:
+      typeof data.scheduleFingerprint === "string" ? data.scheduleFingerprint : null,
+    partPayments: parseLoanPartPayments(data.partPayments),
+    createdAtMs: firestoreTimestampToMs(data.createdAtMs) ?? Date.now(),
+    updatedAtMs: firestoreTimestampToMs(data.updatedAtMs) ?? Date.now(),
+    rows: [],
+  };
+}
+
+export type LoanSchedulePayload = {
+  encoding?: string;
+  compressed?: string;
+  chunks?: string[];
+  scheduleRowCount: number;
+};
+
+/** One Firestore read: loan metadata + compressed schedule bytes (no decode). */
+export async function loadLoanDocForDetail(
+  borrowerId: string,
+  loanId: string,
+): Promise<{ meta: LoanRecord; payload: LoanSchedulePayload } | null> {
+  const trimmedBorrower = borrowerId.trim();
+  const trimmedLoan = loanId.trim();
+  if (!trimmedBorrower || !trimmedLoan) return null;
+  try {
+    const docId = loanDocId(trimmedBorrower, trimmedLoan);
+    const snap = await withFirestoreTimeout(
+      withFirestoreRetry(() => getDoc(doc(db, "loans", docId))),
+    );
+    if (!snap.exists()) return null;
+    const meta = hydrateLoanDoc(snap as import("firebase/firestore").QueryDocumentSnapshot);
+    const data = snap.data();
+    const encoding = typeof data.scheduleEncoding === "string" ? data.scheduleEncoding : undefined;
+    const compressed =
+      typeof data.scheduleCompressed === "string" ? data.scheduleCompressed : undefined;
+    const scheduleRowCount =
+      typeof data.scheduleRowCount === "number" ? data.scheduleRowCount : 0;
+    let chunks: string[] | undefined;
+    if (encoding === LOAN_ROWS_ENCODING_GZIP_CHUNKED) {
+      const maxChunks = Math.ceil(MAX_SCHEDULE_ROWS_DECODE / LOAN_ROWS_PER_CHUNK) + 1;
+      chunks = await loadLoanScheduleChunks(docId, maxChunks);
+    }
+    return {
+      meta,
+      payload: { encoding, compressed, chunks, scheduleRowCount },
+    };
+  } catch (e) {
+    console.error("loadLoanDocForDetail failed:", e);
+    toastApiError(e, "Could not load loan.", { toastId: "load-loan-detail" });
+    return null;
+  }
+}
+
+async function writeLoanScheduleChunks(loanDocIdStr: string, chunks: string[]): Promise<void> {
+  const chunkColl = collection(db, "loans", loanDocIdStr, "scheduleChunks");
+  const BATCH = 400;
+  for (let i = 0; i < chunks.length; i += BATCH) {
+    const slice = chunks.slice(i, i + BATCH);
+    await withFirestoreRetry(async () => {
+      const batch = writeBatch(db);
+      for (let j = 0; j < slice.length; j++) {
+        batch.set(doc(chunkColl, String(i + j)), { data: slice[j]! });
+      }
+      await batch.commit();
+    });
+  }
+}
+
+function withFirestoreTimeout<T>(promise: Promise<T>, ms = 25000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Firestore request timed out")), ms);
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
+  });
+}
+
+export async function loadLoansForBorrower(borrowerId: string): Promise<LoanRecord[]> {
+  const trimmed = borrowerId.trim();
+  if (!trimmed) return [];
+  try {
+    const snap = await withFirestoreTimeout(
+      withFirestoreRetry(() =>
+        getDocs(query(collection(db, "loans"), where("borrowerId", "==", trimmed))),
+      ),
+    );
+    const loans = snap.docs.map((d) => hydrateLoanDoc(d));
+    return loans.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+  } catch (e) {
+    console.error("loadLoansForBorrower failed:", e);
+    toastApiError(e, "Could not load loans.", { toastId: "load-loans" });
+    return [];
+  }
+}
+
+export async function loadLoanRecordWithSchedule(
+  borrowerId: string,
+  loanId: string,
+): Promise<LoanRecord | null> {
+  const result = await loadLoanDocForDetail(borrowerId, loanId);
+  if (!result) return null;
+  const { decodeLoanScheduleSafe } = await import("../loans/decodeLoanScheduleOffThread");
+  const rows = await decodeLoanScheduleSafe(
+    result.payload.encoding,
+    result.payload.compressed,
+    result.payload.chunks,
+    result.payload.scheduleRowCount,
+  );
+  return { ...result.meta, rows };
+}
+
+export async function saveLoanRecord(loan: Omit<LoanRecord, "createdAtMs" | "updatedAtMs"> & {
+  createdAtMs?: number;
+}): Promise<void> {
+  const docId = loanDocId(loan.borrowerId, loan.id);
+  const encoded = encodeLoanScheduleRowsForFirestore(loan.rows);
+  const now = Date.now();
+  const payload: DocumentData = stripUndefinedDeep({
+    borrowerId: loan.borrowerId,
+    loanId: loan.id,
+    name: loan.name,
+    lender: loan.lender,
+    loanType: loan.loanType,
+    principal: loan.principal,
+    interestRate: loan.interestRate,
+    tenureMonths: loan.tenureMonths,
+    emiAmount: loan.emiAmount,
+    columnOrder: loan.columnOrder,
+    columnBoundaries: loan.columnBoundaries,
+    scheduleFileName: loan.scheduleFileName,
+    scheduleRowCount: encoded.rowCount,
+    scheduleFingerprint: loan.scheduleFingerprint,
+    partPayments: loan.partPayments,
+    scheduleEncoding: encoded.encoding,
+    scheduleCompressed: encoded.compressed,
+    scheduleChunkCount: encoded.chunks?.length,
+    createdAtMs: loan.createdAtMs ?? now,
+    updatedAtMs: now,
+  }) as DocumentData;
+  await setDoc(doc(db, "loans", docId), payload);
+  if (encoded.chunks) {
+    await writeLoanScheduleChunks(docId, encoded.chunks);
+  }
+}
+
+export async function deleteLoanRecord(borrowerId: string, loanId: string): Promise<void> {
+  const docId = loanDocId(borrowerId, loanId);
+  const chunkColl = collection(db, "loans", docId, "scheduleChunks");
+  const chunks = await getDocs(chunkColl);
+  if (!chunks.empty) {
+    await withFirestoreRetry(async () => {
+      const batch = writeBatch(db);
+      chunks.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    });
+  }
+  await deleteDoc(doc(db, "loans", docId));
+}
+
+export async function deleteLoansForBorrower(borrowerId: string): Promise<void> {
+  const loans = await loadLoansForBorrower(borrowerId);
+  await Promise.all(loans.map((l) => deleteLoanRecord(borrowerId, l.id)));
 }
 
 // ─── One-time migration from old bulk-doc structure ───────────────────────────

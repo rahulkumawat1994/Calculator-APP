@@ -2,6 +2,7 @@ import {
   processLine,
   stripLeadingGameLabels,
   parseMultiXChainStructure,
+  WP_FLAG_RE,
   X_RATE_RE,
   SEP_RATE_RE,
 } from "./betParser";
@@ -241,7 +242,7 @@ function mergeCommaOnlyRateContinuationLine(lines: string[]): string[] {
     const rateOnly = /^\s*,+\s*(\d{1,5})\s*$/.exec(line);
     // WP-rate continuation: `(35)wp`, `35 wp`, `(35/wp` (already normalized by normalizeParenRateTypos).
     const wpRateOnly = !rateOnly
-      ? /^\s*\(?(\d{1,5})\)?\s*(wpp?|palat(?:e|el)?)\s*$/i.exec(line.trim())
+      ? /^\s*\(?(\d{1,5})\)?\s*(wpp?|wo|w\.?\s*[po]|palat(?:e|el)?)\s*$/i.exec(line.trim())
       : null;
     // Paren-rate continuation: `(15)` on its own line after a comma jodi list.
     const parenRateOnly = !rateOnly && !wpRateOnly
@@ -578,7 +579,7 @@ export function calculateTotal(text: string): CalculationResult {
       /\(\d+\)/.test(line) || X_RATE_RE.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
     const hasKnownFlag =
-      /\b(?:wpp?|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(line) || /पलट/.test(line);
+      WP_FLAG_RE.test(line) || /\bab\b/i.test(line) || /पलट/.test(line);
 
     // `B.1111x9999x50` must never absorb `pending` — glue would break the first `x`.
     const isSelfContainedMultiX = Boolean(parseMultiXChainStructure(line));
@@ -905,7 +906,7 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
       /\(\d+\)/.test(line) || X_RATE_RE.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
     const hasKnownFlag =
-      /\b(?:wpp?|w\.?\s*p|w\s+p|ab|palat(?:e|el)?)\b/i.test(line) || /पलट/.test(line);
+      WP_FLAG_RE.test(line) || /\bab\b/i.test(line) || /पलट/.test(line);
     const isSelfContainedMultiX = Boolean(parseMultiXChainStructure(line));
     const isHarfLine = /\b(?:haruf|harf|hrf)\b/i.test(line);
 
