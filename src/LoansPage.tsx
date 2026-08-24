@@ -1603,6 +1603,7 @@ export default function LoansPage() {
                                           <th className="px-2 py-1.5 text-left">EMI</th>
                                           <th className="px-2 py-1.5 text-left">Due date</th>
                                           <th className="px-2 py-1.5 text-right">Opening</th>
+                                          <th className="px-2 py-1.5 text-right">EMI</th>
                                           <th className="px-2 py-1.5 text-right">Interest</th>
                                           <th className="px-2 py-1.5 text-right">Principal</th>
                                           <th className="px-2 py-1.5 text-right">Extra</th>
@@ -1620,6 +1621,9 @@ export default function LoansPage() {
                                               {step.openingBalance > 0
                                                 ? formatLoanInr(step.openingBalance)
                                                 : "—"}
+                                            </td>
+                                            <td className="px-2 py-1 text-right tabular-nums">
+                                              {step.emi > 0 ? formatLoanInr(step.emi) : "—"}
                                             </td>
                                             <td className="px-2 py-1 text-right tabular-nums">
                                               {step.interest > 0 ? formatLoanInr(step.interest) : "—"}

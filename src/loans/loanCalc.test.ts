@@ -242,6 +242,24 @@ describe("buildPrepaymentPlan", () => {
     expect(firstExtra!.installmentNo).toBe(12);
   });
 
+  it("first extra payment row includes EMI breakdown, not only extra amount", () => {
+    const plan = buildPrepaymentPlan(homeLoanRows, {
+      rules: [{ afterInstallment: 18, amount: 100000, everyMonths: 0 }],
+      annualRatePercent: 8.5,
+      tenureMonths: 240,
+    });
+    expect(plan).not.toBeNull();
+    const row18 = plan!.schedulePreview.find((s) => s.installmentNo === 18);
+    expect(row18).not.toBeUndefined();
+    expect(row18!.emi).toBeGreaterThan(0);
+    expect(row18!.interest).toBeGreaterThan(0);
+    expect(row18!.principal).toBeGreaterThan(0);
+    expect(row18!.extraPrepay).toBe(100000);
+    expect(row18!.closingBalance).toBeLessThan(
+      row18!.openingBalance - row18!.principal - row18!.extraPrepay + 1,
+    );
+  });
+
   it("foreclosure closes loan with outstanding balance lump sum", () => {
     const plan = buildPrepaymentPlan(homeLoanRows, {
       rules: [{ afterInstallment: 24, amount: 0, everyMonths: 0, closeLoan: true }],
@@ -250,10 +268,14 @@ describe("buildPrepaymentPlan", () => {
     });
     expect(plan).not.toBeNull();
     expect(plan!.newRemainingMonths).toBe(0);
-    expect(plan!.newTotalInterest).toBe(0);
+    expect(plan!.newTotalInterest).toBeGreaterThan(0);
     expect(plan!.foreclosureLumpSum).toBeGreaterThan(0);
-    expect(plan!.interestSaved).toBe(plan!.originalTotalInterest);
+    expect(plan!.interestSaved).toBe(plan!.originalTotalInterest - plan!.newTotalInterest);
     expect(plan!.totalExtraPaid).toBe(plan!.foreclosureLumpSum);
+    const closeStep = plan!.schedulePreview.find((s) => s.installmentNo === 24);
+    expect(closeStep!.emi).toBeGreaterThan(0);
+    expect(closeStep!.interest).toBeGreaterThan(0);
+    expect(closeStep!.extraPrepay).toBe(plan!.foreclosureLumpSum);
   });
 
   it("combines one-time and recurring rules", () => {

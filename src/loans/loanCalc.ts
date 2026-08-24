@@ -1068,6 +1068,24 @@ function clampInstallment(tenure: number, installment: number): number {
   return Math.min(tenure, Math.max(1, Math.round(installment)));
 }
 
+function openingBalanceBeforeInstallment(
+  sorted: LoanScheduleRow[],
+  installmentNo: number,
+  emi: number,
+  fallbackMonthlyRate: number | null,
+): number | null {
+  if (installmentNo <= 1) return inferOpeningPrincipal(sorted);
+  return balanceAfterInstallment(sorted, installmentNo - 1, emi, fallbackMonthlyRate);
+}
+
+function scheduleRowIndexForInstallmentStart(
+  sorted: LoanScheduleRow[],
+  installmentNo: number,
+): number {
+  if (installmentNo <= 1) return 0;
+  return scheduleRowIndexAfterInstallment(sorted, installmentNo - 1);
+}
+
 function normalizePrepaymentRules(rules: PrepaymentRule[], tenure: number): PrepaymentRule[] {
   return rules
     .map((r) => ({
@@ -1111,32 +1129,6 @@ function extraFromRules(
   return Math.min(total, balanceAfterEmi);
 }
 
-function applyAnchorUpfrontExtras(
-  balance: number,
-  anchor: number,
-  rules: PrepaymentRule[],
-): { balance: number; upfrontExtra: number; closed: boolean } {
-  let b = balance;
-  let upfrontExtra = 0;
-  for (const rule of rules) {
-    if (rule.afterInstallment !== anchor) continue;
-    if (rule.closeLoan) {
-      upfrontExtra += b;
-      return { balance: 0, upfrontExtra, closed: true };
-    }
-    if (rule.everyMonths <= 0 && rule.amount > 0) {
-      const applied = Math.min(rule.amount, b);
-      b -= applied;
-      upfrontExtra += applied;
-    } else if (rule.everyMonths > 0 && rule.amount > 0) {
-      const applied = Math.min(rule.amount, b);
-      b -= applied;
-      upfrontExtra += applied;
-    }
-  }
-  return { balance: b, upfrontExtra, closed: b <= 0.5 };
-}
-
 export function buildPrepaymentPlan(
   rows: LoanScheduleRow[],
   input: PrepaymentPlanInput,
@@ -1159,26 +1151,25 @@ export function buildPrepaymentPlan(
     input.annualRatePercent,
     tenure,
   );
-  const startBalance = balanceAfterInstallment(
+  const simStartBalance = openingBalanceBeforeInstallment(
     sorted,
     anchor,
     emi,
     fallbackMonthlyRate,
   );
-  if (startBalance == null || startBalance <= 0) return null;
+  if (simStartBalance == null || simStartBalance <= 0) return null;
 
   const dateProjection = buildScheduleDateProjection(sorted);
-  const startRowIndex = scheduleRowIndexAfterInstallment(sorted, anchor);
-  const nextInstallment = anchor + 1;
+  const startRowIndex = scheduleRowIndexForInstallmentStart(sorted, anchor);
 
   const extraAtInstallment = (installmentNo: number, balanceAfterEmi: number) =>
     extraFromRules(installmentNo, balanceAfterEmi, rules);
 
   const baseline = simulateLoanWithPrepayments(
     sorted,
-    startBalance,
+    simStartBalance,
     startRowIndex,
-    nextInstallment,
+    anchor,
     emi,
     () => 0,
     fallbackMonthlyRate,
@@ -1187,57 +1178,48 @@ export function buildPrepaymentPlan(
     dateProjection,
   );
 
-  const anchorUpfront = applyAnchorUpfrontExtras(startBalance, anchor, rules);
+  const withPlan = simulateLoanWithPrepayments(
+    sorted,
+    simStartBalance,
+    startRowIndex,
+    anchor,
+    emi,
+    extraAtInstallment,
+    fallbackMonthlyRate,
+    true,
+    tenure,
+    dateProjection,
+  );
+
+  const totalExtraPaid = withPlan.totalExtraPaid;
   let foreclosureLumpSum: number | null = null;
-  if (anchorUpfront.closed) {
-    foreclosureLumpSum = startBalance;
+  const closeRule = rules.find((r) => r.closeLoan);
+  if (closeRule) {
+    const closeStep = withPlan.steps.find(
+      (s) => s.installmentNo === closeRule.afterInstallment && s.extraPrepay > 0,
+    );
+    if (closeStep) foreclosureLumpSum = closeStep.extraPrepay;
   }
 
-  const withPlan =
-    !anchorUpfront.closed && anchorUpfront.balance > 0.5
-      ? simulateLoanWithPrepayments(
-          sorted,
-          anchorUpfront.balance,
-          startRowIndex,
-          nextInstallment,
-          emi,
-          extraAtInstallment,
-          fallbackMonthlyRate,
-          true,
-          tenure,
-          dateProjection,
-        )
-      : { months: 0, totalInterest: 0, totalExtraPaid: 0, steps: [] };
-
-  const totalExtraPaid = anchorUpfront.upfrontExtra + withPlan.totalExtraPaid;
   const interestSaved = Math.max(0, baseline.totalInterest - withPlan.totalInterest);
   const monthsSaved = Math.max(0, baseline.months - withPlan.months);
-
-  const schedulePreview: PrepaymentPlanStep[] = [];
-  if (anchorUpfront.upfrontExtra > 0 || anchorUpfront.closed) {
-    schedulePreview.push({
-      installmentNo: anchor,
-      dueDate: projectedDueDate(anchor, sorted, dateProjection),
-      openingBalance: startBalance,
-      emi: 0,
-      interest: 0,
-      principal: 0,
-      extraPrepay: anchorUpfront.closed ? startBalance : anchorUpfront.upfrontExtra,
-      closingBalance: anchorUpfront.closed ? 0 : anchorUpfront.balance,
-    });
-  }
-  schedulePreview.push(...withPlan.steps);
+  const lastStep = withPlan.steps[withPlan.steps.length - 1];
+  const paidOffEarly =
+    lastStep != null &&
+    lastStep.closingBalance <= 0.5 &&
+    withPlan.months < baseline.months;
+  const newRemainingMonths = paidOffEarly ? 0 : withPlan.months;
 
   return {
     afterInstallment: anchor,
     interestSaved,
     monthsSaved,
     originalRemainingMonths: baseline.months,
-    newRemainingMonths: withPlan.months,
+    newRemainingMonths,
     originalTotalInterest: baseline.totalInterest,
     newTotalInterest: withPlan.totalInterest,
     totalExtraPaid,
     foreclosureLumpSum,
-    schedulePreview,
+    schedulePreview: withPlan.steps,
   };
 }
