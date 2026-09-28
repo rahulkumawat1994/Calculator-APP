@@ -211,8 +211,9 @@ export function normalizeTypoTolerantInput(s: string): string {
   // "NN/rate" with a slash (WhatsApp pastes: 43/10, 07/20, 27/120) — must run *before* slash→space below
   // so the rate is not split into a loose "NN DD" line. Whitelist the denominator to typical stakes
   // and avoid mistaking calendar fragments like 12/04 (→ would match rate 4 if we only used \d+).
+  // Skip when another slash-jodi follows (`14/15/46`, not `14` at rate `15`).
   t = t.replace(
-    /\b(\d{2})\/(5|10|15|20|25|30|40|50|100|120)\b/g,
+    /\b(\d{2})\/(5|10|15|20|25|30|40|50|100|120)\b(?!\s*\/\s*\d)/g,
     "$1x$2",
   );
   // Same whitelist as NN/stake above — avoids rewriting second jodis like `75-57intu10` (57 is not a stake).
@@ -235,6 +236,8 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/\b(\d{2})\.([1-9])\b/g, "$1x$2");
   // Between digits: `;` `|` `/` `\` or tabs often used instead of space (keep `,` for comma-rate lines)
   t = t.replace(/(?<=\d)[\t]*[;|/\\]+[\t]*(?=\d)/g, " ");
+  // Trailing slash before rate (`68/==25`) — not a jodi separator.
+  t = t.replace(/(?<=\d)\/+\s*(?==)/g, " ");
   // Matka / WhatsApp: `03=87=04=55=43=22=====5` — single `=` between jodis, multi-`=` before stake.
   // **Only** rewrite when the line has a multi-equals rate (`===`, `====`, …); otherwise
   // `60.06=10` or `41=30` must stay as NN×rate (do not treat `06=10` as two jodis).
@@ -270,9 +273,9 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/(?<=\d)\s*\u00B7\s*(?=\d)/g, " ");
   // Collapse runs of spaces
   t = t.replace(/ +/g, " ").trim();
-  // Meaningless suffix glued to rate (`==25FB`) or end of line.
-  t = t.replace(/([xX×=]+\s*\d+)\s*FB\b/gi, "$1");
-  t = t.replace(/\bFB\s*$/i, "");
+  // Meaningless suffix glued to rate (`==25FB`, `==50GL`) or end of line.
+  t = t.replace(/([xX×=]+\s*\d+)\s*(?:FB|GL)\b/gi, "$1");
+  t = t.replace(/\b(?:FB|GL)\s*$/i, "");
   return t;
 }
 

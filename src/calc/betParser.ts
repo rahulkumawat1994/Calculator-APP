@@ -146,7 +146,7 @@ function stripWpPalatWords(text: string): string {
 }
 
 /** Trailing tags on rates/lines that are not A/B/WP (e.g. player initials). */
-const MEANINGLESS_LINE_SUFFIX_RE = /\bFB\b/gi;
+const MEANINGLESS_LINE_SUFFIX_RE = /\b(?:FB|GL)\b/gi;
 
 function cleanLaneFlagSuffix(text: string): string {
   return stripWpPalatWords(text)

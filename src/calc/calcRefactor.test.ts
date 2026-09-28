@@ -85,6 +85,16 @@ describe("refactor: barrel vs direct module — identical results", () => {
     expect(total).toBe(50 + 50 + 60 + 150);
   });
 
+  it("slash jodi chains with ===rate ignore GL suffix", () => {
+    const text = [
+      "14/15/46===100",
+      "41/51/64==50GL",
+      "16/61/36/63/86/68/==25GL",
+    ].join("\n");
+    const { total } = fromBarrel.calculateTotal(text);
+    expect(total).toBe(300 + 150 + 150);
+  });
+
   it("text helpers match", () => {
     const raw = "[1/1, 2:00 pm] A: 43/10\n";
     expect(fromBarrel.preprocessText(raw)).toBe(preprocessDirect(raw));
