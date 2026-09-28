@@ -270,6 +270,9 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/(?<=\d)\s*\u00B7\s*(?=\d)/g, " ");
   // Collapse runs of spaces
   t = t.replace(/ +/g, " ").trim();
+  // Meaningless suffix glued to rate (`==25FB`) or end of line.
+  t = t.replace(/([xX×=]+\s*\d+)\s*FB\b/gi, "$1");
+  t = t.replace(/\bFB\s*$/i, "");
   return t;
 }
 

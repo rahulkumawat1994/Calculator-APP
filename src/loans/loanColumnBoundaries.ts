@@ -1,8 +1,10 @@
 import type { LoanColumnId } from "./loanColumns";
-
-const DATE_RE = /\b\d{2}[-/]\d{2}[-/]\d{4}\b|\b\d{4}[-/]\d{2}[-/]\d{2}\b/;
-const AMOUNT_RE = /\b\d{1,3}(?:,\d{3})*(?:\.\d{2})\b|\b\d+\.\d{2}\b/;
-const INST_NO_RE = /^\d{1,4}$/;
+import {
+  LOAN_SCHEDULE_AMOUNT_RE,
+  LOAN_SCHEDULE_DATE_RE,
+  LOAN_SCHEDULE_INST_NO_RE,
+  loanScheduleRowLooksLikeData,
+} from "./loanScheduleTextPatterns";
 
 export type LoanColumnBoundaries = number[];
 
@@ -177,9 +179,9 @@ export function detectBoundariesFromDataClusters(
       const mid = p.x + p.w / 2;
       const right = p.x + p.w;
       const t = p.str.trim();
-      if (DATE_RE.test(t)) dateXs.push(p.x);
-      else if (AMOUNT_RE.test(t)) amountXs.push(right);
-      else if (INST_NO_RE.test(t)) instXs.push(mid);
+      if (LOAN_SCHEDULE_DATE_RE.test(t)) dateXs.push(p.x);
+      else if (LOAN_SCHEDULE_AMOUNT_RE.test(t)) amountXs.push(right);
+      else if (LOAN_SCHEDULE_INST_NO_RE.test(t)) instXs.push(mid);
     }
   }
 

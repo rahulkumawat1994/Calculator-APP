@@ -394,7 +394,7 @@ export default function LoansPdfColumnGuideModal({
         setGuideCaches(caches);
         detectedRef.current = detected;
         const pageW = caches[0]?.pdfW ?? 600;
-        const hasUserBounds = draftRef.current.length === columnOrder.length + 1;
+        const hasUserBounds = columnBoundaries.length === columnOrder.length + 1;
         const next = hasUserBounds
           ? rescaleBoundaries(draftRef.current, pageW)
           : clampBoundaries(detected, pageW);

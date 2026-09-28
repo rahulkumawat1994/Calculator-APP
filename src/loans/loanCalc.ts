@@ -114,6 +114,254 @@ export function sortedScheduleRows(rows: LoanScheduleRow[]): LoanScheduleRow[] {
   });
 }
 
+function installmentIndexForRow(row: LoanScheduleRow, fallback: number): number {
+  const n = Number.parseInt(row.installmentNo.trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** One row per installment — avoids double-counting duplicate PDF rows. */
+export function dedupeScheduleByInstallment(rows: LoanScheduleRow[]): LoanScheduleRow[] {
+  const sorted = sortedScheduleRows(rows);
+  const byInst = new Map<number, LoanScheduleRow>();
+  let fallback = 0;
+  for (const r of sorted) {
+    fallback += 1;
+    const n = installmentIndexForRow(r, fallback);
+    const cur = byInst.get(n);
+    if (!cur) {
+      byInst.set(n, r);
+      continue;
+    }
+    const score = (row: LoanScheduleRow) =>
+      parseLoanMoney(row.installmentAmount) +
+      parseLoanMoney(row.interest) +
+      parseLoanMoney(row.principal) +
+      rowPartPaymentAmount(row);
+    if (score(r) >= score(cur)) byInst.set(n, r);
+  }
+  return [...byInst.entries()].sort((a, b) => a[0] - b[0]).map(([, row]) => row);
+}
+
+function scheduleRowAtInstallment(
+  sorted: LoanScheduleRow[],
+  installmentNo: number,
+): LoanScheduleRow | null {
+  for (const r of sorted) {
+    const n = Number.parseInt(r.installmentNo.trim(), 10);
+    if (Number.isFinite(n) && n === installmentNo) return r;
+  }
+  if (installmentNo >= 1 && installmentNo <= sorted.length) {
+    const r = sorted[installmentNo - 1];
+    if (r && installmentIndexForRow(r, installmentNo) === installmentNo) return r;
+  }
+  return null;
+}
+
+export type ScheduleColumnAmountMeaning = "periodic" | "cumulative";
+
+/** Detect running-total columns (common on bank PDF interest summaries). */
+export function detectColumnAmountMeaning(
+  sorted: LoanScheduleRow[],
+  field: "interest" | "principal",
+): ScheduleColumnAmountMeaning {
+  if (field === "principal") return "periodic";
+  if (sorted.length < 3) return "periodic";
+  const vals: number[] = [];
+  for (const r of sorted) {
+    const v = parseLoanMoney(r[field]);
+    if (v > 0) vals.push(v);
+  }
+  if (vals.length < 3) return "periodic";
+  let increases = 0;
+  for (let i = 1; i < vals.length; i++) {
+    if (vals[i]! >= vals[i - 1]! - 0.01) increases += 1;
+  }
+  const sum = vals.reduce((a, b) => a + b, 0);
+  const last = vals[vals.length - 1]!;
+  if (increases >= vals.length - 2 && last > sum * 0.45 && last > vals[0]! * 2) {
+    return "cumulative";
+  }
+  if (increases >= vals.length - 2 && last < sum * 0.85 && last > vals[0]! * 1.5) {
+    return "cumulative";
+  }
+  return "periodic";
+}
+
+function scheduleAmountTotal(
+  sorted: LoanScheduleRow[],
+  field: "interest" | "principal",
+  meaning: ScheduleColumnAmountMeaning,
+): number {
+  if (meaning === "cumulative") {
+    let last = 0;
+    for (const r of sorted) {
+      const v = parseLoanMoney(r[field]);
+      if (v > last) last = v;
+    }
+    return last;
+  }
+  let total = 0;
+  for (const r of sorted) {
+    total +=
+      field === "principal" ? rowTotalPrincipal(r) : parseLoanMoney(r[field]);
+  }
+  return total;
+}
+
+function scheduleAmountThroughInstallment(
+  sorted: LoanScheduleRow[],
+  throughInstallment: number,
+  field: "interest" | "principal",
+  meaning: ScheduleColumnAmountMeaning,
+): number {
+  if (meaning === "cumulative") {
+    const row = scheduleRowAtInstallment(sorted, throughInstallment);
+    if (row) {
+      if (field === "principal") {
+        return parseLoanMoney(row.principal) + rowPartPaymentAmount(row);
+      }
+      return parseLoanMoney(row[field]);
+    }
+  }
+  let total = 0;
+  for (let n = 1; n <= throughInstallment; n++) {
+    const row = scheduleRowAtInstallment(sorted, n);
+    if (!row) continue;
+    total +=
+      field === "principal" ? rowTotalPrincipal(row) : parseLoanMoney(row[field]);
+  }
+  return total;
+}
+
+function closingBalanceAfterRow(
+  row: LoanScheduleRow,
+  balanceMeaning: "closing" | "opening",
+): number {
+  const bal = parseLoanMoney(row.balancePrincipal);
+  if (balanceMeaning === "opening") {
+    return Math.max(0, bal - rowTotalPrincipal(row));
+  }
+  return bal;
+}
+
+function scheduleOpeningBalance(
+  sorted: LoanScheduleRow[],
+  balanceMeaning: "closing" | "opening",
+): number | null {
+  const row0 = sorted[0];
+  if (!row0) return null;
+  const row0Bal = parseLoanMoney(row0.balancePrincipal);
+  const row1 = scheduleRowAtInstallment(sorted, 2);
+  if (row0Bal > 0 && row1) {
+    const row1Bal = parseLoanMoney(row1.balancePrincipal);
+    const row0Prin = rowTotalPrincipal(row0);
+    const tol = Math.max(2, row0Bal * 0.001);
+    if (Math.abs(row0Bal - row0Prin - row1Bal) < tol) return row0Bal;
+    if (Math.abs(row0Bal + row0Prin - row1Bal) < tol) return row0Bal + row0Prin;
+  }
+  return openingBalanceForRow(sorted, 0, balanceMeaning);
+}
+
+/** Outstanding principal after `installmentNo` EMIs have been paid. */
+function outstandingBalanceAfterInstallment(
+  sorted: LoanScheduleRow[],
+  installmentNo: number,
+  balanceMeaning: "closing" | "opening",
+): number | null {
+  if (installmentNo <= 0) {
+    return scheduleOpeningBalance(sorted, balanceMeaning);
+  }
+
+  const paidRow = scheduleRowAtInstallment(sorted, installmentNo);
+  const nextRow = scheduleRowAtInstallment(sorted, installmentNo + 1);
+  if (paidRow && nextRow) {
+    const paidBal = parseLoanMoney(paidRow.balancePrincipal);
+    const nextBal = parseLoanMoney(nextRow.balancePrincipal);
+    const paidThrough = rowTotalPrincipal(paidRow);
+    const tol = Math.max(2, paidBal * 0.001);
+    if (
+      paidBal > 0 &&
+      nextBal > 0 &&
+      Math.abs(paidBal - paidThrough - nextBal) < tol
+    ) {
+      return nextBal;
+    }
+  }
+
+  if (
+    balanceMeaning === "opening" &&
+    nextRow &&
+    parseLoanMoney(nextRow.balancePrincipal) > 0
+  ) {
+    return parseLoanMoney(nextRow.balancePrincipal);
+  }
+  if (!paidRow) return null;
+  return closingBalanceAfterRow(paidRow, balanceMeaning);
+}
+
+/** Paid vs remaining totals from parsed schedule rows (not re-simulated EMI math). */
+function aggregateScheduleProgress(
+  sorted: LoanScheduleRow[],
+  paidInstallments: number,
+  balanceMeaning: "closing" | "opening",
+  interestMeaning: ScheduleColumnAmountMeaning,
+  principalMeaning: ScheduleColumnAmountMeaning,
+): {
+  principalPaid: number;
+  interestPaid: number;
+  principalRemaining: number;
+  interestRemaining: number;
+  currentBalance: number | null;
+  scheduleOpening: number | null;
+} {
+  const scheduleOpening = scheduleOpeningBalance(sorted, balanceMeaning);
+
+  const interestPaid = scheduleAmountThroughInstallment(
+    sorted,
+    paidInstallments,
+    "interest",
+    interestMeaning,
+  );
+
+  const currentBalance = outstandingBalanceAfterInstallment(
+    sorted,
+    paidInstallments,
+    balanceMeaning,
+  );
+
+  let principalPaid = scheduleAmountThroughInstallment(
+    sorted,
+    paidInstallments,
+    "principal",
+    principalMeaning,
+  );
+  if (
+    principalPaid <= 0 &&
+    scheduleOpening != null &&
+    currentBalance != null
+  ) {
+    principalPaid = Math.max(0, scheduleOpening - currentBalance);
+  }
+
+  const totalInterest = scheduleAmountTotal(sorted, "interest", interestMeaning);
+  const interestRemaining = Math.max(0, totalInterest - interestPaid);
+  const principalRemaining =
+    currentBalance != null
+      ? currentBalance
+      : scheduleOpening != null
+        ? Math.max(0, scheduleOpening - principalPaid)
+        : 0;
+
+  return {
+    principalPaid,
+    interestPaid,
+    principalRemaining,
+    interestRemaining,
+    currentBalance,
+    scheduleOpening,
+  };
+}
+
 export function inferOpeningPrincipal(sorted: LoanScheduleRow[]): number | null {
   return openingBalanceForRow(sorted, 0);
 }
@@ -144,20 +392,31 @@ export function openingBalanceForRow(
 
 /** Detect whether balance column is closing (after EMI) or opening (before EMI). */
 export function detectBalanceColumnMeaning(sorted: LoanScheduleRow[]): "closing" | "opening" {
-  if (sorted.length < 2) return "closing";
+  const byInst = dedupeScheduleByInstallment(sorted);
+  if (byInst.length < 2) return "closing";
   let closingVotes = 0;
   let openingVotes = 0;
-  for (let i = 1; i < sorted.length; i++) {
-    const prevBal = parseLoanMoney(sorted[i - 1]!.balancePrincipal);
-    const prevPrin = parseLoanMoney(sorted[i - 1]!.principal);
-    const curBal = parseLoanMoney(sorted[i]!.balancePrincipal);
-    const curPrin = parseLoanMoney(sorted[i]!.principal);
+  for (let i = 1; i < byInst.length; i++) {
+    const prev = byInst[i - 1]!;
+    const cur = byInst[i]!;
+    const prevN = installmentIndexForRow(prev, i);
+    const curN = installmentIndexForRow(cur, i + 1);
+    if (curN !== prevN + 1) continue;
+    const prevBal = parseLoanMoney(prev.balancePrincipal);
+    const prevPrin = rowTotalPrincipal(prev);
+    const curBal = parseLoanMoney(cur.balancePrincipal);
+    const curPrin = rowTotalPrincipal(cur);
+    const tol = Math.max(2, prevBal * 0.001);
     if (prevBal > 0 && curPrin > 0) {
-      if (Math.abs(prevBal - curPrin - curBal) < 2) closingVotes += 1;
-      if (Math.abs(prevBal - prevPrin - curBal) < 2) openingVotes += 1;
+      if (Math.abs(prevBal - curPrin - curBal) < tol) closingVotes += 1;
+      if (Math.abs(prevBal - prevPrin - curBal) < tol) openingVotes += 1;
     }
   }
-  return openingVotes > closingVotes ? "opening" : "closing";
+  return openingVotes > closingVotes
+    ? "opening"
+    : closingVotes > openingVotes
+      ? "closing"
+      : "opening";
 }
 
 function rowImpliedAnnualRate(sorted: LoanScheduleRow[], index: number): number | null {
@@ -234,22 +493,27 @@ export function estimateAnnualRateFromSchedule(
 }
 
 export function computeLoanScheduleAnalytics(rows: LoanScheduleRow[]): LoanScheduleAnalytics {
-  const valid = sortedScheduleRows(rows);
-  let totalInstallmentAmount = 0;
-  let totalInterest = 0;
-  let totalPrincipal = 0;
-  const todayMs = Date.now();
+  const valid = dedupeScheduleByInstallment(rows);
+  const interestMeaning = detectColumnAmountMeaning(valid, "interest");
+  const principalMeaning = detectColumnAmountMeaning(valid, "principal");
+  const balanceMeaning = detectBalanceColumnMeaning(valid);
 
+  let totalInstallmentAmount = 0;
   for (const r of valid) {
     totalInstallmentAmount += parseLoanMoney(r.installmentAmount);
-    totalInterest += parseLoanMoney(r.interest);
-    totalPrincipal += parseLoanMoney(r.principal);
   }
+  const totalInterest = scheduleAmountTotal(valid, "interest", interestMeaning);
+  const totalPrincipal = scheduleAmountTotal(valid, "principal", principalMeaning);
 
-  const openingPrincipal = inferOpeningPrincipal(valid);
-  const lastBalance = [...valid].reverse().find((r) => r.balancePrincipal.trim());
-  const closingBalance = lastBalance ? parseLoanMoney(lastBalance.balancePrincipal) : null;
+  const scheduleOpening = scheduleOpeningBalance(valid, balanceMeaning);
+  const openingPrincipal =
+    scheduleOpening ?? inferOpeningPrincipal(valid) ?? null;
+  const lastRow = valid.length > 0 ? valid[valid.length - 1] : null;
+  const closingBalance = lastRow?.balancePrincipal.trim()
+    ? closingBalanceAfterRow(lastRow, balanceMeaning)
+    : null;
 
+  const todayMs = Date.now();
   let nextDueDate: string | null = null;
   let nextInstallmentNo: string | null = null;
   let nextEmiAmount: number | null = null;
@@ -272,7 +536,13 @@ export function computeLoanScheduleAnalytics(rows: LoanScheduleRow[]): LoanSched
   }
 
   const installmentCount = valid.length;
-  const avgEmi = installmentCount > 0 ? totalInstallmentAmount / installmentCount : 0;
+  const scheduleEmi = typicalEmiFromSchedule(valid);
+  const avgEmi =
+    scheduleEmi > 0
+      ? scheduleEmi
+      : installmentCount > 0
+        ? totalInstallmentAmount / installmentCount
+        : 0;
 
   return {
     installmentCount,
@@ -314,9 +584,10 @@ export type LoanProgressAnalytics = {
 };
 
 function countPaidInstallmentsByDueDate(rows: LoanScheduleRow[]): number {
+  const deduped = dedupeScheduleByInstallment(rows);
   const todayMs = Date.now();
   let paid = 0;
-  for (const r of rows) {
+  for (const r of deduped) {
     const dueMs = dueDateMsForScheduleRow(r);
     if (dueMs != null && dueMs < todayMs - 86400000) paid += 1;
   }
@@ -445,6 +716,82 @@ export function rowTotalPrincipal(row: LoanScheduleRow): number {
   return parseLoanMoney(row.principal) + rowPartPaymentAmount(row);
 }
 
+export type LoanScheduleRangeSummary = {
+  rowCount: number;
+  totalEmi: number;
+  totalInterest: number;
+  totalPrincipal: number;
+  totalPartPayment: number;
+};
+
+function isoDateStartMs(iso: string): number | null {
+  const m = iso.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]) - 1;
+  const d = Number(m[3]);
+  if (![y, mo, d].every((n) => Number.isFinite(n))) return null;
+  const dt = new Date(y, mo, d, 0, 0, 0, 0);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo || dt.getDate() !== d) return null;
+  return dt.getTime();
+}
+
+function isoDateEndMs(iso: string): number | null {
+  const start = isoDateStartMs(iso);
+  if (start == null) return null;
+  const dt = new Date(start);
+  return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 23, 59, 59, 999).getTime();
+}
+
+/** Keep rows whose due date falls within inclusive ISO date bounds (`YYYY-MM-DD`). */
+export function filterLoanScheduleRowsByDateRange(
+  rows: LoanScheduleRow[],
+  dateFrom: string,
+  dateTo: string,
+): LoanScheduleRow[] {
+  let fromMs = isoDateStartMs(dateFrom);
+  let toMs = isoDateEndMs(dateTo);
+  if (fromMs != null && toMs != null && fromMs > toMs) {
+    const lo = isoDateStartMs(dateTo);
+    const hi = isoDateEndMs(dateFrom);
+    if (lo != null && hi != null) {
+      fromMs = lo;
+      toMs = hi;
+    }
+  }
+  const sorted = sortedScheduleRows(rows);
+  if (fromMs == null && toMs == null) return sorted;
+
+  return sorted.filter((r) => {
+    const ms = dueDateMsForScheduleRow(r);
+    if (ms == null) return true;
+    if (fromMs != null && ms < fromMs) return false;
+    if (toMs != null && ms > toMs) return false;
+    return true;
+  });
+}
+
+export function summarizeLoanScheduleRows(rows: LoanScheduleRow[]): LoanScheduleRangeSummary {
+  const sorted = dedupeScheduleByInstallment(rows);
+  let totalEmi = 0;
+  let totalInterest = 0;
+  let totalPrincipal = 0;
+  let totalPartPayment = 0;
+  for (const r of sorted) {
+    totalEmi += parseLoanMoney(r.installmentAmount);
+    totalInterest += parseLoanMoney(r.interest);
+    totalPrincipal += parseLoanMoney(r.principal);
+    totalPartPayment += rowPartPaymentAmount(r);
+  }
+  return {
+    rowCount: sorted.length,
+    totalEmi,
+    totalInterest,
+    totalPrincipal,
+    totalPartPayment,
+  };
+}
+
 /** Split legacy rows where part payment was merged into installment/principal columns. */
 export function repairLegacyPartPaymentRows(
   rows: LoanScheduleRow[],
@@ -571,38 +918,36 @@ export function computeLoanDetailSummary(
   tenureMonths?: number,
   options?: LoanDetailSummaryOptions,
 ): { analytics: LoanScheduleAnalytics; progress: LoanProgressAnalytics } {
-  const sorted = sortedScheduleRows(rows);
+  const sorted = dedupeScheduleByInstallment(rows);
   const n = sorted.length;
+  const maxInstOnSchedule =
+    n > 0
+      ? Math.max(...sorted.map((r, i) => installmentIndexForRow(r, i + 1)))
+      : 0;
   const totalInstallments =
-    tenureMonths != null && tenureMonths > n ? tenureMonths : n;
-  const paidByDueDate = countPaidInstallmentsByDueDate(sorted);
+    tenureMonths != null && tenureMonths > maxInstOnSchedule
+      ? tenureMonths
+      : maxInstOnSchedule || n;
+  const paidByDueDate = countPaidInstallmentsByDueDate(rows);
   const paidInstallments =
     paidInstallmentsOverride != null && Number.isFinite(paidInstallmentsOverride)
       ? Math.min(totalInstallments, Math.max(0, Math.round(paidInstallmentsOverride)))
       : paidByDueDate;
 
+  const balanceMeaning = detectBalanceColumnMeaning(sorted);
+  const interestMeaning = detectColumnAmountMeaning(sorted, "interest");
+  const principalMeaning = detectColumnAmountMeaning(sorted, "principal");
+
   let totalInstallmentAmount = 0;
-  let totalInterest = 0;
-  let totalPrincipal = 0;
   const todayMs = Date.now();
   let nextDueDate: string | null = null;
   let nextInstallmentNo: string | null = null;
   let nextEmiAmount: number | null = null;
   let remainingInstallments = 0;
-  const referenceEmi =
-    options?.emiAmount != null && options.emiAmount > 0
-      ? options.emiAmount
-      : typicalEmiFromSchedule(sorted);
+  const scheduleEmi = typicalEmiFromSchedule(sorted);
 
-  for (let i = 0; i < n; i++) {
-    const r = sorted[i]!;
-    const emi = parseLoanMoney(r.installmentAmount);
-    const partPay = rowPartPaymentAmount(r);
-    const interest = parseLoanMoney(r.interest);
-    const principal = rowTotalPrincipal(r);
-    totalInstallmentAmount += emi + partPay;
-    totalInterest += interest;
-    totalPrincipal += principal;
+  for (const r of sorted) {
+    totalInstallmentAmount += parseLoanMoney(r.installmentAmount);
     const dueMs = dueDateMsForScheduleRow(r);
     const balance = parseLoanMoney(r.balancePrincipal);
     if (dueMs != null && dueMs >= todayMs - 86400000) {
@@ -610,73 +955,63 @@ export function computeLoanDetailSummary(
       if (!nextDueDate) {
         nextDueDate = r.dueDate.trim();
         nextInstallmentNo = r.installmentNo.trim() || null;
-        const nextEmi = referenceEmi > 0 ? referenceEmi : emi;
-        nextEmiAmount = nextEmi > 0 ? nextEmi : null;
+        const emi = parseLoanMoney(r.installmentAmount);
+        nextEmiAmount = emi > 0 ? emi : scheduleEmi > 0 ? scheduleEmi : null;
       }
     } else if (balance > 0 && !r.dueDate.trim()) {
       remainingInstallments += 1;
     }
   }
 
-  const opening =
+  const scheduleOpening = scheduleOpeningBalance(sorted, balanceMeaning);
+  const savedOpening =
     options?.openingPrincipal != null && options.openingPrincipal > 0
       ? options.openingPrincipal
-      : inferOpeningPrincipal(sorted);
+      : null;
+  const displayOpening =
+    scheduleOpening != null && scheduleOpening > 0
+      ? scheduleOpening
+      : savedOpening ?? inferOpeningPrincipal(sorted);
+
   const lastRow = n > 0 ? sorted[n - 1] : null;
   const closingBalance = lastRow?.balancePrincipal.trim()
-    ? parseLoanMoney(lastRow.balancePrincipal)
+    ? closingBalanceAfterRow(lastRow, balanceMeaning)
     : null;
-  const avgEmi = referenceEmi > 0 ? referenceEmi : n > 0 ? totalInstallmentAmount / n : 0;
-  const balanceMeaning = detectBalanceColumnMeaning(sorted);
+
+  let totalInterest = scheduleAmountTotal(sorted, "interest", interestMeaning);
+  let totalPrincipal = scheduleAmountTotal(sorted, "principal", principalMeaning);
+  if (displayOpening != null && closingBalance != null) {
+    totalPrincipal = Math.max(totalPrincipal, displayOpening - closingBalance);
+  }
+
+  const avgEmi =
+    scheduleEmi > 0
+      ? scheduleEmi
+      : n > 0
+        ? totalInstallmentAmount / n
+        : options?.emiAmount != null && options.emiAmount > 0
+          ? options.emiAmount
+          : 0;
+
   const estimatedAnnualRate =
     savedRate != null && savedRate > 0
       ? savedRate
       : estimateAnnualRateFromSchedule(sorted, tenureMonths ?? n);
 
-  const startDateMs = sorted[0] ? dueDateMsForScheduleRow(sorted[0]) : null;
-  let principalPaid = 0;
-  let interestPaid = 0;
-  let currentBalance: number | null = opening;
-
-  if (
-    opening != null &&
-    opening > 0 &&
-    referenceEmi > 0 &&
-    estimatedAnnualRate != null &&
-    estimatedAnnualRate > 0
-  ) {
-    const sim = simulateLoanProgressAsOf({
-      openingPrincipal: opening,
-      annualRatePercent: estimatedAnnualRate,
-      emi: referenceEmi,
-      tenureMonths: totalInstallments,
-      startDateMs,
-      partPayments: options?.partPayments,
-    });
-    principalPaid = sim.principalPaid;
-    interestPaid = sim.interestPaid;
-    currentBalance = sim.balance;
-  } else {
-    for (let i = 0; i < n; i++) {
-      const r = sorted[i]!;
-      const interest = parseLoanMoney(r.interest);
-      const principal = rowTotalPrincipal(r);
-      if (i < paidInstallments) {
-        principalPaid += principal;
-        interestPaid += interest;
-      }
-    }
-    if (paidInstallments > 0 && paidInstallments <= n) {
-      const row = sorted[paidInstallments - 1]!;
-      const bal = parseLoanMoney(row.balancePrincipal);
-      const prin = rowTotalPrincipal(row);
-      currentBalance =
-        balanceMeaning === "opening" ? Math.max(0, bal - prin) : bal;
-    }
-  }
-
-  const principalRemaining = Math.max(0, totalPrincipal - principalPaid);
-  const interestRemaining = Math.max(0, totalInterest - interestPaid);
+  const scheduleTotals = aggregateScheduleProgress(
+    sorted,
+    paidInstallments,
+    balanceMeaning,
+    interestMeaning,
+    principalMeaning,
+  );
+  const {
+    principalPaid,
+    interestPaid,
+    principalRemaining,
+    interestRemaining,
+    currentBalance,
+  } = scheduleTotals;
 
   const emisRemaining = Math.max(0, totalInstallments - paidInstallments);
   const completionPercent =
@@ -687,7 +1022,7 @@ export function computeLoanDetailSummary(
     totalInstallmentAmount,
     totalInterest,
     totalPrincipal,
-    openingPrincipal: opening,
+    openingPrincipal: displayOpening,
     closingBalance,
     avgEmi,
     nextDueDate,
@@ -709,7 +1044,10 @@ export function computeLoanDetailSummary(
     interestRemaining,
     totalRemaining: principalRemaining + interestRemaining,
     estimatedAnnualRate,
-    currentBalance: currentBalance != null && currentBalance >= 0 ? currentBalance : opening,
+    currentBalance:
+      currentBalance != null && currentBalance >= 0
+        ? currentBalance
+        : displayOpening,
   };
 
   return { analytics, progress };
@@ -726,8 +1064,7 @@ export function deriveLoanMetaFromSchedule(rows: LoanScheduleRow[]): {
     return { principal: null, emiAmount: null, tenureMonths: null, interestRate: null };
   }
   const analytics = computeLoanScheduleAnalytics(prepared.rows);
-  const first = prepared.rows[0];
-  const emi = first ? parseLoanMoney(first.installmentAmount) : typicalEmiFromSchedule(prepared.rows);
+  const emi = typicalEmiFromSchedule(prepared.rows);
   const principal =
     analytics.openingPrincipal ??
     (analytics.closingBalance != null && analytics.totalPrincipal > 0

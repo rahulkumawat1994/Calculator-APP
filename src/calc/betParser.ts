@@ -145,10 +145,26 @@ function stripWpPalatWords(text: string): string {
   );
 }
 
+/** Trailing tags on rates/lines that are not A/B/WP (e.g. player initials). */
+const MEANINGLESS_LINE_SUFFIX_RE = /\bFB\b/gi;
+
+function cleanLaneFlagSuffix(text: string): string {
+  return stripWpPalatWords(text)
+    .replace(MEANINGLESS_LINE_SUFFIX_RE, "")
+    .replace(/[,.\s]+/g, " ")
+    .trim();
+}
+
 function parseFlags(text: string): { isWP: boolean; isDouble: boolean } {
   const isWP = WP_FLAG_RE.test(text) || /पलट/.test(text);
-  const cleaned = stripWpPalatWords(text);
-  const isDouble = /[ab]/i.test(cleaned) || /अब/.test(cleaned);
+  const cleaned = cleanLaneFlagSuffix(text);
+  if (!cleaned) return { isWP, isDouble: false };
+  const isDouble =
+    /अब/.test(cleaned) ||
+    /\bAB\b/i.test(cleaned) ||
+    /^A$/i.test(cleaned) ||
+    /^B$/i.test(cleaned) ||
+    (/\bA\b/i.test(cleaned) && /\bB\b/i.test(cleaned));
   return { isWP, isDouble };
 }
 
@@ -166,9 +182,7 @@ function laneForNonSolid(
 }
 
 export function parseLaneFromFlagText(text: string): BetLane | undefined {
-  const cleaned = stripWpPalatWords(text)
-    .replace(/[,.\s]+/g, " ")
-    .trim();
+  const cleaned = cleanLaneFlagSuffix(text).trim();
   if (!cleaned) return undefined;
   if (/अब/.test(cleaned)) return "AB";
   const alpha = cleaned.replace(/[^a-zA-Z]/g, "");

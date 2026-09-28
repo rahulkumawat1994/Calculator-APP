@@ -31,7 +31,7 @@ export const LOAN_COLUMN_HEADER_PATTERNS: Record<LoanColumnId, RegExp> = {
     /\b(?:INSTALLMENT\s*NO\.?|INST\.?\s*NO\.?|SR\.?\s*NO\.?|S\.?\s*NO\.?|#\s*NO\.?)\b/i,
   dueDate: /\b(?:DUE\s*DATE|SCH\.?\s*DATE|REPAYMENT\s*DATE)\b/i,
   installmentAmount:
-    /\b(?:INSTALLMENT\s*(?:AMT\.?|AMOUNT)|EMI\s*AMT\.?|EMI\s*AMOUNT|TOTAL\s*EMI)\b/i,
+    /\b(?:INSTALLMENT\s*(?:AMT\.?|AMOUNT)|EMI\s*AMT\.?|EMI\s*AMOUNT|TOTAL\s*EMI|EMI)\b/i,
   interest: /\b(?:INTEREST|INT\.?)\b/i,
   principal: /\b(?:PRINCIPAL|PRIN\.?)\b(?!\s*BALANCE)/i,
   balancePrincipal:

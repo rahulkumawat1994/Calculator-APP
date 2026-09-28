@@ -30,7 +30,6 @@ import {
 } from "./loans/loanColumns";
 import {
   type LoanColumnBoundaries,
-  equalColumnBoundaries,
 } from "./loans/loanColumnBoundaries";
 import {
   computeLoanDetailSummary,
@@ -42,6 +41,8 @@ import {
   prepareScheduleRowsForUi,
   buildPrepaymentPlan,
   repairLegacyPartPaymentRows,
+  filterLoanScheduleRowsByDateRange,
+  summarizeLoanScheduleRows,
   rowPartPaymentAmount,
   type PrepaymentRule,
 } from "./loans/loanCalc";
@@ -354,6 +355,8 @@ export default function LoansPage() {
   const [scheduleRows, setScheduleRows] = useState<LoanScheduleRow[]>([]);
   const [scheduleTruncated, setScheduleTruncated] = useState(false);
   const [parsedRowCount, setParsedRowCount] = useState(0);
+  const [scheduleDateFrom, setScheduleDateFrom] = useState("");
+  const [scheduleDateTo, setScheduleDateTo] = useState("");
   const [emisPaidOverride, setEmisPaidOverride] = useState<number | null>(null);
   const [emisPaidInput, setEmisPaidInput] = useState("");
   const [prepayOpen, setPrepayOpen] = useState(false);
@@ -368,8 +371,18 @@ export default function LoansPage() {
     detailBorrowerIdRef.current = match?.borrowerId ?? activeBorrowerId;
   }, [selectedLoanId, loanList, activeBorrowerId]);
 
-  const schedulePageCount = Math.max(1, Math.ceil(scheduleRows.length / SCHEDULE_PAGE_SIZE));
-  const scheduleSlice = scheduleRows.slice(
+  const scheduleRowsFiltered = useMemo(
+    () => filterLoanScheduleRowsByDateRange(scheduleRows, scheduleDateFrom, scheduleDateTo),
+    [scheduleRows, scheduleDateFrom, scheduleDateTo],
+  );
+  const scheduleFilterSummary = useMemo(
+    () => summarizeLoanScheduleRows(scheduleRowsFiltered),
+    [scheduleRowsFiltered],
+  );
+  const scheduleIsDateFiltered = !!(scheduleDateFrom || scheduleDateTo);
+
+  const schedulePageCount = Math.max(1, Math.ceil(scheduleRowsFiltered.length / SCHEDULE_PAGE_SIZE));
+  const scheduleSlice = scheduleRowsFiltered.slice(
     schedulePage * SCHEDULE_PAGE_SIZE,
     (schedulePage + 1) * SCHEDULE_PAGE_SIZE,
   );
@@ -421,7 +434,6 @@ export default function LoansPage() {
       {
         emiAmount: selectedLoan?.emiAmount,
         openingPrincipal: selectedLoan?.principal,
-        partPayments: effectivePartPayments,
       },
     );
   }, [
@@ -433,7 +445,6 @@ export default function LoansPage() {
     selectedLoan?.emiAmount,
     selectedLoan?.principal,
     parsedRowCount,
-    effectivePartPayments,
   ]);
 
   const analytics = loanInsights?.analytics ?? null;
@@ -623,6 +634,8 @@ export default function LoansPage() {
 
   useEffect(() => {
     setSchedulePage(0);
+    setScheduleDateFrom("");
+    setScheduleDateTo("");
     setPrepayOpen(false);
     setShowChart(false);
     setPrepayShowSchedule(false);
@@ -690,14 +703,22 @@ export default function LoansPage() {
     ): Promise<{ rows: LoanScheduleRow[]; boundaries?: LoanColumnBoundaries }> => {
       const data = await file.arrayBuffer();
       const { extractLoanScheduleFromPdfData } = await import("./loans/extractLoanScheduleFromPdf");
-      const result = await extractLoanScheduleFromPdfData(data, {
-        columnOrder,
-        columnBoundaries: boundaries ?? undefined,
-      });
-      return {
-        rows: result.rows.filter((r) => !isLoanScheduleRowEmpty(r)),
-        boundaries: result.boundaries,
+      const run = async (bounds?: LoanColumnBoundaries | null) => {
+        const result = await extractLoanScheduleFromPdfData(data, {
+          columnOrder,
+          columnBoundaries: bounds ?? undefined,
+        });
+        return {
+          rows: result.rows.filter((r) => !isLoanScheduleRowEmpty(r)),
+          boundaries: result.boundaries,
+        };
       };
+      const first = await run(boundaries);
+      if (first.rows.length === 0 && boundaries) {
+        const retry = await run(null);
+        if (retry.rows.length > 0) return retry;
+      }
+      return first;
     },
     [],
   );
@@ -740,24 +761,37 @@ export default function LoansPage() {
     setLoanDraft((d) => ({ ...d, ...patch }));
   };
 
-  const handlePreviewLoanPdf = async () => {
-    if (!loanDraft.pdfFile) {
+  const handlePreviewLoanPdf = async (
+    fileOverride?: File,
+    boundariesOverride?: LoanColumnBoundaries | null,
+  ) => {
+    const file = fileOverride ?? loanDraft.pdfFile;
+    if (!file) {
       toast.info("Choose a repayment schedule PDF first.");
       return;
     }
+    const boundaries =
+      boundariesOverride !== undefined ? boundariesOverride : loanDraft.boundaries;
     setLoanParsing(true);
     try {
-      const { rows, boundaries } = await parseLoanPdf(
-        loanDraft.pdfFile,
+      const { rows, boundaries: parsedBounds } = await parseLoanPdf(
+        file,
         loanDraft.columnOrder,
-        loanDraft.boundaries,
+        boundaries,
       );
-      patchLoanDraft({
+      setLoanDraft((d) => ({
+        ...d,
+        pdfFile: file,
         pdfPreviewRows: rows,
-        boundaries: boundaries ?? loanDraft.boundaries,
-      });
-      if (rows.length === 0) toast.warn("No rows found — drag column dividers in Column guide.");
-      else toast.success(`Found ${rows.length} installments.`);
+        boundaries: parsedBounds ?? boundaries ?? d.boundaries,
+      }));
+      if (rows.length === 0) {
+        toast.warn(
+          "No rows found — open Column guide and align dividers, or check the PDF has selectable text.",
+        );
+      } else {
+        toast.success(`Found ${rows.length} installments.`);
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not read PDF.");
     } finally {
@@ -811,14 +845,27 @@ export default function LoansPage() {
           toast.error("Upload a repayment schedule PDF.");
           return;
         }
-        if (!loanDraft.pdfPreviewRows?.length) {
-          toast.info("Click Preview extract first to verify installments.");
+        let pdfRows = loanDraft.pdfPreviewRows;
+        let pdfBoundaries = loanDraft.boundaries;
+        if (!pdfRows?.length) {
+          try {
+            const parsed = await parseLoanPdf(
+              loanDraft.pdfFile,
+              loanDraft.columnOrder,
+              pdfBoundaries,
+            );
+            pdfRows = parsed.rows;
+            pdfBoundaries = parsed.boundaries ?? pdfBoundaries;
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Could not read PDF.");
+            return;
+          }
+        }
+        if (!pdfRows?.length) {
+          toast.error("No schedule rows extracted. Open Column guide and align dividers.");
           return;
         }
-        const prepared = prepareScheduleRowsForUi(
-          loanDraft.pdfPreviewRows,
-          loanDraft.pdfPreviewRows.length,
-        );
+        const prepared = prepareScheduleRowsForUi(pdfRows, pdfRows.length);
         rowsToSave = prepared.rows;
         if (rowsToSave.length === 0) {
           toast.error("No schedule rows extracted.");
@@ -831,7 +878,7 @@ export default function LoansPage() {
         }
         scheduleFileName = loanDraft.pdfFile.name;
         columnOrder = loanDraft.columnOrder;
-        boundaries = loanDraft.boundaries;
+        boundaries = pdfBoundaries;
         const derived = deriveLoanMetaFromSchedule(rowsToSave);
         principal = derived.principal;
         interestRate = derived.interestRate;
@@ -1020,9 +1067,7 @@ export default function LoansPage() {
     if (!loanDraft.pdfFile) return;
     const data = await loanDraft.pdfFile.arrayBuffer();
     setGuideColumnOrder(loanDraft.columnOrder);
-    setGuideBoundaries(
-      loanDraft.boundaries ?? equalColumnBoundaries(loanDraft.columnOrder.length + 1, 600),
-    );
+    setGuideBoundaries(loanDraft.boundaries ? [...loanDraft.boundaries] : []);
     setGuidePdf({ data, fileName: loanDraft.pdfFile.name, loanKey: "new-loan" });
   };
 
@@ -1192,13 +1237,21 @@ export default function LoansPage() {
                     <div className="rounded-xl bg-slate-50 p-3">
                       <p className="text-[10px] uppercase text-gray-400 font-semibold">Principal</p>
                       <p className="text-lg font-bold tabular-nums">
-                        ₹{formatLoanInr(headerLoan.principal ?? analytics.openingPrincipal ?? analytics.totalPrincipal)}
+                        ₹{formatLoanInr(
+                          analytics.openingPrincipal ??
+                            headerLoan.principal ??
+                            analytics.totalPrincipal,
+                        )}
                       </p>
                     </div>
                     <div className="rounded-xl bg-blue-50 p-3">
                       <p className="text-[10px] uppercase text-blue-500 font-semibold">EMI</p>
                       <p className="text-lg font-bold tabular-nums text-blue-900">
-                        ₹{formatLoanInr(headerLoan.emiAmount ?? analytics.avgEmi)}
+                        ₹{formatLoanInr(
+                          analytics.avgEmi > 0
+                            ? analytics.avgEmi
+                            : headerLoan.emiAmount ?? 0,
+                        )}
                       </p>
                     </div>
                     <div className="rounded-xl bg-amber-50 p-3">
@@ -1693,22 +1746,96 @@ export default function LoansPage() {
 
               {scheduleRows.length > 0 && (
                 <div className="rounded-2xl border border-gray-200/90 bg-white shadow-sm overflow-hidden">
-                  <div className="border-b border-gray-100 px-4 py-3 flex justify-between items-center gap-2">
-                    <h3 className="text-sm font-semibold text-gray-800">
-                      Schedule · {scheduleRows.length} rows
-                      {scheduleTruncated && (
-                        <span className="text-gray-400 font-normal">
-                          {" "}
-                          ({parsedRowCount} parsed, capped for display)
+                  <div className="border-b border-gray-100 px-4 py-3 flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-start">
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-800">
+                        Schedule ·{" "}
+                        {scheduleIsDateFiltered
+                          ? `${scheduleFilterSummary.rowCount} of ${scheduleRows.length} rows`
+                          : `${scheduleRows.length} rows`}
+                        {scheduleTruncated && (
+                          <span className="text-gray-400 font-normal">
+                            {" "}
+                            ({parsedRowCount} parsed, capped for display)
+                          </span>
+                        )}
+                      </h3>
+                      {headerLoan.scheduleFileName && (
+                        <span className="text-xs text-gray-400 truncate max-w-[240px] block mt-0.5">
+                          {headerLoan.scheduleFileName}
                         </span>
                       )}
-                    </h3>
-                    {headerLoan.scheduleFileName && (
-                      <span className="text-xs text-gray-400 truncate max-w-[200px]">
-                        {headerLoan.scheduleFileName}
-                      </span>
-                    )}
+                    </div>
+                    <div className="flex flex-wrap items-end gap-2 text-xs">
+                      <label className="flex flex-col gap-0.5 text-gray-500">
+                        From
+                        <input
+                          type="date"
+                          value={scheduleDateFrom}
+                          onChange={(e) => {
+                            setScheduleDateFrom(e.target.value);
+                            setSchedulePage(0);
+                          }}
+                          className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-sm text-gray-800"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-0.5 text-gray-500">
+                        To
+                        <input
+                          type="date"
+                          value={scheduleDateTo}
+                          onChange={(e) => {
+                            setScheduleDateTo(e.target.value);
+                            setSchedulePage(0);
+                          }}
+                          className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-sm text-gray-800"
+                        />
+                      </label>
+                      {scheduleIsDateFiltered && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setScheduleDateFrom("");
+                            setScheduleDateTo("");
+                            setSchedulePage(0);
+                          }}
+                          className="rounded-lg border border-gray-200 px-2.5 py-1 text-sm text-gray-600 hover:bg-gray-50"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
                   </div>
+                  {scheduleIsDateFiltered && (
+                    <div className="border-b border-blue-100 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 flex flex-wrap gap-x-4 gap-y-1">
+                      <span>
+                        EMI{" "}
+                        <span className="font-semibold tabular-nums">
+                          ₹{formatLoanInr(scheduleFilterSummary.totalEmi)}
+                        </span>
+                      </span>
+                      <span>
+                        Interest{" "}
+                        <span className="font-semibold tabular-nums">
+                          ₹{formatLoanInr(scheduleFilterSummary.totalInterest)}
+                        </span>
+                      </span>
+                      <span>
+                        Principal{" "}
+                        <span className="font-semibold tabular-nums">
+                          ₹{formatLoanInr(scheduleFilterSummary.totalPrincipal)}
+                        </span>
+                      </span>
+                      {scheduleFilterSummary.totalPartPayment > 0 && (
+                        <span>
+                          Part pay{" "}
+                          <span className="font-semibold tabular-nums">
+                            ₹{formatLoanInr(scheduleFilterSummary.totalPartPayment)}
+                          </span>
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div className="overflow-x-auto max-h-[480px]">
                     <table className="w-full text-sm">
                       <thead className="sticky top-0 bg-gray-50 text-xs text-gray-500 uppercase">
@@ -1925,7 +2052,20 @@ export default function LoansPage() {
                       className="mt-1 w-full text-sm"
                       onChange={(e) => {
                         const f = e.target.files?.[0];
-                        patchLoanDraft({ pdfFile: f ?? null, pdfPreviewRows: null });
+                        if (!f) {
+                          patchLoanDraft({
+                            pdfFile: null,
+                            pdfPreviewRows: null,
+                            boundaries: null,
+                          });
+                          return;
+                        }
+                        patchLoanDraft({
+                          pdfFile: f,
+                          pdfPreviewRows: null,
+                          boundaries: null,
+                        });
+                        void handlePreviewLoanPdf(f, null);
                       }}
                     />
                   </label>
@@ -1951,14 +2091,23 @@ export default function LoansPage() {
                       Column guide
                     </button>
                   </div>
-                  {loanDraft.pdfPreviewRows && (
+                  {loanParsing && (
+                    <p className="text-sm text-gray-600">Reading PDF schedule…</p>
+                  )}
+                  {loanDraft.pdfPreviewRows && loanDraft.pdfPreviewRows.length > 0 && (
                     <p className="text-sm text-emerald-700 font-medium">
                       {loanDraft.pdfPreviewRows.length} installments ready to save.
                     </p>
                   )}
-                  {loanDraft.pdfFile && !loanDraft.pdfPreviewRows?.length && !loanParsing && (
-                    <p className="text-sm text-amber-700">Click Preview extract before saving.</p>
-                  )}
+                  {loanDraft.pdfFile &&
+                    !loanParsing &&
+                    loanDraft.pdfPreviewRows != null &&
+                    loanDraft.pdfPreviewRows.length === 0 && (
+                      <p className="text-sm text-amber-700">
+                        No installments found — open Column guide, align dividers, then try Preview
+                        extract again.
+                      </p>
+                    )}
                 </>
               ) : (
                 <>
@@ -2089,10 +2238,13 @@ export default function LoansPage() {
             onColumnBoundariesChange={(b) => {
               setGuideBoundaries(b);
               if (guidePdf.loanKey === "new-loan") {
-                patchLoanDraft({ boundaries: b, pdfPreviewRows: null });
+                patchLoanDraft({ boundaries: b });
               }
             }}
-            onClose={() => setGuidePdf(null)}
+            onClose={() => {
+              setGuidePdf(null);
+              if (loanDraft.pdfFile) void handlePreviewLoanPdf();
+            }}
           />
         </Suspense>
       )}

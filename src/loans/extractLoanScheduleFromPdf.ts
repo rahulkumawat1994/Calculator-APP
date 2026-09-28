@@ -9,6 +9,12 @@ import {
   type LoanColumnBoundaries,
 } from "./loanColumnBoundaries";
 import { ensureLoanPdfWorker } from "./pdfWorker";
+import {
+  LOAN_SCHEDULE_AMOUNT_RE,
+  LOAN_SCHEDULE_DATE_RE,
+  LOAN_SCHEDULE_INST_NO_RE,
+  loanScheduleRowLooksLikeData,
+} from "./loanScheduleTextPatterns";
 
 export type LoanScheduleRow = {
   page: number;
@@ -130,8 +136,8 @@ function findFirstScheduleRowIndex(clusters: TextPiece[][], columnOrder: LoanCol
     const line = clusterTextLine(clusters[i]!);
     if (!line || headerColumnHits(line, columnOrder) >= minHits) continue;
     const firstToken = line.split(/\s+/)[0]?.trim() ?? "";
-    if (!INST_NO_RE.test(firstToken)) continue;
-    if (DATE_RE.test(line) || AMOUNT_RE.test(line)) return i;
+    if (!LOAN_SCHEDULE_INST_NO_RE.test(firstToken)) continue;
+    if (LOAN_SCHEDULE_DATE_RE.test(line) || LOAN_SCHEDULE_AMOUNT_RE.test(line)) return i;
   }
   return -1;
 }
@@ -256,44 +262,45 @@ function rowFromCluster(
   };
 }
 
-const DATE_RE = /\b\d{2}[-/]\d{2}[-/]\d{4}\b|\b\d{4}[-/]\d{2}[-/]\d{2}\b/;
-const AMOUNT_RE = /\b\d{1,3}(?:,\d{3})*(?:\.\d{2})\b|\b\d+\.\d{2}\b/;
-const INST_NO_RE = /^\d{1,4}$/;
-
-function rowHasDueDate(row: LoanScheduleRow): boolean {
-  if (DATE_RE.test(row.dueDate.trim())) return true;
-  const full = [
-    row.installmentNo,
-    row.dueDate,
-    row.installmentAmount,
-    row.interest,
-    row.principal,
-    row.balancePrincipal,
-  ].join(" ");
-  return DATE_RE.test(full);
-}
-
-function rowLooksLikeData(row: LoanScheduleRow): boolean {
-  if (!rowHasDueDate(row)) return false;
-  if (DATE_RE.test(row.dueDate)) return true;
-  if (AMOUNT_RE.test(row.installmentAmount)) return true;
-  if (AMOUNT_RE.test(row.interest)) return true;
-  if (AMOUNT_RE.test(row.principal)) return true;
-  if (AMOUNT_RE.test(row.balancePrincipal)) return true;
-  if (INST_NO_RE.test(row.installmentNo.trim())) return true;
-  const full = [
-    row.installmentNo,
-    row.dueDate,
-    row.installmentAmount,
-    row.interest,
-    row.principal,
-    row.balancePrincipal,
-  ].join(" ");
-  return DATE_RE.test(full) || AMOUNT_RE.test(full);
+function countScheduleRowsInClusters(
+  dataClusters: TextPiece[][],
+  columnOrder: LoanColumnId[],
+  boundaries: LoanColumnBoundaries,
+): number {
+  let count = 0;
+  for (const cl of dataClusters) {
+    const full = clusterTextLine(cl);
+    if (!full) continue;
+    if (lineLooksLikeHeaderRepeat(full, columnOrder)) continue;
+    const row = rowFromCluster(cl, columnOrder, boundaries);
+    if (loanScheduleRowLooksLikeData(row)) count += 1;
+  }
+  return count;
 }
 
 function lineLooksLikeHeaderRepeat(text: string, columnOrder: LoanColumnId[]): boolean {
   return headerColumnHits(text, columnOrder) >= Math.min(3, columnOrder.length);
+}
+
+function parseRowFromTextLine(full: string, page: number): LoanScheduleRow | null {
+  if (!LOAN_SCHEDULE_DATE_RE.test(full)) return null;
+  const instMatch = full.match(/^\s*(\d{1,4})\b/);
+  const dateMatch = full.match(LOAN_SCHEDULE_DATE_RE);
+  if (!instMatch || !dateMatch) return null;
+
+  const amountRe = new RegExp(LOAN_SCHEDULE_AMOUNT_RE.source, "g");
+  const amounts = [...full.matchAll(amountRe)].map((m) => m[0]!);
+
+  const row: LoanScheduleRow = {
+    page,
+    installmentNo: instMatch[1]!,
+    dueDate: dateMatch[0]!,
+    installmentAmount: amounts[0] ?? "",
+    interest: amounts[1] ?? "",
+    principal: amounts[2] ?? "",
+    balancePrincipal: amounts[3] ?? "",
+  };
+  return loanScheduleRowLooksLikeData(row) ? row : null;
 }
 
 export async function extractLoanScheduleFromPdfData(
@@ -310,6 +317,33 @@ export async function extractLoanScheduleFromPdfData(
     : null;
   let boundariesPdfW = 0;
 
+  if (!boundaries) {
+    let bestBounds: LoanColumnBoundaries | null = null;
+    let bestScore = 0;
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const pdfW = page.getViewport({ scale: 1 }).width;
+      const content = await page.getTextContent();
+      const pieces = textPiecesFromPageContent(content);
+      const clusters = clusterByY(pieces, 3.5);
+      const { dataStart } = resolveLoanTableRegion(clusters, columnOrder);
+      const dataClusters = clusters.slice(dataStart);
+      const pageBounds = clampBoundaries(
+        detectBoundariesFromDataClusters(dataClusters, columnOrder, pdfW),
+        pdfW,
+      );
+      const score = countScheduleRowsInClusters(dataClusters, columnOrder, pageBounds);
+      if (score > bestScore) {
+        bestScore = score;
+        bestBounds = pageBounds;
+        boundariesPdfW = pdfW;
+      }
+    }
+    boundaries =
+      bestBounds ??
+      equalColumnBoundaries(columnOrder.length, boundariesPdfW > 0 ? boundariesPdfW : 600);
+  }
+
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
     const pdfW = page.getViewport({ scale: 1 }).width;
@@ -320,20 +354,19 @@ export async function extractLoanScheduleFromPdfData(
     const { dataStart, tableTopPdfY } = resolveLoanTableRegion(clusters, columnOrder);
     const dataClusters = clusters.slice(dataStart);
 
-    if (!boundaries) {
-      boundaries = detectBoundariesFromDataClusters(dataClusters, columnOrder, pdfW);
-      boundaries = clampBoundaries(boundaries, pdfW);
-    } else {
-      boundaries = clampBoundaries(boundaries, pdfW);
-    }
+    boundaries = clampBoundaries(boundaries!, pdfW);
 
     for (const cl of dataClusters) {
       const full = clusterTextLine(cl);
       if (!full) continue;
       if (lineLooksLikeHeaderRepeat(full, columnOrder)) continue;
-      const row = rowFromCluster(cl, columnOrder, boundaries);
+      let row = rowFromCluster(cl, columnOrder, boundaries);
+      if (!loanScheduleRowLooksLikeData(row)) {
+        const fallback = parseRowFromTextLine(full, pageNum);
+        if (fallback) row = fallback;
+      }
       row.page = pageNum;
-      if (!rowLooksLikeData(row)) continue;
+      if (!loanScheduleRowLooksLikeData(row)) continue;
       rows.push(row);
     }
   }

@@ -5,9 +5,11 @@ import {
   computeLoanScheduleAnalytics,
   emiFromAnnualRate,
   estimateAnnualRateFromSchedule,
+  filterLoanScheduleRowsByDateRange,
   generateAmortizationSchedule,
   parseLoanMoney,
   simulateLoanProgressAsOf,
+  summarizeLoanScheduleRows,
   typicalEmiFromSchedule,
 } from "./loanCalc";
 import type { LoanScheduleRow } from "./extractLoanScheduleFromPdf";
@@ -111,8 +113,12 @@ describe("computeLoanDetailSummary", () => {
     expect(progress.paidByDueDate).toBe(2);
     expect(progress.principalPaid).toBe(10250);
     expect(progress.interestPaid).toBe(9750);
-    expect(progress.principalRemaining).toBe(5500);
+    expect(progress.principalRemaining).toBe(89750);
     expect(progress.interestRemaining).toBe(4500);
+    expect(progress.interestPaid + progress.interestRemaining).toBe(analytics.totalInterest);
+    expect(progress.principalPaid + progress.principalRemaining).toBe(
+      analytics.openingPrincipal ?? analytics.totalPrincipal,
+    );
     expect(computeLoanDetailSummary(sampleRows, null, 8.5).progress.estimatedAnnualRate).toBe(8.5);
   });
 
@@ -151,6 +157,50 @@ describe("computeLoanDetailSummary", () => {
       },
     ];
     expect(computeLoanDetailSummary(rows).progress.paidByDueDate).toBe(2);
+  });
+});
+
+describe("schedule date filter", () => {
+  it("filters rows by due date and sums interest and principal", () => {
+    const filtered = filterLoanScheduleRowsByDateRange(sampleRows, "2020-01-01", "2020-02-29");
+    expect(filtered.length).toBe(2);
+    const summary = summarizeLoanScheduleRows(filtered);
+    expect(summary.totalInterest).toBe(9750);
+    expect(summary.totalPrincipal).toBe(10250);
+    expect(summary.totalEmi).toBe(20000);
+  });
+});
+
+describe("schedule-based summary", () => {
+  it("reads cumulative interest without summing every row", () => {
+    const rows: LoanScheduleRow[] = sampleRows.map((r, i) => ({
+      ...r,
+      interest: String((i + 1) * 5000),
+    }));
+    rows.push({
+      page: 1,
+      installmentNo: "4",
+      dueDate: "01-04-2028",
+      installmentAmount: "10,000.00",
+      interest: "20000",
+      principal: "5,500.00",
+      balancePrincipal: "78,750.00",
+    });
+    const { analytics, progress } = computeLoanDetailSummary(rows, 2);
+    expect(analytics.totalInterest).toBe(20000);
+    expect(progress.interestPaid).toBe(10000);
+    expect(progress.interestRemaining).toBe(10000);
+  });
+
+  it("principal paid sums principal column through paid EMI count", () => {
+    const rows = buildAmortizationSchedule(2500000, 13.91, 120).slice(0, 55);
+    const { progress } = computeLoanDetailSummary(rows, 54, 13.91, 120);
+    expect(progress.principalPaid).toBeGreaterThan(50000);
+    expect(progress.interestPaid).toBeGreaterThan(1000000);
+    expect(progress.interestPaid + progress.principalPaid).toBeCloseTo(
+      progress.totalPaid,
+      0,
+    );
   });
 });
 

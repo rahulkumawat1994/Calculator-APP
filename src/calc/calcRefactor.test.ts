@@ -74,6 +74,17 @@ describe("refactor: barrel vs direct module — identical results", () => {
     }
   });
 
+  it("slash-separated jodis with ==rate ignore meaningless FB suffix", () => {
+    const text = [
+      "16/61==25FB",
+      "64/46==25",
+      "36/63/86/68==15FB",
+      "36/63/64//==50FB",
+    ].join("\n");
+    const { total } = fromBarrel.calculateTotal(text);
+    expect(total).toBe(50 + 50 + 60 + 150);
+  });
+
   it("text helpers match", () => {
     const raw = "[1/1, 2:00 pm] A: 43/10\n";
     expect(fromBarrel.preprocessText(raw)).toBe(preprocessDirect(raw));
