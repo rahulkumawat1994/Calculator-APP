@@ -16,6 +16,7 @@ import {
   parseStandaloneIntoTypoRateDigits,
   preprocessText,
   stripTrailingMarketSuffix,
+  stripEqualsLineAnnotations,
 } from "./textNormalize";
 import type { CalculationResult, Segment } from "../types";
 
@@ -53,6 +54,82 @@ function isDotJodiPendingBody(pending: string): boolean {
 }
 
 /** Pending dot-jodi rows + next line `46.64emtu5` — one ×rate for the whole block. */
+/** `13=40` / `31=` / … / `86=40==320` — one ×rate for every `NN=` row in the block. */
+function mergeEqualsJodiContinuationTL(pairs: TL[]): TL[] {
+  const lines = pairs.map((p) => p.line);
+  const merged = mergeEqualsJodiContinuationLines(lines);
+  if (merged.length === lines.length) return pairs;
+  const out: TL[] = [];
+  let srcIdx = 0;
+  for (const line of merged) {
+    const consumed = Math.max(
+      1,
+      line.split(/\s+/).filter((tok) => /^\d{2}=$/.test(tok + "=") || /^\d{2}$/.test(tok)).length,
+    );
+    const slice = pairs.slice(srcIdx, srcIdx + consumed);
+    srcIdx += consumed;
+    out.push({
+      line,
+      src: slice.length ? slice.flatMap((p) => p.src) : pairs[srcIdx - 1]?.src ?? [],
+    });
+  }
+  return out.length ? out : pairs;
+}
+
+function parseEqualsJodiRow(row: string): { jodi: string; rate: number | null } | null {
+  const cleaned = stripEqualsLineAnnotations(stripTrailingMarketSuffix(row.trim()));
+  const m = /^(\d{2})=\s*(\d{1,5})?\s*$/.exec(cleaned);
+  if (!m) return null;
+  return {
+    jodi: m[1]!,
+    rate: m[2] ? parseInt(m[2], 10) : null,
+  };
+}
+
+function isEqualsContinuationOnlyRow(row: string): boolean {
+  const p = parseEqualsJodiRow(row);
+  return p != null && p.rate == null;
+}
+
+/** `13=40` then `31=` … `86=40` — not independent `27=40` / `72=40` rows. */
+export function mergeEqualsJodiContinuationLines(lines: string[]): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const t = lines[i]!.trim();
+    const head = parseEqualsJodiRow(t);
+    if (!head || head.rate == null) {
+      out.push(lines[i]!);
+      i++;
+      continue;
+    }
+    const next = i + 1 < lines.length ? lines[i + 1]!.trim() : "";
+    if (!isEqualsContinuationOnlyRow(next)) {
+      out.push(lines[i]!);
+      i++;
+      continue;
+    }
+    const jodis: string[] = [head.jodi];
+    let rate = head.rate;
+    i++;
+    while (i < lines.length && isEqualsContinuationOnlyRow(lines[i]!)) {
+      const p = parseEqualsJodiRow(lines[i]!)!;
+      jodis.push(p.jodi);
+      i++;
+    }
+    if (i < lines.length) {
+      const tail = parseEqualsJodiRow(lines[i]!);
+      if (tail?.rate != null) {
+        jodis.push(tail.jodi);
+        rate = tail.rate;
+        i++;
+      }
+    }
+    out.push(`${jodis.join(" ")}=${rate}`);
+  }
+  return out;
+}
+
 function shouldMergeDotPendingWithRatedDotLine(pending: string, line: string): boolean {
   const p = pending.trim();
   // `…82.02.` + next row — continue prior ×rate on this line, not this line's ×rate.
@@ -569,18 +646,21 @@ export function calculateTotal(text: string): CalculationResult {
     const rawLine = chunk.text;
     if (isWhatsAppNoiseLine(rawLine)) continue;
     const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
-    const labelStripped = stripLeadingGameLabels(afterLoose);
+    let labelStripped = stripLeadingGameLabels(afterLoose);
+    labelStripped = stripTrailingMarketSuffix(labelStripped);
+    if (/^\d{2}=/.test(labelStripped.trim())) {
+      labelStripped = stripEqualsLineAnnotations(labelStripped);
+    }
     const line = normalizeTrailingDashRate(
       normalizeParenRateTypos(
-        normalizeTypoTolerantInput(
-          normalizeIntoRateMarker(stripTrailingMarketSuffix(labelStripped)),
-        ),
+        normalizeTypoTolerantInput(normalizeIntoRateMarker(labelStripped)),
       ),
     );
     if (isSeparatorOnlyLine(line)) continue;
     logicalLines.push(...splitTrailingNumberRunAfterLastRate(line));
   }
-  const withCommaCont = mergeCommaOnlyRateContinuationLine(logicalLines);
+  const withEqualsMerge = mergeEqualsJodiContinuationLines(logicalLines);
+  const withCommaCont = mergeCommaOnlyRateContinuationLine(withEqualsMerge);
   const withCommaXMerge = mergeTrailingCommaListWithXOnLaterLine(withCommaCont);
 
   const mergedLines: string[] = [];
@@ -900,12 +980,14 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
     const rawLine = chunk.text;
     if (isWhatsAppNoiseLine(rawLine)) continue;
     const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
-    const labelStripped = stripLeadingGameLabels(afterLoose);
+    let labelStripped = stripLeadingGameLabels(afterLoose);
+    labelStripped = stripTrailingMarketSuffix(labelStripped);
+    if (/^\d{2}=/.test(labelStripped.trim())) {
+      labelStripped = stripEqualsLineAnnotations(labelStripped);
+    }
     const line = normalizeTrailingDashRate(
       normalizeParenRateTypos(
-        normalizeTypoTolerantInput(
-          normalizeIntoRateMarker(stripTrailingMarketSuffix(labelStripped)),
-        ),
+        normalizeTypoTolerantInput(normalizeIntoRateMarker(labelStripped)),
       ),
     );
     if (isSeparatorOnlyLine(line)) continue;
@@ -914,8 +996,10 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
     }
   }
 
+  const withEqualsMergeTL = mergeEqualsJodiContinuationTL(logicalPairs);
+
   // Phase 2 — same two merge passes, now with source tracking
-  const withCommaCont = _mergeCommaOnlyRateContinuationTL(logicalPairs);
+  const withCommaCont = _mergeCommaOnlyRateContinuationTL(withEqualsMergeTL);
   const withCommaXMerge = _mergeTrailingCommaListWithXOnLaterLineTL(withCommaCont);
 
   // Phase 3 — pending / merge loop (mirror of calculateTotal)

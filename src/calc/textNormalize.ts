@@ -208,6 +208,20 @@ export function stripUserTotalAnnotations(s: string): string {
     .trimEnd();
 }
 
+/** `86=40==320=`, `09=30==270`, `80=30==1240=9-9-26`, tail `=-21-9-26` on equals-format rows. */
+export function stripEqualsLineAnnotations(s: string): string {
+  // `==\d{2,}` — user running total (`==320`), not stake tail `=====5` (`==5` is one digit).
+  if (!/==\d{2,}/.test(s) && !/^\d{2}=\d{1,5}=-/.test(s.trim())) return s;
+  let t = s.replace(/(\d{2}=\d{1,5})==\d{2,}/gi, "$1");
+  // `=9-9-26` date note after total (do not treat `==1240=` as optional `=` before stake).
+  t = t.replace(/(\d{2}=\d{1,5})=\d{1,2}-\d{1,2}-\d{1,2}/g, "$1");
+  t = t.replace(/(\d{2}=\d{1,5})=-[\d\-–—]+/g, "$1");
+  // `==320=` before market text (`86=40= गली`)
+  t = t.replace(/(\d{2}=\d{1,5})=\s+/g, "$1 ");
+  t = t.replace(/(\d{2}=\d{1,5})=\s*$/g, "$1");
+  return t.trimEnd();
+}
+
 /** `81.8215.18` → `81.82.15.18` when a 4-digit token sits in a dot jodi run. */
 export function splitMergedFourDigitInDotRuns(s: string): string {
   if (!/\.\d{4}(?:\.|$)/.test(s)) return s;

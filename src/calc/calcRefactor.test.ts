@@ -171,6 +171,43 @@ describe("refactor: barrel vs direct module — identical results", () => {
   });
 });
 
+describe("equals-format jodi columns", () => {
+  it("13=40 / 31= / … / 86=40==320 — shared rate per block", () => {
+    const r = totalDirect(`13=40
+31=
+63=
+36=
+81=
+18=
+68=
+86=40==320= गली`);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(320);
+    expect(r.results[0]?.count).toBe(8);
+  });
+
+  it("01=30 … 09=30==270", () => {
+    const r = totalDirect(`01=30
+02=
+03=
+04=
+05=
+06=
+07=
+08=
+09=30==270`);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(270);
+  });
+
+  it("80=30==1240=9-9-26 — single row, ignore user total and date tail", () => {
+    const r = totalDirect("80=30==1240=9-9-26 गाजियाबाद और गली और दिसावर");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(30);
+    expect(r.results[0]).toMatchObject({ line: "80", rate: 30, count: 1, lineTotal: 30 });
+  });
+});
+
 describe("glued paren stakes", () => {
   it("75(20)95(15)05(10)555(20)=65 — chained + =total note", () => {
     const r = totalDirect("75(20)95(15)05(10)555(20)=65");
