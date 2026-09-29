@@ -132,10 +132,10 @@ export function formatSegmentLineForPairListDisplay(segment: {
 
 /** WP / palat markers and common typos (WO, WPP, w-o, etc.). */
 export const WP_FLAG_RE =
-  /\b(?:wpp?|wo|w[pPoO][a-z]?|w\.?\s*[po]|w\s+[po]|palat(?:e|el)?)\b/i;
+  /\b(?:with\s+)?(?:wpp?|wo|w[pPoO][a-z]?|w\.?\s*[po]|w\s+[po]|palat(?:e|el)?|palt(?:i)?)\b/i;
 
 export const WP_FLAG_RE_GLOBAL =
-  /\b(?:wpp?|wo|w[pPoO][a-z]?|w\.?\s*[po]|w\s+[po]|palat(?:e|el)?)\b/gi;
+  /\b(?:with\s+)?(?:wpp?|wo|w[pPoO][a-z]?|w\.?\s*[po]|w\s+[po]|palat(?:e|el)?|palt(?:i)?)\b/gi;
 
 function stripWpPalatWords(text: string): string {
   return (
@@ -151,6 +151,41 @@ function cleanLaneFlagSuffix(text: string): string {
   return stripMarketCodeTokens(stripWpPalatWords(text))
     .replace(/[,.\s]+/g, " ")
     .trim();
+}
+
+/** `(75) with palt` — flags after the closing `)` (not only glued suffix letters). */
+function applyTrailingFlagsAfterLastParen(
+  results: Segment[],
+  trimmed: string,
+): Segment[] {
+  const close = trimmed.lastIndexOf(")");
+  if (close < 0) return results;
+  const tail = trimmed.slice(close + 1);
+  // Only WP / palat phrases after `)` — not lane `A`/`B` glued after `(rate)`.
+  if (
+    !/(?:पलट|wpp?|wo|w\.?\s*[po]|palat(?:e|el)?|palt(?:i)?|with\s+)/iu.test(
+      tail,
+    )
+  ) {
+    return results;
+  }
+  const { isWP, isDouble: isDoubleFlagged } = parseFlags(tail);
+  if (!isWP && !isDoubleFlagged) return results;
+  return results.map((seg) => {
+    const nums = extractJodiNumbers(seg.line);
+    if (!nums.length) return seg;
+    const isDouble = isDoubleFlagged || seg.isDouble;
+    const wp = isWP || seg.isWP;
+    const count = countSegment(nums, wp) * (isDouble ? 2 : 1);
+    return {
+      ...seg,
+      isWP: wp,
+      isDouble,
+      lane: laneForNonSolid(tail, isDouble, seg.line) ?? seg.lane,
+      count,
+      lineTotal: count * seg.rate,
+    };
+  });
 }
 
 function parseFlags(text: string): { isWP: boolean; isDouble: boolean } {
@@ -208,10 +243,11 @@ function has3DigitBet(numbersText: string): boolean {
  */
 export function splitCommaGroupsAtPalatMarkers(line: string): string[] | null {
   if (!/,/.test(line)) return null;
-  if (!/(?:पलट|wpp?|wo|w\.?\s*[po]|palat(?:e|el)?)/iu.test(line)) return null;
+  if (!/(?:पलट|wpp?|wo|w\.?\s*[po]|palat(?:e|el)?|palt(?:i)?)/iu.test(line))
+    return null;
 
   const delimRe =
-    /(?:पलट\s*के\s*साथ|पलटके\s*साथ|पलट|wpp?|wo|w\.?\s*[po]|palat(?:e|el)?)\s*,+(?=\d)/giu;
+    /(?:पलट\s*के\s*साथ|पलटके\s*साथ|पलट|wpp?|wo|w\.?\s*[po]|palat(?:e|el)?|palt(?:i)?)\s*,+(?=\d)/giu;
   const chunks: string[] = [];
   let start = 0;
   let m: RegExpExecArray | null;
@@ -536,7 +572,7 @@ export function processLine(
       });
     }
   }
-  if (results.length) return results;
+  if (results.length) return applyTrailingFlagsAfterLastParen(results, trimmed);
 
   // ── Unified separator format ──────────────────────────────────────────────────
   // Handles x / = / * as rate separators, with optional spaces anywhere.
@@ -590,7 +626,7 @@ export function processLine(
   // Last number before a flag keyword = rate; everything before = numbers.
   {
     const flagMatch = trimmed.match(
-      /\b(?:wpp?|wo|w\.?\s*[po]|w\s+[po]|ab|palat(?:e|el)?)\b/i,
+      /\b(?:with\s+)?(?:wpp?|wo|w\.?\s*[po]|w\s+[po]|ab|palat(?:e|el)?|palt(?:i)?)\b/i,
     );
     if (flagMatch && flagMatch.index !== undefined) {
       const beforeFlag = trimmed.slice(0, flagMatch.index).trim();

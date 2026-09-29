@@ -42,41 +42,133 @@ function mergeIncompleteDashPendingWithRatedLine(pending: string, line: string):
   return `${pending.trim()}${line}`;
 }
 
-export function mergeTrailingDashWithIntoContinuation(rawLines: string[]): MergedRawChunk[] {
+function isDotSeparatedJodiOnlyLine(line: string): boolean {
+  const t = line.trim();
+  return /^[\d.\s]+$/.test(t) && /\d{2}\.\d{2}/.test(t);
+}
+
+function isDotJodiPendingBody(pending: string): boolean {
+  const t = pending.trim();
+  return /^[\d.\s]+$/.test(t) && /\d{2}\.\d{2}/.test(t);
+}
+
+/** Pending dot-jodi rows + next line `46.64emtu5` — one ×rate for the whole block. */
+function shouldMergeDotPendingWithRatedDotLine(pending: string, line: string): boolean {
+  const p = pending.trim();
+  // `…82.02.` + next row — continue prior ×rate on this line, not this line's ×rate.
+  if (/\.\s*$/.test(p)) return false;
+  return (
+    isDotJodiPendingBody(p) &&
+    (X_RATE_RE.test(line) || /\(\d+\)/.test(line)) &&
+    /\d{2}\.\d{2}/.test(line)
+  );
+}
+
+function rawLinesToChunks(rawLines: string[]): MergedRawChunk[] {
+  return rawLines.map((text, i) => ({ text, rawIndices: [i] }));
+}
+
+/**
+ * Several dot-jodi lines followed by `Entu20` / `Into5` (optional `total320` note) → one rated row.
+ * Preserves {@link MergedRawChunk.rawIndices} for every original paste line (Check view).
+ */
+export function collapseDotJodiChunks(chunks: MergedRawChunk[]): MergedRawChunk[] {
   const out: MergedRawChunk[] = [];
   let i = 0;
-  while (i < rawLines.length) {
-    const cur = rawLines[i]!;
-    const next = i + 1 < rawLines.length ? rawLines[i + 1]! : "";
-    const curT = cur.trim();
-    const nextT = next.trim();
+  while (i < chunks.length) {
+    const block: MergedRawChunk[] = [];
+    while (i < chunks.length && isDotSeparatedJodiOnlyLine(chunks[i]!.text)) {
+      block.push(chunks[i]!);
+      i++;
+    }
+    if (block.length > 0) {
+      if (i < chunks.length) {
+        const rate = parseStandaloneIntoTypoRateDigits(chunks[i]!.text);
+        if (rate) {
+          out.push({
+            text: `${block.map((c) => c.text.trim()).join(" ")} x${rate}`,
+            rawIndices: [
+              ...block.flatMap((c) => c.rawIndices),
+              ...chunks[i]!.rawIndices,
+            ],
+          });
+          i++;
+          continue;
+        }
+      }
+      out.push(...block);
+      continue;
+    }
+    if (i < chunks.length) {
+      out.push(chunks[i]!);
+      i++;
+    }
+  }
+  return out;
+}
+
+export function mergeTrailingDashWithIntoContinuation(
+  chunks: MergedRawChunk[],
+): MergedRawChunk[] {
+  const out: MergedRawChunk[] = [];
+  let i = 0;
+  while (i < chunks.length) {
+    const cur = chunks[i]!;
+    const next = i + 1 < chunks.length ? chunks[i + 1]! : null;
+    const curT = cur.text.trim();
+    const nextT = next?.text.trim() ?? "";
     const intoNext =
       /^\s*(?:into|ijto)\s*(\d{1,5})\s*$/i.exec(nextT)?.[1] ??
       parseStandaloneIntoTypoRateDigits(nextT);
-    if (/[-–—]\s*$/.test(curT) && intoNext) {
+    const joinIdx = (a: MergedRawChunk, b: MergedRawChunk) => ({
+      rawIndices: [...a.rawIndices, ...b.rawIndices],
+    });
+    if (next && /[-–—]\s*$/.test(curT) && intoNext) {
       const base = curT.replace(/[-–—]+\s*$/, "");
-      out.push({ text: `${base} x${intoNext}`, rawIndices: [i, i + 1] });
+      out.push({ text: `${base} x${intoNext}`, ...joinIdx(cur, next) });
       i += 2;
       continue;
     }
     // `NN.NN.NN=` + `30` → `NN.NN.NN=30` (user typed rate on the next line after a trailing `=`).
-    if (/=+\s*$/.test(curT) && /^\d+\s*$/.test(nextT) && nextT.trim()) {
-      out.push({ text: `${curT.trimEnd()}${nextT.trim()}`, rawIndices: [i, i + 1] });
+    if (next && /=+\s*$/.test(curT) && /^\d+\s*$/.test(nextT) && nextT.trim()) {
+      out.push({
+        text: `${curT.trimEnd()}${nextT.trim()}`,
+        ...joinIdx(cur, next),
+      });
       i += 2;
       continue;
     }
-    if (intoNext && isDashSeparatedJodiRow(curT)) {
-      out.push({ text: `${curT} x${intoNext}`, rawIndices: [i, i + 1] });
+    if (next && intoNext && isDashSeparatedJodiRow(curT)) {
+      out.push({ text: `${curT} x${intoNext}`, ...joinIdx(cur, next) });
       i += 2;
       continue;
     }
     const dd = /^(\d{1,3})\.\.(\d{1,4})$/.exec(curT);
-    if (dd && intoNext && !isReverseJodiPairDigits(dd[1]!, dd[2]!)) {
-      out.push({ text: `${curT} x${intoNext}`, rawIndices: [i, i + 1] });
+    if (next && dd && intoNext && !isReverseJodiPairDigits(dd[1]!, dd[2]!)) {
+      out.push({ text: `${curT} x${intoNext}`, ...joinIdx(cur, next) });
       i += 2;
       continue;
     }
-    out.push({ text: cur, rawIndices: [i] });
+    if (next && intoNext && isDotSeparatedJodiOnlyLine(curT)) {
+      out.push({ text: `${curT} x${intoNext}`, ...joinIdx(cur, next) });
+      i += 2;
+      continue;
+    }
+    const brokenParen =
+      next &&
+      /^(\d{1,2})\((\d+)$/.exec(curT) &&
+      /^(\d+)\)(\d+)$/.exec(nextT);
+    if (brokenParen && next) {
+      const m1 = /^(\d{1,2})\((\d+)$/.exec(curT)!;
+      const m2 = /^(\d+)\)(\d+)$/.exec(nextT)!;
+      out.push({
+        text: `${m1[1]}(${m1[2]}) ${m2[1]}(${m2[2]})`,
+        ...joinIdx(cur, next),
+      });
+      i += 2;
+      continue;
+    }
+    out.push({ text: cur.text, rawIndices: [...cur.rawIndices] });
     i += 1;
   }
   return out;
@@ -92,6 +184,8 @@ function isWhatsAppNoiseLine(line: string): boolean {
   const t = line.trim();
   if (!t) return false;
   if (/^total\s*amount\s*=/i.test(t)) return true;
+  // User note: `Total320`, `total 150` — not a bet row.
+  if (/^tot(?:al)?\s*\d+$/i.test(t)) return true;
   if (/phonepe|phon\.pe/i.test(t)) return true;
   if (/^explore the app now/i.test(t)) return true;
   if (/^under\s*\/\s*bahar$/i.test(t)) return true;
@@ -467,7 +561,9 @@ function stripLooseSlotMarketPrefixForNumberLine(line: string): string {
 export function calculateTotal(text: string): CalculationResult {
   const cleaned = preprocessText(text);
   const rawLines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
-  const mergedChunks = mergeTrailingDashWithIntoContinuation(rawLines);
+  const mergedChunks = mergeTrailingDashWithIntoContinuation(
+    collapseDotJodiChunks(rawLinesToChunks(rawLines)),
+  );
   const logicalLines: string[] = [];
   for (const chunk of mergedChunks) {
     const rawLine = chunk.text;
@@ -575,6 +671,13 @@ export function calculateTotal(text: string): CalculationResult {
   };
 
   for (const line of withCommaXMerge) {
+    const intoOnlyRate = parseStandaloneIntoTypoRateDigits(line);
+    if (intoOnlyRate && pending && isDotJodiPendingBody(pending)) {
+      pushMerged(`${pending.trim()} x${intoOnlyRate}`);
+      resetPending();
+      continue;
+    }
+
     const hasExplicitRate =
       /\(\d+\)/.test(line) || X_RATE_RE.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
@@ -619,6 +722,9 @@ export function calculateTotal(text: string): CalculationResult {
         } else if (!/\d/.test(pending)) {
           flushPending();
           pushMerged(line);
+        } else if (shouldMergeDotPendingWithRatedDotLine(pending, line)) {
+          pushMerged(`${pending.trim()} ${line.trim()}`);
+          resetPending();
         } else if (isSelfContainedDigitRowWithRate(line, pending)) {
           const p = pending.trim();
           const pureP = /^[\d\s\-_.,:|\/\\]+$/.test(p) && /\d/.test(p);
@@ -784,7 +890,9 @@ function _mergeTrailingCommaListWithXOnLaterLineTL(pairs: TL[]): TL[] {
 export function calculateTotalWithSources(text: string): CalculationResultWithSources {
   const cleaned = preprocessText(text);
   const rawLines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
-  const mergedChunks = mergeTrailingDashWithIntoContinuation(rawLines);
+  const mergedChunks = mergeTrailingDashWithIntoContinuation(
+    collapseDotJodiChunks(rawLinesToChunks(rawLines)),
+  );
 
   // Phase 1 — normalise each raw line, track its index in rawLines
   const logicalPairs: TL[] = [];
@@ -902,6 +1010,16 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
 
   for (const tp of withCommaXMerge) {
     const { line } = tp;
+    const intoOnlyRate = parseStandaloneIntoTypoRateDigits(line);
+    if (intoOnlyRate && pendingTL && isDotJodiPendingBody(pendingTL.line)) {
+      pushMergedTL({
+        line: `${pendingTL.line.trim()} x${intoOnlyRate}`,
+        src: [...pendingTL.src, ...tp.src],
+      });
+      resetPendingTL();
+      continue;
+    }
+
     const hasExplicitRate =
       /\(\d+\)/.test(line) || X_RATE_RE.test(line) || /=+\s*\d+/.test(line) || /\*\s*\d+/.test(line);
     const hasCommaRate = /,/.test(line);
@@ -946,6 +1064,12 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
         } else if (!/\d/.test(pendingTL.line)) {
           flushPendingTL();
           pushMergedTL(tp);
+        } else if (shouldMergeDotPendingWithRatedDotLine(pendingTL.line, line)) {
+          pushMergedTL({
+            line: `${pendingTL.line.trim()} ${line.trim()}`,
+            src: [...pendingTL.src, ...tp.src],
+          });
+          resetPendingTL();
         } else if (isSelfContainedDigitRowWithRate(line, pendingTL.line)) {
           const p = pendingTL.line.trim();
           const pureP = /^[\d\s\-_.,:|\/\\]+$/.test(p) && /\d/.test(p);

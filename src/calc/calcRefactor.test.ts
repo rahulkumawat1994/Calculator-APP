@@ -170,3 +170,105 @@ describe("refactor: barrel vs direct module — identical results", () => {
     expect(fromBarrel.slotMinutes("10:00")).toBe(slotMinutesDirect("10:00"));
   });
 });
+
+describe("glued paren stakes", () => {
+  it("75(20)95(15)05(10)555(20)=65 — chained + =total note", () => {
+    const r = totalDirect("75(20)95(15)05(10)555(20)=65");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(65);
+    expect(r.results).toHaveLength(4);
+  });
+});
+
+describe("with palt / palat flags", () => {
+  it("34 89 39(75) with palt counts as WP (palat)", () => {
+    const r = totalDirect("34 89 39(75) with palt");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(450);
+    expect(r.results[0]).toMatchObject({ count: 6, rate: 75, isWP: true });
+  });
+});
+
+describe("paren rate typos (WhatsApp)", () => {
+  it("NN)rate without opening paren (03)20)", () => {
+    const r = totalDirect(`55(20)
+59(30)
+03)20`);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(70);
+  });
+
+  it("leading plus repeats digit (++7(50)B → 77(50)B)", () => {
+    const r = totalDirect(`++7(50)B
++++7(50)A`);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(150);
+  });
+
+  it("+++(6)50)B — digit in parens + stray close paren", () => {
+    const r = totalDirect(`+++(6)50)B
++++(6)50)A`);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(100);
+  });
+
+  it("glued jodi+rate with trailing ) only (5910) → 59(10))", () => {
+    const r = totalDirect(`23(20)
+5910)
+57(10)`);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(40);
+  });
+});
+
+describe("multi-row entu blocks", () => {
+  it("pending dot row + entu10total40 on next line (85.58 block)", () => {
+    const r = totalDirect(`85.58
+38.83entu10total40`);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(40);
+  });
+
+  it("dot rows + emtu on last line + Total170 note", () => {
+    const r = totalDirect(`32.54.81entu20
+23.45.18.49.51.28. 82entu10
+15.94.38.83.58.85
+46.64emtu5
+Total170`);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(170);
+  });
+});
+
+describe("user totals and into typos (WhatsApp)", () => {
+  it("ignores glued running totals (total320 / tot60)", () => {
+    const r = totalDirect(`15.16.17.18.28.87
+51.61.71.81.82.78
+32.23.34.43
+Entu20total320`);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(320);
+  });
+
+  it("KALU RAM: multiline dot block + Entu20 on last line (rate split from jodis)", () => {
+    const r = totalDirect(`15.16.17.18.28.87
+51.61.71.81.82.78
+32.23.34.43
+Entu20`);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(320);
+  });
+
+  it("ent / onto / int + glued 8215 dot typo", () => {
+    expect(totalDirect("65.67.77.21.32ent20").total).toBe(100);
+    expect(totalDirect("-25-52onto10").total).toBe(20);
+    expect(totalDirect("65-56-59-95 int5").total).toBe(20);
+    expect(totalDirect("51.81.8215.18.28entu10tot60").total).toBe(60);
+  });
+
+  it("merges broken paren rate across two lines", () => {
+    const r = totalDirect("11(90\n10)10");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(100);
+  });
+});

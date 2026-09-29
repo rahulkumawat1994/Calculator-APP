@@ -42,6 +42,22 @@ describe("shouldBoldRateOnLine", () => {
   });
 });
 
+describe("buildNotebookRowsSingle — multiline dot jodi + Entu rate", () => {
+  it("maps every pasted line to the merged segment (Check view)", () => {
+    const text = `15.16.17.18.28.87
+51.61.71.81.82.78
+32.23.34.43
+Entu20total320`;
+    const result = calculateTotal(text);
+    expect(result.total).toBe(320);
+    const rows = buildNotebookRowsSingle(text, result);
+    const mid = rows.find((r) => r.left.startsWith("51.61"));
+    expect(mid?.right[0]).not.toBe("—");
+    const last = rows.find((r) => r.left.includes("Entu20"));
+    expect(last?.right.some((x) => x.includes("320") || x.includes("20"))).toBe(true);
+  });
+});
+
 describe("buildNotebookRowsSingle — FB / number / rate rows", () => {
   const block = `[01/06, 5:29 pm] skgonline1979: FB 
 28

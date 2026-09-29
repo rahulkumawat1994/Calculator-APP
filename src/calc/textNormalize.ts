@@ -69,8 +69,27 @@ export function preprocessText(text: string): string {
 /** `(75(wp` / `(35(` / `(75) wp` / `(rate` at EOL → `(rate)flag` so merge logic sees an explicit rate. */
 export function normalizeParenRateTypos(s: string): string {
   return s
+    // `++7(50)B` / `+++7(50)A` — each `+` repeats the next single digit (`++7` → `77`).
+    .replace(
+      /^(\+{2,})(\d)\((\d{1,5})\)\s*([ABab])?\s*$/i,
+      (_, pluses: string, digit: string, rate: string, lane?: string) =>
+        `${digit.repeat(pluses.length)}(${rate})${lane ?? ""}`,
+    )
+    // `+++(6)50)B` — pluses + `(digit)` + rate + extra `)` before lane.
+    .replace(
+      /^(\+{2,})\((\d)\)(\d{1,5})\)\s*([ABab])?\s*$/i,
+      (_, pluses: string, digit: string, rate: string, lane?: string) =>
+        `${digit.repeat(pluses.length)}(${rate})${lane ?? ""}`,
+    )
+    // One stray leading `+` before a digit (`+7(50)B`).
+    .replace(/^\+\s*(?=\d)/, "")
+    // `5910)` — jodi + rate glued, only `)` before rate digits: `59`+`10)` → `59(10)`.
+    .replace(/^(\d{2})(\d{1,5})\)\s*$/g, "$1($2)")
     // `24)10)` — closing-paren where opening paren was meant (WhatsApp typo): `NN)rate)` → `NN(rate)`.
-    .replace(/(\d{1,3})\)(\d{1,5})\)/g, "$1($2)")
+    // Skip `(6)50)` inside `+++(6)50)B` (digit already wrapped in `(`).
+    .replace(/(?<!\()(\d{1,3})\)(\d{1,5})\)/g, "$1($2)")
+    // `03)20` — opening `(` omitted: `NN)rate` → `NN(rate)` (not `20)95(` next jodi).
+    .replace(/(?<!\()(\d{1,3})\)(\d{1,5})\b(?!\()/g, "$1($2)")
     // Double (or more) parens around a rate: `((35))` → `(35)`, `((35)` → `(35)`.
     .replace(/\(+\s*(\d+)\s*\)+/g, "($1)")
     .replace(/\(\s*(\d+)\s*[\/\\|.]\s*([a-zA-Z]*)\s*\)?/g, "($1)$2")
@@ -177,13 +196,33 @@ export function normalizeWpFlagTypos(s: string): string {
     .replace(/\bw\s+o\b/gi, "wp");
 }
 
+/** User-written running totals (e.g. `Entu20total320`, `entu10tot60`) — not bet stakes. */
+export function stripUserTotalAnnotations(s: string): string {
+  const trimmed = s.trim();
+  if (/^tot(?:al)?\s*\d+$/i.test(trimmed)) return "";
+  return s
+    .replace(/\s*tot(?:al)?\s*\d+\s*$/gi, "")
+    .replace(/tot(?:al)?\d+\s*$/gi, "")
+    // `75(20)…555(20)=65` — user total after last stake (not `jodi=rate` rows).
+    .replace(/\)=\d+\s*$/g, ")")
+    .trimEnd();
+}
+
+/** `81.8215.18` → `81.82.15.18` when a 4-digit token sits in a dot jodi run. */
+export function splitMergedFourDigitInDotRuns(s: string): string {
+  if (!/\.\d{4}(?:\.|$)/.test(s)) return s;
+  return s.replace(/\.(\d{4})(?=\.|$)/g, (_, d: string) => `.${d.slice(0, 2)}.${d.slice(2)}`);
+}
+
 export function normalizeTypoTolerantInput(s: string): string {
   let t = s.normalize("NFKC");
   t = normalizeWpFlagTypos(t);
-  // User annotation: trailing "total NNN" or "totalNNN" (running cumulative note, not a bet field).
-  t = t.replace(/\s*total\s*\d+\s*$/i, "");
+  t = stripUserTotalAnnotations(t);
   // Normalize en-dash and em-dash to hyphen so jodi chains parse uniformly.
   t = t.replace(/[–—]/g, "-");
+  // Leading minus on a dash jodi row (`-25-52onto10`) — not a negative stake.
+  t = t.replace(/^-\s*(\d{2}(?:-\d{2})+)/, "$1");
+  t = splitMergedFourDigitInDotRuns(t);
   // Star-separated jodi list with trailing =rate: `36*38*…*86=10` → spaces + `=10`
   // (must run before bold-markup / `*` rate parsing, else last `*86` becomes the rate).
   t = t.replace(/(\d{2}(?:\*\d{2})+)=+(\d+)/g, (_, chain: string, rate: string) =>
@@ -340,15 +379,15 @@ export function looksLikeIntoTypo(letters: string): boolean {
   }
   // Exact / near-exact into family (onyo = inyo i→o; ibto = into n→b)
   if (
-    /^(into|intu|inu|int|ito|ijto|enty|entu|ento|inyo|inyu|onyo|onyu|ibto|ibtu|ilto|iltu|olto|nlto|inot|itno|itnu)$/.test(
+    /^(into|intu|inu|int|ent|ento|enty|entu|emtu|etmu|ito|ijto|onto|inyo|inyu|onyo|onyu|ibto|ibtu|ilto|iltu|olto|nlto|inot|itno|itnu)$/.test(
       t,
     )
   ) {
     return true;
   }
   // Must look like the into family (common first letters from phone typos)
-  if (!/^(in|ij|ib|en|ol|il|nl|ny|it)/.test(t)) return false;
-  const targets = ["into", "intu", "inu", "ijto"];
+  if (!/^(in|ij|ib|en|em|ol|il|nl|ny|it)/.test(t)) return false;
+  const targets = ["into", "intu", "inu", "ijto", "entu"];
   return targets.some((target) => {
     const maxDist = Math.min(t.length, target.length) <= 3 ? 1 : 2;
     return levenshtein(t, target) <= maxDist;
@@ -357,12 +396,14 @@ export function looksLikeIntoTypo(letters: string): boolean {
 
 /** Whole trimmed line is only an into-typo marker + rate (e.g. `Into5`, `inyo5`). */
 export function parseStandaloneIntoTypoRateDigits(line: string): string | null {
-  const t = line.trim();
+  const t = stripUserTotalAnnotations(line.trim());
   const plain = /^\s*(?:into|ijto|intu|inu)\s*(\d{1,5})\s*$/i.exec(t);
   if (plain) return plain[1]!;
   const dotInto = /^\s*(\d{1,5})\.\s*(?:into|ijto|intu|inu)\s*$/i.exec(t);
   if (dotInto) return dotInto[1]!;
-  const m = /^\s*([a-zA-Z]{2,})\s*(\d{1,5})\s*$/i.exec(t);
+  const glued = /^\s*([a-zA-Z]{2,})(\d{1,5})\s*$/i.exec(t);
+  if (glued && looksLikeIntoTypo(glued[1]!)) return glued[2]!;
+  const m = /^\s*([a-zA-Z]{2,})\s+(\d{1,5})\s*$/i.exec(t);
   if (m && looksLikeIntoTypo(m[1]!)) return m[2]!;
   return null;
 }
@@ -373,7 +414,7 @@ export function parseStandaloneIntoTypoRateDigits(line: string): string | null {
  * Separators between the word and rate (space, `.`, `-`) are ignored.
  */
 export function normalizeIntoRateMarker(s: string): string {
-  let out = s
+  let out = stripUserTotalAnnotations(s)
     // `20..10.intu` / `20..10.into` — double-dot jodi..rate where trailing `.intu` marks the rate.
     .replace(
       /(\d{1,3})\.\.(\d{1,4})\.\s*(?:into|ijto|intu|inu|in\s*t[ou])\s*$/i,
@@ -400,7 +441,9 @@ export function normalizeIntoRateMarker(s: string): string {
     .replace(/(?<=\d)\s*in\s*t[ou][\s.\-–—]*(?=\d)/gi, " x")
     .replace(/(?<=\d)\s*inu[\s.\-–—]*(?=\d)/gi, " x")
     // `int` (3-char truncation) before a rate digit: `65-56int10` / `int-10` → ` x10`.
-    .replace(/(?<=\d)\.?int[\-–—.]*(?=\d)/gi, " x");
+    .replace(/(?<=\d)\.?int[\-–—.]*(?=\d)/gi, " x")
+    // Space before `int` + rate at end: `65-56-59-95 int5`.
+    .replace(/\s+int\s*(\d{1,5})\s*$/gi, " x$1");
   // Primary rule: digit… + into-like word + optional separators + rate digits → ×rate.
   // Covers `75.into5`, `78into-5`, `10.intu.20`, `84inu5`, `inyo10`, `entu20`, etc.
   out = out.replace(
