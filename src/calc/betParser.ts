@@ -7,6 +7,7 @@ import {
   normalizeTrailingDashRate,
   normalizeTypoTolerantInput,
   stripTrailingMarketSuffix,
+  stripMarketCodeTokens,
   tryParseArithmeticSumDivide,
 } from "./textNormalize";
 
@@ -145,12 +146,9 @@ function stripWpPalatWords(text: string): string {
   );
 }
 
-/** Trailing tags on rates/lines that are not A/B/WP (e.g. player initials). */
-const MEANINGLESS_LINE_SUFFIX_RE = /\b(?:FB|GL)\b/gi;
-
+/** Trailing tags on rates/lines that are not A/B/WP (market codes). */
 function cleanLaneFlagSuffix(text: string): string {
-  return stripWpPalatWords(text)
-    .replace(MEANINGLESS_LINE_SUFFIX_RE, "")
+  return stripMarketCodeTokens(stripWpPalatWords(text))
     .replace(/[,.\s]+/g, " ")
     .trim();
 }
@@ -656,8 +654,12 @@ export function processLine(
       const { isWP: isWPFlag, isDouble: isDoubleFlagged } = parseFlags(after);
       // Strip known AB indicator before the WP fallback check so "अब" doesn't
       // accidentally trigger WP (which fires on any unrecognised trailing text).
-      const afterForWP = after.replace(/अब/g, "").replace(/[ab]/gi, "").trim();
-      const isWP = isWPFlag || (/\S/.test(afterForWP) && afterForWP.length > 0);
+      const afterForWP = stripMarketCodeTokens(
+        after.replace(/अब/g, "").replace(/[ab]/gi, "").trim(),
+      )
+        .replace(/[\s,./\-–—]+/g, "")
+        .trim();
+      const isWP = isWPFlag || (afterForWP.length > 0);
       const rate = Number(last[0]);
       const numbersText = trimmed.slice(0, last.index);
       const solidC = trySolidRunSegment(numbersText, rate, trimmed);

@@ -26,6 +26,17 @@ const TRAILING_MARKET_SUFFIX_LABELS = [
   "delhi",
 ] as const;
 
+/** Short market/game codes (not WP/palat). Case-insensitive; includes common glued forms like `10srg`. */
+export const MARKET_CODE_WORD_RE = /\b(?:FD|SRG|GALI|GS|SG|FB|DS|DB|GB|GL)\b/gi;
+
+export function stripMarketCodeTokens(text: string): string {
+  return text.replace(MARKET_CODE_WORD_RE, " ").replace(/ +/g, " ").trim();
+}
+
+export function stripMarketCodesGluedToDigits(text: string): string {
+  return text.replace(/(\d{1,5})(?:FD|SRG|GALI|GS|SG|FB|DS|DB|GB|GL)\b/gi, "$1");
+}
+
 export function stripTrailingMarketSuffix(s: string): string {
   let t = s.replace(/[\u200B-\u200D\uFEFF]/g, "").normalize("NFKC").trim();
   // Rupee / currency glued before market name: `=10₹Deasawer` → `=10 Deasawer`
@@ -204,6 +215,9 @@ export function normalizeTypoTolerantInput(s: string): string {
   // Fullwidth ASCII digits → ASCII
   t = t.replace(/[\uFF10-\uFF19]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30));
   t = normalizeWhatsAppBoldJodiMarkup(t);
+  t = stripMarketCodesGluedToDigits(t);
+  // `37,38,into,15,srg` — comma + into + rate (not a jodi named "into").
+  t = t.replace(/,+\s*(?:into|ijto|intu|inu|in\s*t[ou])\s*,+/gi, ",");
   // Sum-then-divide lines: keep `+` and `/` intact for `processLine` (see tryParseArithmeticSumDivide).
   if (tryParseArithmeticSumDivide(t) != null) {
     return t.replace(/ +/g, " ").trim();
@@ -273,9 +287,10 @@ export function normalizeTypoTolerantInput(s: string): string {
   t = t.replace(/(?<=\d)\s*\u00B7\s*(?=\d)/g, " ");
   // Collapse runs of spaces
   t = t.replace(/ +/g, " ").trim();
-  // Meaningless suffix glued to rate (`==25FB`, `==50GL`) or end of line.
-  t = t.replace(/([xX×=]+\s*\d+)\s*(?:FB|GL)\b/gi, "$1");
-  t = t.replace(/\b(?:FB|GL)\s*$/i, "");
+  // Meaningless suffix glued to rate (`==25FB`, `==50GL`, `,10srg`) or end of line.
+  t = stripMarketCodesGluedToDigits(t);
+  t = t.replace(/([xX×=]+\s*\d+)\s*(?:FD|SRG|GALI|GS|SG|FB|DS|DB|GB|GL)\b/gi, "$1");
+  t = t.replace(/\b(?:FD|SRG|GALI|GS|SG|FB|DS|DB|GB|GL)\s*$/i, "");
   return t;
 }
 

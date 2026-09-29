@@ -95,6 +95,17 @@ describe("refactor: barrel vs direct module — identical results", () => {
     expect(total).toBe(300 + 150 + 150);
   });
 
+  it("comma into lines with market code suffix are not WP", () => {
+    const text = [
+      "37,38,into,15,srg",
+      "09,75,70,71,74,73,into,10srg",
+      "95,35,59,53,into,10srg",
+    ].join("\n");
+    const { result } = fromBarrel.calculateTotalWithSources(text);
+    expect(result.total).toBe(30 + 60 + 40);
+    expect(result.results.every((s) => !s.isWP)).toBe(true);
+  });
+
   it("text helpers match", () => {
     const raw = "[1/1, 2:00 pm] A: 43/10\n";
     expect(fromBarrel.preprocessText(raw)).toBe(preprocessDirect(raw));
