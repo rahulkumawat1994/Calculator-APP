@@ -27,7 +27,7 @@ const TRAILING_MARKET_SUFFIX_LABELS = [
 ] as const;
 
 /** Short market/game codes (not WP/palat). Case-insensitive; includes common glued forms like `10srg`. */
-export const MARKET_CODE_WORD_RE = /\b(?:FD|SRG|GALI|GS|SG|FB|DS|DB|GB|GL)\b/gi;
+export const MARKET_CODE_WORD_RE = /\b(?:FD|SRG|GALI|GS|SG|FB|DS|DB|GB|GL|GN)\b/gi;
 
 export function stripMarketCodeTokens(text: string): string {
   return text.replace(MARKET_CODE_WORD_RE, " ").replace(/ +/g, " ").trim();
@@ -205,6 +205,9 @@ export function stripUserTotalAnnotations(s: string): string {
     .replace(/tot(?:al)?\d+\s*$/gi, "")
     // `75(20)…555(20)=65` — user total after last stake (not `jodi=rate` rows).
     .replace(/\)=\d+\s*$/g, ")")
+    // Stray trailing `m` right after the rate digits (`…20m`) — not a market/rate word,
+    // just a one-letter note some users append; strip so the rate is read normally.
+    .replace(/(?<=\d)\s*m\s*$/i, "")
     .trimEnd();
 }
 
@@ -280,7 +283,7 @@ export function normalizeTypoTolerantInput(s: string): string {
   // and avoid mistaking calendar fragments like 12/04 (→ would match rate 4 if we only used \d+).
   // Skip when another slash-jodi follows (`14/15/46`, not `14` at rate `15`).
   t = t.replace(
-    /\b(\d{2})\/(5|10|15|20|25|30|40|50|100|120)\b(?!\s*\/\s*\d)/g,
+    /\b(\d{2})\/(5|10|15|20|25|30|40|50|60|70|75|80|90|100|120)\b(?!\s*\/\s*\d)/g,
     "$1x$2",
   );
   // Same whitelist as NN/stake above — avoids rewriting second jodis like `75-57intu10` (57 is not a stake).
@@ -291,7 +294,7 @@ export function normalizeTypoTolerantInput(s: string): string {
   // `(?!-\s*$)` skips incomplete dash rows waiting for a continuation line (`05-50-`).
   // `(?!-\s)` skips when another jodi chunk follows after the hyphen (`05-50- 77-…`).
   t = t.replace(
-    /\b(\d{2})-(5|10|15|20|25|30|40|50|100|120)\b(?!\s+x\s*\d)(?!-\d{2})(?!-\s*$)(?!-\s)/g,
+    /\b(\d{2})-(5|10|15|20|25|30|40|50|60|70|75|80|90|100|120)\b(?!\s+x\s*\d)(?!-\d{2})(?!-\s*$)(?!-\s)/g,
     "$1x$2",
   );
   // Single-digit stake after "-" (e.g. `27-5` same as `27=5` / `27x5`); run after whitelist so `27-10` stays one token.
@@ -299,6 +302,10 @@ export function normalizeTypoTolerantInput(s: string): string {
   // 3+-digit number (solid run / triple) + dash + rate: `100-30` → `100x30`, `000-10` → `000x10`.
   // Prevents multi-line merge stealing the rate from the next line.
   t = t.replace(/\b(\d{3,})-(\d{1,3})\b(?!-\d)/g, "$1x$2");
+  // Same shape with a slash (WhatsApp: `100/20`, `000/10`) — the 2-digit `NN/rate` rule above
+  // only matches exactly 2-digit jodis, so a 3+-digit patti/panna number was left unconverted
+  // and its rate got stolen by the next line's pending-merge.
+  t = t.replace(/\b(\d{3,})\/(\d{1,3})\b(?!\/\d)/g, "$1x$2");
   // Two-digit jodi + "." + single-digit rate (same meaning as 40x5 / 40=5; avoids breaking NN.MM dates with two-digit months)
   t = t.replace(/\b(\d{2})\.([1-9])\b/g, "$1x$2");
   // Between digits: `;` `|` `/` `\` or tabs often used instead of space (keep `,` for comma-rate lines)
@@ -391,16 +398,16 @@ export function looksLikeIntoTypo(letters: string): boolean {
   ) {
     return false;
   }
-  // Exact / near-exact into family (onyo = inyo i→o; ibto = into n→b)
+  // Exact / near-exact into family (onyo = inyo i→o; ibto = into n→b; imto = into n→m)
   if (
-    /^(into|intu|inu|int|ent|ento|enty|entu|emtu|etmu|ito|ijto|onto|inyo|inyu|onyo|onyu|ibto|ibtu|ilto|iltu|olto|nlto|inot|itno|itnu)$/.test(
+    /^(into|intu|inu|int|ent|ento|enty|entu|emtu|etmu|ito|ijto|onto|inyo|inyu|onyo|onyu|ibto|ibtu|ilto|iltu|olto|nlto|inot|itno|itnu|imto|imtu)$/.test(
       t,
     )
   ) {
     return true;
   }
   // Must look like the into family (common first letters from phone typos)
-  if (!/^(in|ij|ib|en|em|ol|il|nl|ny|it)/.test(t)) return false;
+  if (!/^(in|ij|ib|im|en|em|ol|il|nl|ny|it)/.test(t)) return false;
   const targets = ["into", "intu", "inu", "ijto", "entu"];
   return targets.some((target) => {
     const maxDist = Math.min(t.length, target.length) <= 3 ? 1 : 2;
@@ -451,13 +458,18 @@ export function normalizeIntoRateMarker(s: string): string {
         looksLikeIntoTypo(letters) ? ` x${rate}` : full,
     )
     // Fast paths: consume optional separators so `into-5` / `inu.10` become ` xN`, not ` x-N`.
-    .replace(/(?<=\d)\s*ij\s*to[\s.\-–—]*(?=\d)/gi, " x")
-    .replace(/(?<=\d)\s*in\s*t[ou][\s.\-–—]*(?=\d)/gi, " x")
-    .replace(/(?<=\d)\s*inu[\s.\-–—]*(?=\d)/gi, " x")
+    // One or more trailing commas before the keyword are also valid separators: `72, into 30`, `45,, into 10`.
+    .replace(/(?<=\d),*\s*ij\s*to[\s.\-–—]*(?=\d)/gi, " x")
+    .replace(/(?<=\d),*\s*in\s*t[ou][\s.\-–—]*(?=\d)/gi, " x")
+    .replace(/(?<=\d),*\s*inu[\s.\-–—]*(?=\d)/gi, " x")
     // `int` (3-char truncation) before a rate digit: `65-56int10` / `int-10` → ` x10`.
-    .replace(/(?<=\d)\.?int[\-–—.]*(?=\d)/gi, " x")
+    .replace(/(?<=\d),*\.?int[\-–—.]*(?=\d)/gi, " x")
     // Space before `int` + rate at end: `65-56-59-95 int5`.
-    .replace(/\s+int\s*(\d{1,5})\s*$/gi, " x$1");
+    .replace(/\s+int\s*(\d{1,5})\s*$/gi, " x$1")
+    // Space (not just dot/dash) before any into-typo word + rate at end: `01 52 inyo10`.
+    .replace(/\s+([a-zA-Z]{2,9})\s*(\d{1,5})\s*$/gi, (full, letters: string, rate: string) =>
+      looksLikeIntoTypo(letters) ? ` x${rate}` : full,
+    );
   // Primary rule: digit… + into-like word + optional separators + rate digits → ×rate.
   // Covers `75.into5`, `78into-5`, `10.intu.20`, `84inu5`, `inyo10`, `entu20`, etc.
   out = out.replace(

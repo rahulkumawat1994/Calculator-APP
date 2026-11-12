@@ -1497,3 +1497,218 @@ describe("double-paren rate: ((35)) treated same as (35)", () => {
     expect(r.results[0]).toMatchObject({ rate: 35, count: 2 });
   });
 });
+
+describe("comma before 'into' keyword (trailing unknown market code must not trigger WP)", () => {
+  it("61,63,72, into 30, DL — 3 jodis × 30 = 90, not WP", () => {
+    const r = calculateTotal("61,63,72, into 30, DL");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(90);
+    expect(r.results[0]).toMatchObject({ rate: 30, count: 3, isWP: false });
+  });
+
+  it("81, into 10 DL — 1 jodi × 10 = 10, not WP", () => {
+    const r = calculateTotal("81, into 10 DL");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(10);
+    expect(r.results[0]).toMatchObject({ rate: 10, count: 1, isWP: false });
+  });
+
+  it("full 4-line WhatsApp paste totals 200", () => {
+    const r = calculateTotal(
+      "92,19,01,22,10 into 10 DL\n62 into 50 DL\n61,63,72, into 30, DL\n81, into 10 DL",
+    );
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(200);
+  });
+
+  it("double comma before 'into' (45,, into 10,,gn) — GN market code must not trigger WP", () => {
+    const r = calculateTotal("71,72,73,42,43,45,, into 10,,gn");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(60);
+    expect(r.results[0]).toMatchObject({ rate: 10, count: 6, isWP: false });
+  });
+
+  it("double comma before 'into' (08,, into 50,,gb) — GB market code", () => {
+    const r = calculateTotal("08,, into 50,,gb");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(50);
+    expect(r.results[0]).toMatchObject({ rate: 50, count: 1, isWP: false });
+  });
+
+  it("comma then rate immediately after into (05, into,30,fb)", () => {
+    const r = calculateTotal("05, into,30,fb");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(30);
+    expect(r.results[0]).toMatchObject({ rate: 30, count: 1, isWP: false });
+  });
+
+  it("glued market code after rate (23, into 20gb)", () => {
+    const r = calculateTotal("18, 96,69,36,23, into 20gb");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(100);
+    expect(r.results[0]).toMatchObject({ rate: 20, count: 5, isWP: false });
+  });
+
+  it("full 7-message WhatsApp paste (RUPCHAND JAIPUR PLANE) totals 460 across messages", () => {
+    // Each WhatsApp message is calculated independently (Calculator.tsx splits by
+    // message before calling calculateTotal), so verify per-message, then sum.
+    const messages = [
+      "24,76,89,83, into 20,fb",
+      "01,06,07,08,09,00,65,15,75, into 10,fb",
+      "05, into,30,fb",
+      "71,72,73,42,43,45,, into 10,,gn",
+      "08,, into 50,,gb",
+      "18, 96,69,36,23, into 20gb",
+      "07,05,04,00,03,, into 10,gb",
+    ];
+    const totals = messages.map((m) => {
+      const r = calculateTotal(m);
+      expect(r.failedLines ?? []).toEqual([]);
+      return r.total;
+    });
+    expect(totals).toEqual([80, 90, 30, 60, 50, 100, 50]);
+    expect(totals.reduce((a, b) => a + b, 0)).toBe(460);
+  });
+});
+
+describe("3-digit number + slash rate (100/20) must not lose its rate to the next line", () => {
+  it("100/20 alone — single bet at rate 20", () => {
+    const r = calculateTotal("100/20");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(20);
+    expect(r.results[0]).toMatchObject({ rate: 20, count: 1 });
+  });
+
+  it("RAMESHWAR LAL PLAYER MADAN JI REFERENCE — gali message totals 260 (matches player's own stated total)", () => {
+    const r = calculateTotal(
+      "89/30\n99/30\n100/20\n46/30\n84/30\n48/30\n98/30\n48/20\n02/20\n88/20 गली टोटल 260",
+    );
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(260);
+  });
+
+  it("same contact — delhi message totals 130 (matches player's own stated total)", () => {
+    const r = calculateTotal("57/30\n07/40\n37/30\n88/30 दिल्ली टोटल 130");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(130);
+  });
+});
+
+describe("stray trailing 'm' note after a dot-chain rate must not break parsing", () => {
+  it("12..11..19..72..36......20m — same total as without the trailing m", () => {
+    const withM = calculateTotal("12..11..19..72..36......20m");
+    const withoutM = calculateTotal("12..11..19..72..36......20");
+    expect(withM.failedLines ?? []).toEqual([]);
+    expect(withM.total).toBe(withoutM.total);
+    expect(withM.total).toBe(100);
+  });
+
+  it("20m with a space before the m (...20 m) also parses", () => {
+    const r = calculateTotal("12..11..19..72..36......20 m");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(100);
+  });
+
+  it("99..88..97..11..77..15..19..18..13..14..16..36....20m totals 240", () => {
+    const r = calculateTotal(
+      "99..88..97..11..77..15..19..18..13..14..16..36....20m",
+    );
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(240);
+  });
+});
+
+describe("trailing unclosed '(' with nothing inside acts as a bare jodi (like trailing '/')", () => {
+  it("02( alone still needs a rate from context (fails in isolation, same as trailing '/')", () => {
+    const r = calculateTotal("02(");
+    expect(r.failedLines).toEqual(["02"]);
+  });
+
+  it("02( inherits the surrounding rate instead of being dropped", () => {
+    const r = calculateTotal("20/20\n02(\n40/20");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(60);
+  });
+
+  it("gajiyabad message totals 140 (matches player's own stated total)", () => {
+    const r = calculateTotal(
+      "20/20\n02(\n60/\n06/\n67/\n76(\n40/20 gajiyabad total 140",
+    );
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(140);
+  });
+});
+
+describe("trailing bare '=' jodi rows pend for the block's shared rate", () => {
+  it("44=/68=30 style — bare rows merge with the final NN=RATE row", () => {
+    const r = calculateTotal("44=\n68=30");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(60);
+  });
+
+  it("full 20-row दिल्ली बाजार-style block totals 600", () => {
+    const text = [
+      "44=", "78=", "15=", "69=", "19=", "94=", "56=", "04=", "87=", "28=",
+      "22=", "51=", "65=", "85=", "96=", "31=", "29=", "99=", "83=", "68=30",
+    ].join("\n");
+    const r = calculateTotal(text);
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(600);
+  });
+
+  it("existing leading-rate shape (13=40 ... 86=40==320) still works", () => {
+    const r = calculateTotal(
+      "13=40\n31=\n63=\n36=\n81=\n18=\n68=\n86=40==320= गली",
+    );
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(320);
+    expect(r.results[0]?.count).toBe(8);
+  });
+});
+
+describe("'into' typo recognized with a space before it, and 'imto' (n→m typo)", () => {
+  it("01 52 inyo10 — space before typo word is tolerated like dash/dot separators", () => {
+    const r = calculateTotal("01 52 inyo10");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(20);
+    expect(r.results[0]).toMatchObject({ rate: 10, count: 2 });
+  });
+
+  it("17-71imto5 — 'imto' (m/n swap typo) recognized as 'into'", () => {
+    const r = calculateTotal("17-71imto5");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(10);
+    expect(r.results[0]).toMatchObject({ rate: 5, count: 2 });
+  });
+});
+
+describe("NN/rate and NN-rate whitelist must include common 60/70/75/80/90 stakes", () => {
+  it("55/70 and 01/80 parse as jodi at that rate, not a second bare jodi", () => {
+    const r1 = calculateTotal("55/70");
+    expect(r1.failedLines ?? []).toEqual([]);
+    expect(r1.total).toBe(70);
+
+    const r2 = calculateTotal("01/80");
+    expect(r2.failedLines ?? []).toEqual([]);
+    expect(r2.total).toBe(80);
+  });
+
+  it("same shape with a dash (55-70) also parses", () => {
+    const r = calculateTotal("55-70");
+    expect(r.failedLines ?? []).toEqual([]);
+    expect(r.total).toBe(70);
+  });
+
+  it(
+    "RAMESHWAR LAL PLAYER MADAN JI REFERENCE — mixed 100/70/80 rates totals 490 " +
+      "(matches player's own stated total; previously silently mis-parsed as 800 " +
+      "because 70/80 weren't in the recognized-rate whitelist)",
+    () => {
+      const r = calculateTotal(
+        "05/100\n50/100\n55/70\n95/70\n01/80\n60/70 dili टोटल490",
+      );
+      expect(r.failedLines ?? []).toEqual([]);
+      expect(r.total).toBe(490);
+    },
+  );
+});

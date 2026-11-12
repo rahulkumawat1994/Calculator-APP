@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"isPureNumbersLine\\\\|trailing slash\\\\|'/'\\\\|\\\\\\\\\\\\\\\\/$\" src/calc/pasteAndTotal.ts)",
+      "Bash(git stash *)",
+      "Bash(python3 -)"
+    ]
+  }
+}

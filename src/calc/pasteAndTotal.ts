@@ -91,14 +91,39 @@ function isEqualsContinuationOnlyRow(row: string): boolean {
   return p != null && p.rate == null;
 }
 
-/** `13=40` then `31=` … `86=40` — not independent `27=40` / `72=40` rows. */
+/**
+ * `13=40` then `31=` … `86=40` — not independent `27=40` / `72=40` rows.
+ * Also handles an all-bare leading run (`44=` / `78=` / … with *no* row carrying
+ * a rate until the very last one, `68=30`) — the shared rate is only known once
+ * the terminating `NN=RATE` row is reached, so every bare row before it belongs
+ * to the same block.
+ */
 export function mergeEqualsJodiContinuationLines(lines: string[]): string[] {
   const out: string[] = [];
   let i = 0;
   while (i < lines.length) {
     const t = lines[i]!.trim();
     const head = parseEqualsJodiRow(t);
-    if (!head || head.rate == null) {
+    if (!head) {
+      out.push(lines[i]!);
+      i++;
+      continue;
+    }
+    if (head.rate == null) {
+      let j = i + 1;
+      const bareJodis: string[] = [head.jodi];
+      while (j < lines.length && isEqualsContinuationOnlyRow(lines[j]!)) {
+        bareJodis.push(parseEqualsJodiRow(lines[j]!)!.jodi);
+        j++;
+      }
+      const tail = j < lines.length ? parseEqualsJodiRow(lines[j]!) : null;
+      if (tail?.rate != null) {
+        bareJodis.push(tail.jodi);
+        out.push(`${bareJodis.join(" ")}=${tail.rate}`);
+        i = j + 1;
+        continue;
+      }
+      // No terminating rated row found — leave this row unchanged (unsupported shape).
       out.push(lines[i]!);
       i++;
       continue;
@@ -608,6 +633,22 @@ function rewriteDotRateWhenMatchesInherited(
 }
 
 /**
+ * A whole line that is just a jodi number followed by a lone, never-closed `(`
+ * (`02(`, `76(`) — some users append a stray opening paren with no rate inside
+ * and no closing `)` anywhere on the line. Treating it literally would make
+ * `processLine` misread it as the start of a `NN(RATE)` clause and steal a
+ * rate from wherever the next digits appear. Since a trailing bare `/` with
+ * nothing after it already behaves as "just this jodi, rate inherited later",
+ * collapse this to the same shape: strip the stray `(` so it is just the bare
+ * jodi and can pend for a shared/next rate like any other bare number line.
+ */
+function stripLoneUnclosedTrailingParen(line: string): string {
+  const t = line.trim();
+  if (/^\d{1,4}\($/.test(t)) return t.slice(0, -1);
+  return line;
+}
+
+/**
  * Strips a leading slot code with **no** dot: `FB 31.67…` (WhatsApp). `stripLeadingGameLabels`
  * only handles `Harf.` / `Gali.`-style `Word.`, so leading `FB ` left letters on the
  * line, broke `isPureNumbers` and pending-merge with a following `.…xN` line.
@@ -645,7 +686,9 @@ export function calculateTotal(text: string): CalculationResult {
   for (const chunk of mergedChunks) {
     const rawLine = chunk.text;
     if (isWhatsAppNoiseLine(rawLine)) continue;
-    const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
+    const afterLoose = stripLoneUnclosedTrailingParen(
+      stripLooseSlotMarketPrefixForNumberLine(rawLine),
+    );
     let labelStripped = stripLeadingGameLabels(afterLoose);
     labelStripped = stripTrailingMarketSuffix(labelStripped);
     if (/^\d{2}=/.test(labelStripped.trim())) {
@@ -979,7 +1022,9 @@ export function calculateTotalWithSources(text: string): CalculationResultWithSo
   for (const chunk of mergedChunks) {
     const rawLine = chunk.text;
     if (isWhatsAppNoiseLine(rawLine)) continue;
-    const afterLoose = stripLooseSlotMarketPrefixForNumberLine(rawLine);
+    const afterLoose = stripLoneUnclosedTrailingParen(
+      stripLooseSlotMarketPrefixForNumberLine(rawLine),
+    );
     let labelStripped = stripLeadingGameLabels(afterLoose);
     labelStripped = stripTrailingMarketSuffix(labelStripped);
     if (/^\d{2}=/.test(labelStripped.trim())) {
